@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  mcp-feishu-server:
+    build: ./mcp-feishu-server
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./mcp-feishu-server/.env
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  feishu-agent:
+    build: ./feishu-agent
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./feishu-agent/.env
+    environment:
+      - MCP_SERVER_BASE=http://mcp-feishu-server:8081
+    depends_on:
+      - mcp-feishu-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
