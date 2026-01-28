@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import re
 from typing import Optional
 
 
@@ -34,6 +35,16 @@ def _month_range(target: date) -> TimeRange:
 
 def parse_time_range(text: str) -> Optional[TimeRange]:
     today = date.today()
+    match = re.search(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})[日号]?", text)
+    if match:
+        year = int(match.group(1)) if match.group(1) else today.year
+        month = int(match.group(2))
+        day = int(match.group(3))
+        try:
+            target = date(year, month, day)
+            return TimeRange(_format_day(target), _format_day(target))
+        except ValueError:
+            return None
     if "下周" in text:
         week_map = {
             "下周一": 0,

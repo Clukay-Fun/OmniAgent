@@ -4,7 +4,7 @@ Bitable tools.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 import ast
 import re
@@ -54,7 +54,12 @@ def _build_filters(filters: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _format_timestamp(value: int | float) -> str:
     try:
-        return datetime.fromtimestamp(value / 1000).strftime("%Y-%m-%d %H:%M")
+        tz = timezone(timedelta(hours=8))
+        return (
+            datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+            .astimezone(tz)
+            .strftime("%Y-%m-%d %H:%M")
+        )
     except (OverflowError, OSError, ValueError):
         return str(value)
 
@@ -125,7 +130,8 @@ def _parse_date_text(value: Any) -> date | None:
     if not value:
         return None
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value / 1000).date()
+        tz = timezone(timedelta(hours=8))
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc).astimezone(tz).date()
     if isinstance(value, str):
         text = value.strip()
         for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y/%m/%d"):
@@ -280,10 +286,11 @@ class BitableSearchTool(BaseTool):
                 "record_url": record_url,
             })
 
+        filtered = False
         if (date_from or date_to) and hearing_field and not date_filter_supported:
             start_date = _parse_date_text(date_from)
             end_date = _parse_date_text(date_to)
-            filtered = []
+            filtered_records = []
             for record in records:
                 value = record["fields_text"].get(hearing_field) or record["fields_text"].get(
                     _normalize_field_name(hearing_field)
@@ -295,10 +302,13 @@ class BitableSearchTool(BaseTool):
                     continue
                 if end_date and record_date > end_date:
                     continue
-                filtered.append(record)
-            records = filtered
+                filtered_records.append(record)
+            records = filtered_records
+            filtered = True
 
         total = data.get("total") or len(records)
+        if filtered:
+            total = len(records)
         return {
             "records": records,
             "total": total,

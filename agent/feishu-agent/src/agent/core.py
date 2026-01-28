@@ -31,13 +31,14 @@ class AgentCore:
         tool_name = self._select_tool(text)
 
         date_range = await self._resolve_time_range(text)
-        params: dict[str, Any] = {"keyword": text}
+        keyword = self._extract_keyword(text)
+        params: dict[str, Any] = {"keyword": keyword}
         if date_range:
             params["date_from"] = date_range.get("date_from")
             params["date_to"] = date_range.get("date_to")
 
         if tool_name == "feishu.v1.doc.search":
-            params = {"keyword": text}
+            params = {"keyword": keyword or text}
 
         result = await self._mcp.call_tool(tool_name, params)
         reply = self._format_reply(tool_name, text, result)
@@ -59,13 +60,40 @@ class AgentCore:
         return None
 
     def _has_time_hint(self, text: str) -> bool:
-        keywords = ["今天", "明天", "本周", "这周", "下周", "本月", "这个月", "号", "日"]
-        return any(keyword in text for keyword in keywords)
+        keywords = ["今天", "明天", "本周", "这周", "下周", "本月", "这个月"]
+        if any(keyword in text for keyword in keywords):
+            return True
+        return bool(
+            __import__("re").search(r"\d{1,2}月\d{1,2}[日号]?|\d{4}-\d{1,2}-\d{1,2}", text)
+        )
 
     def _select_tool(self, text: str) -> str:
         if "文档" in text or "资料" in text or "文件" in text:
             return "feishu.v1.doc.search"
         return "feishu.v1.bitable.search"
+
+    def _extract_keyword(self, text: str) -> str:
+        keyword = text
+        for phrase in (
+            "找一下",
+            "查一下",
+            "查询",
+            "搜索",
+            "帮我",
+            "请帮我",
+            "一下",
+            "案子",
+            "案件",
+            "有什么",
+            "有哪些",
+            "庭要开",
+            "庭审",
+            "信息",
+            "详情",
+        ):
+            keyword = keyword.replace(phrase, "")
+        keyword = keyword.replace("的", "")
+        return keyword.strip()
 
     def _format_reply(self, tool_name: str, text: str, result: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "feishu.v1.doc.search":

@@ -446,7 +446,7 @@ class LLMClient:
 ```
 
 **验收标准**：
-- [ ] 可正常调用配置的 LLM
+- [x] 可正常调用配置的 LLM
 - [ ] 支持 Function Calling / Tool Use
 - [ ] 超时和错误处理正常
 
