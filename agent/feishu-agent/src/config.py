@@ -230,6 +230,8 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     mapping = {
+        "LLM_PROVIDER": ["llm", "provider"],
+        "LLM_MODEL": ["llm", "model"],
         "FEISHU_APP_ID": ["feishu", "app_id"],
         "FEISHU_APP_SECRET": ["feishu", "app_secret"],
         "FEISHU_VERIFICATION_TOKEN": ["feishu", "verification_token"],
