@@ -1,0 +1,10 @@
+services:
+  mcp-feishu-server:
+    volumes:
+      - ./mcp/mcp-feishu-server/src:/app/src
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8081 --reload
+
+  feishu-agent:
+    volumes:
+      - ./agent/feishu-agent/src:/app/src
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload

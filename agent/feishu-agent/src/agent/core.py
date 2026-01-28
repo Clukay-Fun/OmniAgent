@@ -45,13 +45,22 @@ class AgentCore:
         return reply
 
     async def _resolve_time_range(self, text: str) -> dict[str, str] | None:
-        content = await self._llm.parse_time_range(text)
-        if "date_from" in content and "date_to" in content:
-            return {"date_from": content["date_from"], "date_to": content["date_to"]}
         parsed = parse_time_range(text)
         if parsed:
             return {"date_from": parsed.date_from, "date_to": parsed.date_to}
+        if not self._has_time_hint(text):
+            return None
+        try:
+            content = await self._llm.parse_time_range(text)
+            if "date_from" in content and "date_to" in content:
+                return {"date_from": content["date_from"], "date_to": content["date_to"]}
+        except Exception:
+            return None
         return None
+
+    def _has_time_hint(self, text: str) -> bool:
+        keywords = ["今天", "明天", "本周", "这周", "下周", "本月", "这个月", "号", "日"]
+        return any(keyword in text for keyword in keywords)
 
     def _select_tool(self, text: str) -> str:
         if "文档" in text or "资料" in text or "文件" in text:
@@ -75,18 +84,18 @@ class AgentCore:
         if not records:
             return {"type": "text", "text": self._settings.reply.templates.no_result}
 
-        title = self._settings.reply.case_list.title.format(period="本周", count=len(records))
+        title = self._settings.reply.case_list.title.format(count=len(records))
         items = []
         for index, record in enumerate(records, start=1):
-            fields = record.get("fields") or {}
+            fields = record.get("fields_text") or record.get("fields") or {}
             item = self._settings.reply.case_list.item.format(
                 index=index,
                 client=fields.get("委托人及联系方式", ""),
                 opponent=fields.get("对方当事人", ""),
                 cause=fields.get("案由", ""),
                 case_number=fields.get("案号", ""),
-                hearing_date=fields.get("开庭日", ""),
                 court=fields.get("审理法院", ""),
+                stage=fields.get("程序阶段", ""),
                 record_url=record.get("record_url", ""),
             )
             items.append(item)

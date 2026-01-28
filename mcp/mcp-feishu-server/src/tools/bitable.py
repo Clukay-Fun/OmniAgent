@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+import ast
+import re
 
 from src.tools.base import BaseTool
 from src.tools.registry import ToolRegistry
@@ -57,14 +59,38 @@ def _format_timestamp(value: int | float) -> str:
         return str(value)
 
 
+def _normalize_field_name(name: str) -> str:
+    return re.sub(r"\s+", "", name)
+
+
+def _parse_text_blob(value: str) -> str | None:
+    raw_value = value.strip()
+    if not raw_value.startswith("{"):
+        return None
+    if "'text'" not in raw_value and '"text"' not in raw_value:
+        return None
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except (ValueError, SyntaxError):
+        return None
+    if isinstance(parsed, dict):
+        text = parsed.get("text")
+        if isinstance(text, str):
+            return text
+    return None
+
+
 def parse_field_value(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, (int, float)) and value > 1_000_000_000_000:
         return _format_timestamp(value)
     if isinstance(value, list):
-        if value and isinstance(value[0], dict) and "name" in value[0]:
-            return ", ".join([str(item.get("name", "")) for item in value])
+        if value and isinstance(value[0], dict):
+            if "name" in value[0]:
+                return ", ".join([str(item.get("name", "")) for item in value])
+            if "text" in value[0]:
+                return ", ".join([str(item.get("text", "")) for item in value])
         return ", ".join([str(item) for item in value])
     if isinstance(value, dict):
         if "name" in value:
@@ -73,7 +99,8 @@ def parse_field_value(value: Any) -> Any:
             return str(value.get("text"))
         return str(value)
     if isinstance(value, str):
-        return value
+        parsed_text = _parse_text_blob(value)
+        return parsed_text if parsed_text is not None else value
     return str(value)
 
 
@@ -110,14 +137,27 @@ class BitableSearchTool(BaseTool):
             return {"records": [], "total": 0}
 
         field_names = await _fetch_field_names(self, app_token, table_id)
+        normalized_lookup = {
+            _normalize_field_name(name): name for name in field_names
+        }
+
         hearing_field = settings.bitable.field_mapping.get("hearing_date", "开庭日")
-        if hearing_field and field_names and hearing_field not in field_names:
-            hearing_field = ""
+        if hearing_field:
+            resolved = normalized_lookup.get(_normalize_field_name(hearing_field))
+            if resolved:
+                hearing_field = resolved
+            elif field_names and hearing_field not in field_names:
+                hearing_field = ""
 
         keyword_fields = settings.bitable.search.searchable_fields
-        keyword_candidates = [
-            field for field in keyword_fields if not field_names or field in field_names
-        ]
+        keyword_candidates = []
+        for field in keyword_fields:
+            if not field_names:
+                keyword_candidates.append(field)
+                continue
+            resolved = normalized_lookup.get(_normalize_field_name(field))
+            if resolved:
+                keyword_candidates.append(resolved)
         if not keyword_candidates and hearing_field:
             keyword_candidates = [hearing_field]
 
@@ -148,7 +188,11 @@ class BitableSearchTool(BaseTool):
         page_token = params.get("page_token")
 
         if field_names:
-            return_fields = {name for name in settings.bitable.field_mapping.values() if name in field_names}
+            return_fields = set()
+            for name in settings.bitable.field_mapping.values():
+                resolved = normalized_lookup.get(_normalize_field_name(name))
+                if resolved:
+                    return_fields.add(resolved)
             if hearing_field:
                 return_fields.add(hearing_field)
             field_names = sorted(return_fields)
@@ -184,7 +228,13 @@ class BitableSearchTool(BaseTool):
         for item in items:
             record_id = item.get("record_id") or item.get("recordId") or item.get("id")
             raw_fields = item.get("fields") or {}
-            fields = {key: parse_field_value(value) for key, value in raw_fields.items()}
+            fields_text: dict[str, Any] = {}
+            for key, value in raw_fields.items():
+                parsed = parse_field_value(value)
+                normalized_key = _normalize_field_name(key)
+                fields_text[key] = parsed
+                if normalized_key != key:
+                    fields_text[normalized_key] = parsed
             if record_id:
                 record_url = build_record_url(
                     settings.bitable.domain,
@@ -197,7 +247,8 @@ class BitableSearchTool(BaseTool):
                 record_url = ""
             records.append({
                 "record_id": record_id,
-                "fields": fields,
+                "fields": raw_fields,
+                "fields_text": fields_text,
                 "record_url": record_url,
             })
 
@@ -230,7 +281,14 @@ class BitableRecordGetTool(BaseTool):
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
         )
         data = response.get("data") or {}
-        fields = data.get("record", {}).get("fields") or data.get("fields") or {}
+        raw_fields = data.get("record", {}).get("fields") or data.get("fields") or {}
+        fields_text: dict[str, Any] = {}
+        for key, value in raw_fields.items():
+            parsed = parse_field_value(value)
+            normalized_key = _normalize_field_name(key)
+            fields_text[key] = parsed
+            if normalized_key != key:
+                fields_text[normalized_key] = parsed
         record_url = build_record_url(
             settings.bitable.domain,
             app_token,
@@ -238,4 +296,9 @@ class BitableRecordGetTool(BaseTool):
             record_id,
             view_id=view_id,
         )
-        return {"record_id": record_id, "fields": fields, "record_url": record_url}
+        return {
+            "record_id": record_id,
+            "fields": raw_fields,
+            "fields_text": fields_text,
+            "record_url": record_url,
+        }

@@ -9,6 +9,14 @@
 - RAG 引擎：文档解析、结构化、向量检索与问答闭环
 - SSE 实时通信：输出执行状态与内容流，支持可视化调试
 
+## 当前进度（Feishu Agent）
+
+- `agent/feishu-agent`：Webhook、会话管理、MCP 调用、Agent 编排已完成，可本地模拟
+- `mcp/mcp-feishu-server`：多维表格检索、记录详情、文档搜索、record_url 拼接已完成
+- 结果返回同时包含 `fields`（原始）与 `fields_text`（纯文本）
+- `docker-compose.yml` 与 `docker-compose.dev.yml` 已准备，支持热更新
+- 待办：单元测试、飞书真实回调与部署流程
+
 ## 架构概览
 
 ```mermaid
@@ -111,6 +119,11 @@ npm run dev
 ```
 
 > 前端目录为 `frontend/`，若尚未初始化前端代码，可先跳过此步。
+
+开发模式启动命令：
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
 
 ## 核心概念
 

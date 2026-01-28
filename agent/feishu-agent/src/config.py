@@ -125,12 +125,12 @@ class ReplyTemplateSettings(BaseModel):
 
 
 class ReplyCaseListSettings(BaseModel):
-    title: str = "📅 {period}庭审安排（共 {count} 场）"
+    title: str = "📌 案件查询结果（共 {count} 条）"
     item: str = (
-        "{index}️⃣ {client} vs {opponent} | {cause}\n"
+        "{index}️⃣ {client} vs {opponent}｜{cause}\n"
         "   • 案号：{case_number}\n"
-        "   • 时间：{hearing_date}\n"
         "   • 法院：{court}\n"
+        "   • 程序：{stage}\n"
         "   • 🔗 查看详情：{record_url}"
     )
 

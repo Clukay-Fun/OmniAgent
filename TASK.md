@@ -40,10 +40,9 @@
 | `contact:user.base:readonly` | 获取用户信息 |
 
 **交付物**：
-- [ ] App ID / App Secret 已获取
-- [ ] 机器人能力已开启
-- [ ] 权限已申请/审批通过
-- [ ] Verification Token 已记录
+- [x] App ID / App Secret 已获取
+- [x] 机器人能力已开启
+- [x] 权限已申请/审批通过
 
 ---
 
@@ -77,9 +76,9 @@ find omniagent -type d -name "src" -exec sh -c 'find "{}" -type d -exec touch {}
 ```
 
 **交付物**：
-- [ ] 目录结构已创建
-- [ ] Git 仓库已初始化
-- [ ] `.gitignore` 已配置（忽略 `.env`、`__pycache__`、`.venv` 等）
+- [x] 目录结构已创建
+- [x] Git 仓库已初始化
+- [x] `.gitignore` 已配置（忽略 `.env`、`__pycache__`、`.venv` 等）
 
 ---
 
@@ -118,10 +117,10 @@ pycryptodome>=3.20.0    # 飞书消息解密
 ```
 
 **交付物**：
-- [ ] 虚拟环境可激活
-- [ ] 依赖可正常安装
-- [ ] `.env.example` 已编写
-- [ ] `config.yaml.example` 已编写
+- [x] 虚拟环境可激活
+- [x] 依赖可正常安装
+- [x] `.env.example` 已编写
+- [x] `config.yaml.example` 已编写
 
 ---
 
@@ -153,7 +152,7 @@ mcp/mcp-feishu-server/src/
 3. `models.py`：定义飞书 API 响应模型
 
 **验收标准**：
-- [ ] 可成功获取 `tenant_access_token`
+- [x] 可成功获取 `tenant_access_token`
 - [ ] Token 过期后自动刷新
 - [ ] API 调用失败时正确抛出异常
 
@@ -207,9 +206,9 @@ feishu.v1.bitable.record.get
 ```
 
 **验收标准**：
-- [ ] 可根据关键词搜索记录
+- [x] 可根据关键词搜索记录
 - [ ] 可根据日期范围过滤
-- [ ] 返回的 `record_url` 可正常打开
+- [x] 返回的 `record_url` 可正常打开
 - [ ] 单条记录查询正常
 
 ---
@@ -281,10 +280,10 @@ GET /health
 ```
 
 **验收标准**：
-- [ ] 服务可正常启动（`uvicorn`）
-- [ ] `/health` 返回 200
-- [ ] `/mcp/tools` 返回工具列表
-- [ ] `/mcp/tools/feishu.v1.bitable.search` 可正常调用
+- [x] 服务可正常启动（`uvicorn`）
+- [x] `/health` 返回 200
+- [x] `/mcp/tools` 返回工具列表
+- [x] `/mcp/tools/feishu.v1.bitable.search` 可正常调用
 
 ---
 
@@ -370,7 +369,7 @@ class MCPClient:
 ```
 
 **验收标准**：
-- [ ] 可正常调用 MCP Server 工具
+- [x] 可正常调用 MCP Server 工具
 - [ ] 错误响应正确解析
 - [ ] 超时处理正常
 
@@ -506,8 +505,8 @@ Agent 执行流程
 ```
 
 **验收标准**：
-- [ ] 用户问题可触发正确的工具调用
-- [ ] 工具结果可正确解析并生成回复
+- [x] 用户问题可触发正确的工具调用
+- [x] 工具结果可正确解析并生成回复
 - [ ] 多轮对话上下文连贯
 
 ---
@@ -794,24 +793,24 @@ services:
 ```
 Phase 1：项目初始化
   [ ] Task 1.1 飞书应用创建与配置
-  [ ] Task 1.2 项目目录结构初始化
-  [ ] Task 1.3 开发环境配置
+  [x] Task 1.2 项目目录结构初始化
+  [x] Task 1.3 开发环境配置
 
 Phase 2：MCP Server 开发
-  [ ] Task 2.1 飞书 API Client 封装
-  [ ] Task 2.2 多维表格工具开发
-  [ ] Task 2.3 文档搜索工具开发
-  [ ] Task 2.4 MCP Server HTTP 接口
+  [x] Task 2.1 飞书 API Client 封装
+  [x] Task 2.2 多维表格工具开发
+  [x] Task 2.3 文档搜索工具开发
+  [x] Task 2.4 MCP Server HTTP 接口
   [ ] Task 2.5 MCP Server 单元测试
 
 Phase 3：Feishu Agent 开发
-  [ ] Task 3.1 飞书 Webhook 接入
-  [ ] Task 3.2 MCP Client 封装
-  [ ] Task 3.3 会话管理
-  [ ] Task 3.4 LLM 调用封装
-  [ ] Task 3.5 Agent 核心编排
-  [ ] Task 3.6 时间解析工具
-  [ ] Task 3.7 消息回复
+  [x] Task 3.1 飞书 Webhook 接入
+  [x] Task 3.2 MCP Client 封装
+  [x] Task 3.3 会话管理
+  [x] Task 3.4 LLM 调用封装
+  [x] Task 3.5 Agent 核心编排
+  [x] Task 3.6 时间解析工具
+  [x] Task 3.7 消息回复
   [ ] Task 3.8 Feishu Agent 单元测试
 
 Phase 4：集成联调与部署

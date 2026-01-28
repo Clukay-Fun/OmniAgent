@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+import logging
 from typing import Any
 
 from Crypto.Cipher import AES
@@ -26,6 +27,7 @@ session_manager = SessionManager(settings.session)
 mcp_client = MCPClient(settings)
 llm_client = create_llm_client(settings.llm)
 agent_core = AgentCore(settings, session_manager, mcp_client, llm_client)
+logger = logging.getLogger(__name__)
 
 
 class EventDeduplicator:
@@ -135,6 +137,9 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
 
     try:
         reply = await agent_core.handle_message(user_id, text)
+        if chat_id.startswith("test-"):
+            logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
+            return
         if reply.get("type") == "card":
             msg_type = "interactive"
             content = reply.get("card") or {}

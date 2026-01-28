@@ -1,0 +1,20 @@
+{
+    "header": {
+        "event_id": "test-1"
+    },
+    "event": {
+        "message": {
+            "message_type": "text",
+            "chat_type": "p2p",
+            "chat_id": "test-chat",
+            "message_id": "mid-1",
+            "content": "{\"text\":\"李四\"}"
+        },
+        "sender": {
+            "sender_type": "user",
+            "sender_id": {
+                "user_id": "u1"
+            }
+        }
+    }
+}
