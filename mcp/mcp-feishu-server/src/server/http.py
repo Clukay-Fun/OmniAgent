@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from src.config import get_settings
 from src.feishu.client import FeishuClient, FeishuAPIError
@@ -16,6 +16,16 @@ from src.tools.registry import ToolRegistry
 
 
 router = APIRouter()
+
+
+@router.get("/")
+async def root() -> dict[str, str]:
+    return {"status": "ok", "service": "mcp-feishu-server"}
+
+
+@router.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @router.get("/health")

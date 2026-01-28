@@ -348,67 +348,69 @@ omniagent/                          # 项目根目录
 ├── .env.example                    # 环境变量参考（汇总）
 ├── Makefile                        # 常用命令（可选）
 │
-├── feishu-agent/                   # 飞书案件助手 Agent
-│   ├── README.md
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── config.yaml.example
-│   ├── .env.example
-│   ├── src/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── api/
-│   │   │   ├── __init__.py
-│   │   │   ├── webhook.py
-│   │   │   └── health.py
-│   │   ├── agent/
-│   │   │   ├── __init__.py
-│   │   │   ├── core.py
-│   │   │   ├── prompt.py
-│   │   │   └── session.py
-│   │   ├── llm/
-│   │   │   ├── __init__.py
-│   │   │   ├── client.py
-│   │   │   └── provider.py
-│   │   ├── mcp/
-│   │   │   ├── __init__.py
-│   │   │   └── client.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── time_parser.py
-│   │       └── logger.py
-│   └── tests/
+├── agent/
+│   └── feishu-agent/               # 飞书案件助手 Agent
+│       ├── README.md
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       ├── config.yaml.example
+│       ├── .env.example
+│       ├── src/
+│       │   ├── main.py
+│       │   ├── config.py
+│       │   ├── api/
+│       │   │   ├── __init__.py
+│       │   │   ├── webhook.py
+│       │   │   └── health.py
+│       │   ├── agent/
+│       │   │   ├── __init__.py
+│       │   │   ├── core.py
+│       │   │   ├── prompt.py
+│       │   │   └── session.py
+│       │   ├── llm/
+│       │   │   ├── __init__.py
+│       │   │   ├── client.py
+│       │   │   └── provider.py
+│       │   ├── mcp/
+│       │   │   ├── __init__.py
+│       │   │   └── client.py
+│       │   └── utils/
+│       │       ├── __init__.py
+│       │       ├── time_parser.py
+│       │       └── logger.py
+│       └── tests/
 │
-├── mcp-feishu-server/              # 飞书 MCP Server（可复用）
-│   ├── README.md
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── config.yaml.example
-│   ├── .env.example
-│   ├── src/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── server/
-│   │   │   ├── __init__.py
-│   │   │   ├── http.py
-│   │   │   ├── stdio.py
-│   │   │   └── sse.py
-│   │   ├── tools/
-│   │   │   ├── __init__.py
-│   │   │   ├── registry.py
-│   │   │   ├── bitable.py
-│   │   │   ├── doc.py
-│   │   │   └── file.py
-│   │   ├── feishu/
-│   │   │   ├── __init__.py
-│   │   │   ├── client.py
-│   │   │   ├── token.py
-│   │   │   └── models.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── url_builder.py
-│   │       └── logger.py
-│   └── tests/
+├── mcp/
+│   └── mcp-feishu-server/          # 飞书 MCP Server（可复用）
+│       ├── README.md
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       ├── config.yaml.example
+│       ├── .env.example
+│       ├── src/
+│       │   ├── main.py
+│       │   ├── config.py
+│       │   ├── server/
+│       │   │   ├── __init__.py
+│       │   │   ├── http.py
+│       │   │   ├── stdio.py
+│       │   │   └── sse.py
+│       │   ├── tools/
+│       │   │   ├── __init__.py
+│       │   │   ├── registry.py
+│       │   │   ├── bitable.py
+│       │   │   ├── doc.py
+│       │   │   └── file.py
+│       │   ├── feishu/
+│       │   │   ├── __init__.py
+│       │   │   ├── client.py
+│       │   │   ├── token.py
+│       │   │   └── models.py
+│       │   └── utils/
+│       │       ├── __init__.py
+│       │       ├── url_builder.py
+│       │       └── logger.py
+│       └── tests/
 │
 └── shared/                         # [可选] Phase 1 不创建
 ```
@@ -450,7 +452,7 @@ Docker Compose 结构建议
 version: '3.8'
 services:
   feishu-agent:
-    build: ./feishu-agent
+    build: ./agent/feishu-agent
     ports:
       - "8080:8080"
     environment:
@@ -466,7 +468,7 @@ services:
           memory: 1G
 
   mcp-feishu-server:
-    build: ./mcp-feishu-server
+    build: ./mcp/mcp-feishu-server
     ports:
       - "8081:8081"
     # stdio 模式下可作为 sidecar 或合并到 feishu-agent
@@ -513,8 +515,8 @@ services:
 - `LLM_FALLBACK_API_KEY`
 
 配置文件放置
-- `feishu-agent/config.yaml.example`：Agent 专属配置
-- `mcp-feishu-server/config.yaml.example`：MCP Server 专属配置
+- `agent/feishu-agent/config.yaml.example`：Agent 专属配置
+- `mcp/mcp-feishu-server/config.yaml.example`：MCP Server 专属配置
 - 根目录 `.env.example`：变量汇总参考（可选）
 
 重复配置处理

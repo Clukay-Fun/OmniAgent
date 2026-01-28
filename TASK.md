@@ -59,18 +59,18 @@
 
 **执行命令**：
 ```bash
-mkdir -p omniagent/{feishu-agent,mcp-feishu-server}
+mkdir -p omniagent/{agent/feishu-agent,mcp/mcp-feishu-server}
 
 # MCP Server 结构
-mkdir -p omniagent/mcp-feishu-server/{src/{server,tools,feishu,utils},tests}
+mkdir -p omniagent/mcp/mcp-feishu-server/{src/{server,tools,feishu,utils},tests}
 
 # Feishu Agent 结构
-mkdir -p omniagent/feishu-agent/{src/{api,agent,llm,mcp,utils},tests}
+mkdir -p omniagent/agent/feishu-agent/{src/{api,agent,llm,mcp,utils},tests}
 
 # 创建基础文件
 touch omniagent/{README.md,docker-compose.yml,.env.example,.gitignore}
-touch omniagent/mcp-feishu-server/{README.md,Dockerfile,requirements.txt,config.yaml.example,.env.example}
-touch omniagent/feishu-agent/{README.md,Dockerfile,requirements.txt,config.yaml.example,.env.example}
+touch omniagent/mcp/mcp-feishu-server/{README.md,Dockerfile,requirements.txt,config.yaml.example,.env.example}
+touch omniagent/agent/feishu-agent/{README.md,Dockerfile,requirements.txt,config.yaml.example,.env.example}
 
 # 各模块 __init__.py
 find omniagent -type d -name "src" -exec sh -c 'find "{}" -type d -exec touch {}/__init__.py \;' \;
@@ -93,7 +93,7 @@ find omniagent -type d -name "src" -exec sh -c 'find "{}" -type d -exec touch {}
 3. 配置 `.env.example` 模板
 4. 配置 `config.yaml.example` 模板
 
-**mcp-feishu-server/requirements.txt**：
+**mcp/mcp-feishu-server/requirements.txt**：
 ```
 fastapi>=0.109.0
 uvicorn>=0.27.0
@@ -104,7 +104,7 @@ pyyaml>=6.0
 python-dotenv>=1.0.0
 ```
 
-**feishu-agent/requirements.txt**：
+**agent/feishu-agent/requirements.txt**：
 ```
 fastapi>=0.109.0
 uvicorn>=0.27.0
@@ -133,7 +133,7 @@ pycryptodome>=3.20.0    # 飞书消息解密
 
 **开发文件**：
 ```
-mcp-feishu-server/src/
+mcp/mcp-feishu-server/src/
 ├── config.py              # 配置加载
 └── feishu/
     ├── __init__.py
@@ -165,7 +165,7 @@ mcp-feishu-server/src/
 
 **开发文件**：
 ```
-mcp-feishu-server/src/
+mcp/mcp-feishu-server/src/
 ├── tools/
 │   ├── __init__.py
 │   ├── base.py            # 工具基类
@@ -220,7 +220,7 @@ feishu.v1.bitable.record.get
 
 **开发文件**：
 ```
-mcp-feishu-server/src/tools/
+mcp/mcp-feishu-server/src/tools/
 └── doc.py                 # 文档搜索工具
 ```
 
@@ -254,7 +254,7 @@ feishu.v1.doc.search
 
 **开发文件**：
 ```
-mcp-feishu-server/src/
+mcp/mcp-feishu-server/src/
 ├── main.py                # FastAPI 入口
 └── server/
     ├── __init__.py
@@ -294,7 +294,7 @@ GET /health
 
 **开发文件**：
 ```
-mcp-feishu-server/tests/
+mcp/mcp-feishu-server/tests/
 ├── conftest.py            # 测试配置
 ├── test_token.py          # Token 管理测试
 ├── test_bitable.py        # 多维表格工具测试
@@ -317,7 +317,7 @@ mcp-feishu-server/tests/
 
 **开发文件**：
 ```
-feishu-agent/src/
+agent/feishu-agent/src/
 ├── main.py                # FastAPI 入口
 ├── config.py              # 配置加载
 └── api/
@@ -356,7 +356,7 @@ Webhook 处理流程
 
 **开发文件**：
 ```
-feishu-agent/src/mcp/
+agent/feishu-agent/src/mcp/
 ├── __init__.py
 └── client.py              # MCP 调用封装
 ```
@@ -382,7 +382,7 @@ class MCPClient:
 
 **开发文件**：
 ```
-feishu-agent/src/agent/
+agent/feishu-agent/src/agent/
 ├── __init__.py
 └── session.py             # 会话管理
 ```
@@ -420,7 +420,7 @@ SessionManager
 
 **开发文件**：
 ```
-feishu-agent/src/llm/
+agent/feishu-agent/src/llm/
 ├── __init__.py
 ├── client.py              # 统一调用接口
 └── provider.py            # 多模型适配
@@ -459,7 +459,7 @@ class LLMClient:
 
 **开发文件**：
 ```
-feishu-agent/src/agent/
+agent/feishu-agent/src/agent/
 ├── core.py                # Agent 编排核心
 └── prompt.py              # Prompt 模板
 ```
@@ -518,7 +518,7 @@ Agent 执行流程
 
 **开发文件**：
 ```
-feishu-agent/src/utils/
+agent/feishu-agent/src/utils/
 └── time_parser.py         # 时间解析
 ```
 
@@ -548,7 +548,7 @@ feishu-agent/src/utils/
 
 **开发文件**：
 ```
-feishu-agent/src/api/
+agent/feishu-agent/src/api/
 └── webhook.py             # 补充回复逻辑
 ```
 
@@ -583,7 +583,7 @@ feishu-agent/src/api/
 
 **开发文件**：
 ```
-feishu-agent/tests/
+agent/feishu-agent/tests/
 ├── conftest.py
 ├── test_webhook.py        # Webhook 处理测试
 ├── test_session.py        # 会话管理测试
@@ -633,8 +633,8 @@ feishu-agent/tests/
 
 **开发文件**：
 ```
-mcp-feishu-server/Dockerfile
-feishu-agent/Dockerfile
+mcp/mcp-feishu-server/Dockerfile
+agent/feishu-agent/Dockerfile
 omniagent/docker-compose.yml
 ```
 
@@ -654,11 +654,11 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8081"]
 version: '3.8'
 services:
   mcp-feishu:
-    build: ./mcp-feishu-server
+    build: ./mcp/mcp-feishu-server
     ports:
       - "8081:8081"
     env_file:
-      - ./mcp-feishu-server/.env
+      - ./mcp/mcp-feishu-server/.env
     restart: unless-stopped
     deploy:
       resources:
@@ -666,11 +666,11 @@ services:
           memory: 256M
 
   feishu-agent:
-    build: ./feishu-agent
+    build: ./agent/feishu-agent
     ports:
       - "8080:8080"
     env_file:
-      - ./feishu-agent/.env
+      - ./agent/feishu-agent/.env
     environment:
       - MCP_SERVER_BASE=http://mcp-feishu:8081
     depends_on:

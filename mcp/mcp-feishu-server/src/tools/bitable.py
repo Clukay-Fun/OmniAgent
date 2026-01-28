@@ -77,6 +77,19 @@ def parse_field_value(value: Any) -> Any:
     return str(value)
 
 
+async def _fetch_field_names(tool: "BitableSearchTool", app_token: str, table_id: str) -> set[str]:
+    try:
+        response = await tool.context.client.request(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+        )
+        data = response.get("data") or {}
+        items = data.get("items") or []
+        return {item.get("field_name") for item in items if item.get("field_name")}
+    except Exception:
+        return set()
+
+
 @ToolRegistry.register
 class BitableSearchTool(BaseTool):
     name = "feishu.v1.bitable.search"
@@ -96,24 +109,51 @@ class BitableSearchTool(BaseTool):
         if not app_token or not table_id:
             return {"records": [], "total": 0}
 
+        field_names = await _fetch_field_names(self, app_token, table_id)
         hearing_field = settings.bitable.field_mapping.get("hearing_date", "开庭日")
-        keyword_fields = settings.bitable.search.searchable_fields
-        keyword_field = keyword_fields[0] if keyword_fields else hearing_field
+        if hearing_field and field_names and hearing_field not in field_names:
+            hearing_field = ""
 
-        conditions: list[dict[str, Any]] = []
+        keyword_fields = settings.bitable.search.searchable_fields
+        keyword_candidates = [
+            field for field in keyword_fields if not field_names or field in field_names
+        ]
+        if not keyword_candidates and hearing_field:
+            keyword_candidates = [hearing_field]
+
+        keyword_conditions: list[dict[str, Any]] = []
         if keyword:
-            conditions.append(_build_keyword_condition(keyword, keyword_field))
-        conditions.extend(_build_date_conditions(hearing_field, date_from, date_to))
-        conditions.extend(_build_filters(filters))
+            for field in keyword_candidates:
+                keyword_conditions.append(_build_keyword_condition(keyword, field))
+
+        date_conditions: list[dict[str, Any]] = []
+        if hearing_field:
+            date_conditions = _build_date_conditions(hearing_field, date_from, date_to)
+        extra_conditions = _build_filters(filters)
+
+        conjunction = "and"
+        if keyword_conditions and not date_conditions and not extra_conditions:
+            conditions = keyword_conditions
+            if len(keyword_conditions) > 1:
+                conjunction = "or"
+        else:
+            conditions = []
+            if keyword_conditions:
+                conditions.append(keyword_conditions[0])
+            conditions.extend(date_conditions)
+            conditions.extend(extra_conditions)
 
         limit = int(params.get("limit") or settings.bitable.search.default_limit)
         limit = min(limit, settings.bitable.search.max_records)
         page_token = params.get("page_token")
 
-        field_names = sorted({
-            *settings.bitable.field_mapping.values(),
-            hearing_field,
-        })
+        if field_names:
+            return_fields = {name for name in settings.bitable.field_mapping.values() if name in field_names}
+            if hearing_field:
+                return_fields.add(hearing_field)
+            field_names = sorted(return_fields)
+        else:
+            field_names = []
 
         payload: dict[str, Any] = {
             "page_size": limit,
@@ -124,10 +164,11 @@ class BitableSearchTool(BaseTool):
             payload["field_names"] = field_names
         if conditions:
             payload["filter"] = {
-                "conjunction": "and",
+                "conjunction": conjunction,
                 "conditions": conditions,
             }
-        payload["sort"] = [{"field_name": hearing_field, "desc": False}]
+        if hearing_field:
+            payload["sort"] = [{"field_name": hearing_field, "desc": False}]
         if page_token:
             payload["page_token"] = page_token
 
