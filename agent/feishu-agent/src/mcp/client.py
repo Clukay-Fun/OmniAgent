@@ -13,7 +13,10 @@ from src.config import Settings
 
 
 class MCPClientError(RuntimeError):
-    pass
+    def __init__(self, code: str, message: str, detail: object | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.detail = detail
 
 
 class MCPClient:
@@ -34,14 +37,24 @@ class MCPClient:
                 payload = response.json()
                 if not payload.get("success"):
                     error = payload.get("error") or {}
-                    raise MCPClientError(error.get("message") or "MCP tool error")
+                    raise MCPClientError(
+                        code=error.get("code") or "MCP_ERROR",
+                        message=error.get("message") or "MCP tool error",
+                        detail=error.get("detail"),
+                    )
                 return payload.get("data") or {}
-            except (httpx.HTTPError, MCPClientError) as exc:
+            except httpx.TimeoutException as exc:
                 if attempt >= retries:
-                    raise MCPClientError(str(exc)) from exc
-                await asyncio.sleep(delay * (2 ** attempt))
+                    raise MCPClientError("TIMEOUT", "MCP request timed out") from exc
+            except httpx.HTTPError as exc:
+                if attempt >= retries:
+                    raise MCPClientError("HTTP_ERROR", str(exc)) from exc
+            except MCPClientError:
+                if attempt >= retries:
+                    raise
+            await asyncio.sleep(delay * (2 ** attempt))
 
-        raise MCPClientError("MCP tool request failed")
+        raise MCPClientError("MCP_ERROR", "MCP tool request failed")
 
     async def list_tools(self) -> list[dict[str, Any]]:
         url = f"{self._settings.mcp.base_url}/mcp/tools"

@@ -36,16 +36,16 @@ class EventDeduplicator:
         self._max_size = max_size
         self._items: dict[str, float] = {}
 
-    def is_duplicate(self, event_id: str) -> bool:
+    def is_duplicate(self, key: str) -> bool:
         now = time.time()
         self._items = {
             key: ts for key, ts in self._items.items() if now - ts <= self._ttl
         }
-        if event_id in self._items:
+        if key in self._items:
             return True
         if len(self._items) >= self._max_size:
             self._items.pop(next(iter(self._items)))
-        self._items[event_id] = now
+        self._items[key] = now
         return False
 
 
@@ -107,12 +107,16 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
             raise HTTPException(status_code=401, detail="Verification failed")
 
     event_id = header.get("event_id") or payload.get("event_id")
-    if event_id and settings.webhook.dedup.enabled and deduplicator.is_duplicate(event_id):
         return {"status": "duplicate"}
 
     event = payload.get("event") or {}
     message = event.get("message") or {}
     sender = event.get("sender") or {}
+
+    message_id = message.get("message_id") or message.get("messageId")
+    dedup_key = message_id or event_id
+    if dedup_key and settings.webhook.dedup.enabled and deduplicator.is_duplicate(dedup_key):
+        return {"status": "duplicate"}
 
     if settings.webhook.filter.ignore_bot_message and sender.get("sender_type") == "bot":
         return {"status": "ignored"}

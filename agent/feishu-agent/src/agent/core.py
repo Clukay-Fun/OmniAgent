@@ -27,6 +27,7 @@ class AgentCore:
         self._llm = llm_client
 
     async def handle_message(self, user_id: str, text: str) -> dict[str, Any]:
+        self._sessions.cleanup_expired()
         self._sessions.add_message(user_id, "user", text)
         tool_name = self._select_tool(text)
 
@@ -40,8 +41,14 @@ class AgentCore:
         if tool_name == "feishu.v1.doc.search":
             params = {"keyword": keyword or text}
 
-        result = await self._mcp.call_tool(tool_name, params)
-        reply = self._format_reply(tool_name, text, result)
+        try:
+            result = await self._mcp.call_tool(tool_name, params)
+            reply = self._format_reply(tool_name, text, result)
+        except Exception as exc:
+            message = self._settings.reply.templates.error.format(message=str(exc))
+            if "TIMEOUT" in str(exc):
+                message = self._settings.reply.templates.timeout
+            reply = {"type": "text", "text": message}
         self._sessions.add_message(user_id, "assistant", reply["text"])
         return reply
 
