@@ -153,7 +153,7 @@ mcp/mcp-feishu-server/src/
 
 **验收标准**：
 - [x] 可成功获取 `tenant_access_token`
-- [ ] Token 过期后自动刷新
+- [x] Token 过期后自动刷新
 - [ ] API 调用失败时正确抛出异常
 
 ---
@@ -302,9 +302,9 @@ mcp/mcp-feishu-server/tests/
 ```
 
 **验收标准**：
-- [ ] Token 获取与刷新测试通过
-- [ ] 工具调用测试通过（可用 mock）
-- [ ] HTTP 接口测试通过
+- [x] Token 获取与刷新测试通过
+- [x] 工具调用测试通过（可用 mock）
+- [x] HTTP 接口测试通过
 
 ---
 
@@ -591,9 +591,9 @@ agent/feishu-agent/tests/
 ```
 
 **验收标准**：
-- [ ] Webhook 验签测试通过
-- [ ] 会话管理逻辑测试通过
-- [ ] Agent 编排测试通过（mock LLM 和 MCP）
+- [x] Webhook 验签测试通过
+- [x] 会话管理逻辑测试通过
+- [x] Agent 编排测试通过（mock LLM 和 MCP）
 
 ---
 
@@ -801,7 +801,7 @@ Phase 2：MCP Server 开发
   [x] Task 2.2 多维表格工具开发
   [x] Task 2.3 文档搜索工具开发
   [x] Task 2.4 MCP Server HTTP 接口
-  [ ] Task 2.5 MCP Server 单元测试
+  [x] Task 2.5 MCP Server 单元测试
 
 Phase 3：Feishu Agent 开发
   [x] Task 3.1 飞书 Webhook 接入
@@ -811,7 +811,7 @@ Phase 3：Feishu Agent 开发
   [x] Task 3.5 Agent 核心编排
   [x] Task 3.6 时间解析工具
   [x] Task 3.7 消息回复
-  [ ] Task 3.8 Feishu Agent 单元测试
+  [x] Task 3.8 Feishu Agent 单元测试
 
 Phase 4：集成联调与部署
   [x] Task 4.1 本地联调
