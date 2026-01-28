@@ -166,9 +166,9 @@ class LoggingSettings(BaseModel):
 
 class RateLimitSettings(BaseModel):
     enabled: bool = True
-    user_rpm: int = 20
-    global_rpm: int = 100
-    max_concurrency: int = 3
+    user_rpm: int = 30
+    global_rpm: int = 300
+    max_concurrency: int = 10
 
 
 class HealthDependency(BaseModel):

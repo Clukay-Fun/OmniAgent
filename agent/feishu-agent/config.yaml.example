@@ -227,11 +227,11 @@ logging:
 rate_limit:
   enabled: true
   # 单用户每分钟最大请求数
-  user_rpm: 20
+  user_rpm: 30
   # 全局每分钟最大请求数
-  global_rpm: 100
+  global_rpm: 300
   # 最大并发数
-  max_concurrency: 3
+  max_concurrency: 10
 
 # ------------------------------------------------------------
 # 健康检查配置
