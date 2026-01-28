@@ -83,6 +83,11 @@ def _get_text_content(message: dict[str, Any]) -> str:
         return ""
 
 
+@router.get("/feishu/webhook")
+async def feishu_webhook_get() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @router.post("/feishu/webhook")
 async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, str]:
     payload = await request.json()
