@@ -4,7 +4,7 @@ Bitable tools.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 import ast
 import re
@@ -104,7 +104,7 @@ def parse_field_value(value: Any) -> Any:
     return str(value)
 
 
-async def _fetch_field_names(tool: "BitableSearchTool", app_token: str, table_id: str) -> set[str]:
+async def _fetch_fields_info(tool: "BitableSearchTool", app_token: str, table_id: str) -> dict[str, int]:
     try:
         response = await tool.context.client.request(
             "GET",
@@ -112,9 +112,32 @@ async def _fetch_field_names(tool: "BitableSearchTool", app_token: str, table_id
         )
         data = response.get("data") or {}
         items = data.get("items") or []
-        return {item.get("field_name") for item in items if item.get("field_name")}
+        return {
+            item.get("field_name"): int(item.get("field_type"))
+            for item in items
+            if item.get("field_name")
+        }
     except Exception:
-        return set()
+        return {}
+
+
+def _parse_date_text(value: Any) -> date | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value / 1000).date()
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            return None
+    return None
 
 
 @ToolRegistry.register
@@ -136,7 +159,8 @@ class BitableSearchTool(BaseTool):
         if not app_token or not table_id:
             return {"records": [], "total": 0}
 
-        field_names = await _fetch_field_names(self, app_token, table_id)
+        field_info = await _fetch_fields_info(self, app_token, table_id)
+        field_names = set(field_info.keys())
         normalized_lookup = {
             _normalize_field_name(name): name for name in field_names
         }
@@ -167,8 +191,12 @@ class BitableSearchTool(BaseTool):
                 keyword_conditions.append(_build_keyword_condition(keyword, field))
 
         date_conditions: list[dict[str, Any]] = []
+        date_filter_supported = False
         if hearing_field:
-            date_conditions = _build_date_conditions(hearing_field, date_from, date_to)
+            field_type = field_info.get(hearing_field)
+            date_filter_supported = field_type in {5, 6, 7}
+            if date_filter_supported:
+                date_conditions = _build_date_conditions(hearing_field, date_from, date_to)
         extra_conditions = _build_filters(filters)
 
         conjunction = "and"
@@ -211,7 +239,7 @@ class BitableSearchTool(BaseTool):
                 "conjunction": conjunction,
                 "conditions": conditions,
             }
-        if hearing_field:
+        if hearing_field and date_filter_supported:
             payload["sort"] = [{"field_name": hearing_field, "desc": False}]
         if page_token:
             payload["page_token"] = page_token
@@ -251,6 +279,24 @@ class BitableSearchTool(BaseTool):
                 "fields_text": fields_text,
                 "record_url": record_url,
             })
+
+        if (date_from or date_to) and hearing_field and not date_filter_supported:
+            start_date = _parse_date_text(date_from)
+            end_date = _parse_date_text(date_to)
+            filtered = []
+            for record in records:
+                value = record["fields_text"].get(hearing_field) or record["fields_text"].get(
+                    _normalize_field_name(hearing_field)
+                )
+                record_date = _parse_date_text(value)
+                if not record_date:
+                    continue
+                if start_date and record_date < start_date:
+                    continue
+                if end_date and record_date > end_date:
+                    continue
+                filtered.append(record)
+            records = filtered
 
         total = data.get("total") or len(records)
         return {
