@@ -199,6 +199,13 @@ class SkillRouter:
         """执行单个技能"""
         import time
         from src.utils.metrics import record_skill_execution
+        from src.utils.exceptions import (
+            SkillNotFoundError,
+            SkillExecutionError,
+            LLMTimeoutError,
+            MCPTimeoutError,
+            get_user_message,
+        )
         
         skill = self._skills.get(skill_name)
         if not skill:
@@ -232,9 +239,19 @@ class SkillRouter:
                 },
             )
             return result
+        except (LLMTimeoutError, MCPTimeoutError) as e:
+            # 超时错误：记录但给用户友好提示
+            status = "timeout"
+            logger.warning(f"Skill timeout: {skill_name} - {e}")
+            return SkillResult(
+                success=False,
+                skill_name=skill_name,
+                message=str(e),
+                reply_text=get_user_message(e),
+            )
         except Exception as e:
             status = "error"
-            logger.error(f"Skill execution error: {skill_name} - {e}")
+            logger.error(f"Skill execution error: {skill_name} - {e}", exc_info=True)
             return SkillResult(
                 success=False,
                 skill_name=skill_name,
@@ -244,6 +261,7 @@ class SkillRouter:
         finally:
             duration = time.perf_counter() - start_time
             record_skill_execution(skill_name, status, duration)
+
 
 
     async def _execute_chain(
