@@ -597,6 +597,64 @@ agent/feishu-agent/tests/
 
 ---
 
+### Task 3.9 Skill System 细节落地
+
+**目标**：固化意图分类 JSON 输出、SummarySkill 字段默认与扩展、Reminder 缺时间策略
+
+**开发文件**：
+```
+agent/feishu-agent/src/agent/
+├── intent.py              # 意图分类 + LLM prompt
+├── router.py              # 技能路由/链式
+└── skills/
+    ├── summary.py         # SummarySkill
+    └── reminder.py        # ReminderSkill
+```
+
+**核心逻辑**：
+1. IntentParser 固定 JSON 输出：skills Top-3（含 name/score/reason）+ is_chain
+2. SummarySkill 默认字段：案号、案由、当事人、开庭日、主办律师；“详细总结”时扩展审理法院、案件状态
+3. ReminderSkill 缺时间默认今天 18:00，并告知可修改
+
+**验收标准**：
+- [ ] IntentParser 输出 JSON 结构稳定，reason 字段可用于日志调试
+- [ ] SummarySkill 默认字段与扩展字段生效
+- [ ] ReminderSkill 缺时间时自动填充 18:00 并提示用户修改方式
+
+---
+
+### Task 3.10 配置与可观测性
+
+**目标**：配置外置 + 热更新 + 结构化日志 + 超时兜底
+
+**开发文件**：
+```
+config/
+├── agent.yaml        # 技能阈值、LLM timeout
+├── skills.yaml       # 技能关键词与规则
+└── prompts.yaml      # LLM Prompt 模板
+
+agent/feishu-agent/src/
+├── utils/config.py   # 配置读取与定时 reload
+└── utils/logger.py   # JSON 结构化日志
+```
+
+**核心逻辑**：
+1. 配置外置到根目录 `config/`，容器挂载 `/app/config`
+2. 固定周期 reload（60s），无 watchdog 依赖
+3. LLM 调用超时 10s，超时走 Chitchat 兜底
+4. Skill 路由日志：query → skill → score → result
+5. Skill 失败返回友好提示，避免暴露技术细节
+
+**验收标准**：
+- [ ] `config/` 中关键词与阈值生效
+- [ ] 60s 内配置修改可生效
+- [ ] 日志为 JSON 结构化，包含路由与耗时字段
+- [ ] LLM 超时进入兜底流程
+- [ ] 技能失败时返回友好提示
+
+---
+
 ## Phase 4：集成联调与部署
 
 ### Task 4.1 本地联调
@@ -812,6 +870,8 @@ Phase 3：Feishu Agent 开发
   [x] Task 3.6 时间解析工具
   [x] Task 3.7 消息回复
   [x] Task 3.8 Feishu Agent 单元测试
+  [ ] Task 3.9 Skill System 细节落地
+  [ ] Task 3.10 配置与可观测性
 
 Phase 4：集成联调与部署
   [x] Task 4.1 本地联调

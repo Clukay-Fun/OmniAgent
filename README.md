@@ -17,7 +17,33 @@
 - `docker-compose.yml` 与 `docker-compose.dev.yml` 已准备，支持热更新
 - 待办：单元测试、飞书真实回调与部署流程
 
+## Skill System（规划中）
+
+- 路由策略：规则优先 + LLM 兜底，固定 JSON（skills Top-3 + score + reason + is_chain）
+- 多技能冲突：自动链式 Query → Summary（max_hops=2）
+- SummarySkill：LLM 总结 + 模板标题，默认 5 字段（案号/案由/当事人/开庭日/主办律师），可扩展（审理法院/案件状态）
+- ReminderSkill：Postgres 存取（Phase 1），定时推送（Phase 2），缺时间默认今天 18:00 并告知
+- Chitchat：受限聊天（问候/帮助白名单）
+- 配置外置：根目录 `config/`，关键词/阈值热更新（60s）
+- 超时与兜底：LLM 调用 10s 超时，转 Chitchat 引导
+- 日志：JSON 结构化（路由/耗时/结果条数）
+
+Intent 输出固定 JSON 示例：
+```json
+{
+  "skills": [
+    {"name": "QuerySkill", "score": 0.82, "reason": "包含查+案"}
+  ],
+  "is_chain": false
+}
+```
+
 ## 架构概览
+
+简化流程
+```
+用户 → Feishu → Agent → Skills → MCP/LLM
+```
 
 ```mermaid
 flowchart LR
@@ -212,6 +238,7 @@ SSE 事件类型：`status` / `progress` / `chunk` / `done` / `error`
 
 ```
 OmniAgent/
+├── config/                # 统一配置目录（agent.yaml/skills.yaml/prompts.yaml）
 ├── .backend/              # 后端服务（universal-rag 内核）
 │   ├── api/               # FastAPI 路由
 │   ├── services/          # 业务服务与 Agent Loop
@@ -295,6 +322,13 @@ POST /agents/{agent_id}/datasources
 - `VISION_MODEL`：`THUDM/GLM-4.1V-9B-Thinking`
 - `REASONING_MODEL`：`deepseek-ai/DeepSeek-R1-0528-Qwen3-8B`
 - `CHAT_MODEL`：`internlm/internlm2_5-7b-chat`
+
+## 配置目录（规划中）
+
+- `config/agent.yaml`：技能阈值与超时
+- `config/skills.yaml`：关键词与规则
+- `config/prompts.yaml`：LLM Prompt 模板
+- 热更新：固定周期 reload（60s）
 
 ## 与 universal-rag 的差异
 

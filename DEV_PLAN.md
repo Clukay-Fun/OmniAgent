@@ -30,6 +30,16 @@
 - 存储策略：不落库，实时检索
 - 前端交互：不单独建设 Web 前端，直接在飞书 App 内对话
 - shared：Phase 1 不启用，第二个 Agent 出现再启用
+- Skill System：规则优先 + LLM 兜底，固定 JSON（Top-3 + score + reason）
+- 多技能冲突：自动链式 Query → Summary（max_hops=2）
+- SummarySkill：LLM 总结 + 模板标题，默认 5 字段，可扩展
+- 受限聊天：白名单问候/帮助，敏感话题拒答
+- Reminder：Phase 1 仅存取（Postgres），缺时间默认今天 18:00 并告知
+- 配置外置：根目录 /config/（agent.yaml / skills.yaml / prompts.yaml）
+- 配置热更新：固定周期 reload（60s）
+- LLM 超时：10s，超时走 Chitchat 兜底
+- 错误处理：对用户友好提示 + 记录日志（不暴露技术细节）
+- 日志：JSON 结构化
 
 ## 技术选型
 
@@ -39,6 +49,7 @@
 - 飞书接入：Tenant App Access（应用级）
 - 部署：Docker + Docker Compose + Nginx（可选）
 - 存储：不落库（Phase 1），必要时再引入 Postgres + pgvector
+- Reminder 存储：Postgres（Phase 1）
 
 ## LLM 选型与配置
 
@@ -71,13 +82,106 @@
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
+系统架构（完整版 ASCII）
+```
+[User] -> [Feishu Webhook] -> [Agent Container]
+                              |
+                              |  +-------------------------------+
+                              |  | Context Manager                |
+                              |  | last_query / last_result / ... |
+                              |  +-------------------------------+
+                              |  | Skill Manager                  |
+                              |  | IntentParser -> Router -> Chain|
+                              |  | (max_hops=2)                   |
+                              |  +-------------------------------+
+                              |  | Skills                         |
+                              |  | Query / Summary / Reminder     |
+                              |  | Chitchat                       |
+                              |  +-------------------------------+
+                              |  | LLM Client                     |
+                              |  | Intent/Summary/Reminder        |
+                              |  +-------------------------------+
+                              |            |             |
+                              |            |             +--> [Postgres]
+                              |            |
+                              |            +--> [MCP Server] -> [Feishu Bitable]
+                              |
+                              +--> [Feishu Reply]
+```
+
 数据流（一次问答）
 1. 用户私聊发送问题
 2. Webhook 接收消息事件并验签
 3. 解析消息文本，映射/创建 feishu-agent 会话
-4. feishu-agent 调用 MCP 工具检索数据
-5. 聚合检索结果并生成回答
+4. Skill Manager 进行意图解析与技能路由
+5. 命中技能后调用 MCP/LLM/DB
+6. 聚合检索结果并生成回答
 6. 回传飞书私聊回复（可选附带引用链接）
+
+请求流程示例（Query -> Summary）
+```
+用户: "帮我总结今天开庭的案子"
+  -> IntentParser (规则命中 Query + Summary)
+  -> SkillRouter (识别链式)
+  -> SkillChain [QuerySkill, SummarySkill]
+     - QuerySkill: 调 MCP 查询案件，写入 last_result
+     - SummarySkill: 基于 last_result 生成摘要与表格
+  -> 返回结果
+```
+
+## Skill System 设计
+
+组件
+- IntentParser：规则打分 + LLM 兜底（Top-3 + score + reason，固定 JSON）
+  - 规则关键词与阈值来自 `config/skills.yaml`
+- SkillRouter：选择单技能或 SkillChain
+- SkillChain：支持 Query → Summary，max_hops=2
+- ContextManager：维护 last_result/last_query/last_skill
+
+技能清单（Phase 1）
+- QuerySkill：案件查询（单表）
+- SummarySkill：LLM 总结 last_query_result（默认 5 字段，可扩展）
+- ReminderSkill：提醒存取（Postgres）
+- ChitchatSkill：受限闲聊与引导
+
+Intent 输出结构（固定 JSON，skills 为 Top-3）
+```json
+{
+  "skills": [
+    {"name": "QuerySkill", "score": 0.82, "reason": "包含查+案"}
+  ],
+  "is_chain": false
+}
+```
+
+LLM 意图分类 Prompt（固定 JSON）
+```text
+你是一个意图分类器。根据用户输入，判断最匹配的技能。
+
+可用技能：
+- QuerySkill: 查询案件、开庭、当事人等信息
+- SummarySkill: 总结、汇总、概括查询结果
+- ReminderSkill: 创建提醒、待办事项
+- ChitchatSkill: 闲聊、问候、无法识别的请求
+
+用户输入：{query}
+
+请返回 JSON（不要输出其他内容）：
+{
+  "skills": [
+    {"name": "技能名", "score": 0.0-1.0, "reason": "简短理由"}
+  ],
+  "is_chain": false
+}
+```
+
+SummarySkill 输出字段
+- 默认字段：案号、案由、当事人、开庭日、主办律师
+- 可扩展字段：审理法院、案件状态（当用户明确要求“详细总结”或通过参数扩展）
+
+ReminderSkill 时间缺失处理
+- 未指定时间时默认「今天 18:00」
+- 必须显式告知默认时间，并提示可修改
 
 ## MCP 通信模式
 
@@ -330,6 +434,7 @@ System Prompt 结构
 - Webhook 接收与验签
 - LLM 调用（耗时、token 数）
 - MCP 工具调用（耗时、结果数量）
+- Skill 路由（query、skill、score、method、result_count）
 - 错误与异常
 
 ## Agent 编排策略（feishu-agent）
@@ -455,6 +560,8 @@ services:
     build: ./agent/feishu-agent
     ports:
       - "8080:8080"
+    volumes:
+      - ./config:/app/config
     environment:
       - FEISHU_APP_ID=${FEISHU_APP_ID}
       - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
@@ -497,6 +604,24 @@ services:
 按需启动 | 初期只部署 feishu-agent + mcp-feishu-server
 单 Worker | 两个服务各 1 worker
 
+## 统一配置目录
+
+推荐放置在仓库根目录 `config/`，统一挂载到容器内部使用。
+
+```
+OmniAgent/
+├── config/
+│   ├── agent.yaml        # Agent 配置（技能、阈值、超时）
+│   ├── skills.yaml       # 技能关键词与规则
+│   └── prompts.yaml      # LLM Prompt 模板
+├── agent/
+├── mcp/
+└── docker-compose.yml    # 挂载 ./config:/app/config
+```
+
+热更新策略
+- 固定周期 reload（默认 60s），无需 watchdog 依赖
+
 ## 配置与密钥
 
 建议环境变量（示例名称）
@@ -515,15 +640,18 @@ services:
 - `LLM_FALLBACK_API_KEY`
 
 配置文件放置
-- `agent/feishu-agent/config.yaml.example`：Agent 专属配置
-- `mcp/mcp-feishu-server/config.yaml.example`：MCP Server 专属配置
+- `config/agent.yaml`：Agent 运行配置（技能、阈值、超时）
+- `config/skills.yaml`：技能关键词与规则
+- `config/prompts.yaml`：LLM Prompt 模板
+- `agent/feishu-agent/config.yaml.example`：Agent 配置示例
+- `mcp/mcp-feishu-server/config.yaml.example`：MCP Server 配置示例
 - 根目录 `.env.example`：变量汇总参考（可选）
 
 重复配置处理
 - 飞书凭证通过环境变量注入
 - 各服务从环境变量读取，无需硬编码
 
-## 配置文件结构（示例）
+## 配置文件结构（agent.yaml 示例）
 
 ```yaml
 server:
@@ -553,7 +681,7 @@ llm:
   chat_model: internlm/internlm2_5-7b-chat
   temperature: 0.3
   max_tokens: 2000
-  timeout: 30
+  timeout: 10
 
 mcp:
   mode: http
@@ -567,6 +695,24 @@ session:
 logging:
   level: INFO
   format: json
+```
+
+skills.yaml 示例
+```yaml
+routing:
+  rule_threshold: 0.7
+  llm_confirm_threshold: 0.4
+  max_hops: 2
+
+skills:
+  query:
+    keywords: ["查", "查询", "查一下", "找", "搜", "搜索", "案", "案号", "开庭", "庭审"]
+  summary:
+    keywords: ["总结", "汇总", "概括", "整理"]
+  reminder:
+    keywords: ["提醒", "待办", "记得", "别忘了"]
+  chitchat:
+    keywords: ["你好", "帮助", "怎么用"]
 ```
 
 ## 里程碑与交付物
