@@ -122,18 +122,19 @@ class IntentParser:
                 method="rule",
             )
 
-        if top_score >= self._llm_confirm_threshold and self._llm:
-            # 需要 LLM 确认
-            try:
-                llm_result = await self._llm_classify(query, rule_matches[:3])
-                if llm_result:
-                    llm_result.method = "llm"
-                    llm_result.is_chain = is_chain or llm_result.is_chain
-                    return llm_result
-            except Exception as e:
-                logger.warning(f"LLM classification failed: {e}, falling back to rule")
+        if top_score >= self._llm_confirm_threshold:
+            if self._llm:
+                # 需要 LLM 确认
+                try:
+                    llm_result = await self._llm_classify(query, rule_matches[:3])
+                    if llm_result:
+                        llm_result.method = "llm"
+                        llm_result.is_chain = is_chain or llm_result.is_chain
+                        return llm_result
+                except Exception as e:
+                    logger.warning(f"LLM classification failed: {e}, falling back to rule")
 
-            # LLM 失败，使用规则结果
+            # 无 LLM 或 LLM 失败，使用规则结果
             return IntentResult(
                 skills=rule_matches[:3],
                 is_chain=is_chain,

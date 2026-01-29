@@ -870,8 +870,8 @@ Phase 3：Feishu Agent 开发
   [x] Task 3.6 时间解析工具
   [x] Task 3.7 消息回复
   [x] Task 3.8 Feishu Agent 单元测试
-  [ ] Task 3.9 Skill System 细节落地
-  [ ] Task 3.10 配置与可观测性
+  [x] Task 3.9 Skill System 细节落地
+  [x] Task 3.10 配置与可观测性
 
 Phase 4：集成联调与部署
   [x] Task 4.1 本地联调

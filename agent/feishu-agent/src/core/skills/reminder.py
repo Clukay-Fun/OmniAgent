@@ -38,7 +38,7 @@ class ReminderSkill(BaseSkill):
     DEFAULT_TIME = "18:00"
     
     # 默认时间提示语
-    DEFAULT_TIME_HINT = "已设置为今天 {time}，如需修改请回复"修改提醒时间为 XX:XX"。"
+    DEFAULT_TIME_HINT = '已设置为今天 {time}，如需修改请回复"修改提醒时间为 XX:XX"。'
 
     def __init__(
         self,
@@ -80,7 +80,7 @@ class ReminderSkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message="未识别到提醒内容",
-                reply_text="请告诉我您想提醒什么？例如："提醒我明天开会"",
+                reply_text='请告诉我您想提醒什么？例如："提醒我明天开会"',
             )
         
         # 处理缺失时间

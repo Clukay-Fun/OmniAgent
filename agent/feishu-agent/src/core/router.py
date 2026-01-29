@@ -197,11 +197,18 @@ class SkillRouter:
         context: SkillContext,
     ) -> SkillResult:
         """执行单个技能"""
+        import time
+        from src.utils.metrics import record_skill_execution
+        
         skill = self._skills.get(skill_name)
         if not skill:
             logger.warning(f"Skill not found: {skill_name}")
+            record_skill_execution(skill_name, "not_found", 0)
             return self._fallback_result(f"技能 {skill_name} 未注册")
 
+        start_time = time.perf_counter()
+        status = "success"
+        
         try:
             logger.info(
                 "Executing skill",
@@ -212,15 +219,21 @@ class SkillRouter:
                 },
             )
             result = await skill.execute(context)
+            
+            if not result.success:
+                status = "failure"
+            
             logger.info(
                 "Skill executed",
                 extra={
                     "skill": skill_name,
                     "success": result.success,
+                    "duration_ms": round((time.perf_counter() - start_time) * 1000, 2),
                 },
             )
             return result
         except Exception as e:
+            status = "error"
             logger.error(f"Skill execution error: {skill_name} - {e}")
             return SkillResult(
                 success=False,
@@ -228,6 +241,10 @@ class SkillRouter:
                 message=f"技能执行出错：{str(e)}",
                 reply_text="抱歉，处理请求时遇到问题，请稍后重试。",
             )
+        finally:
+            duration = time.perf_counter() - start_time
+            record_skill_execution(skill_name, status, duration)
+
 
     async def _execute_chain(
         self,
@@ -292,7 +309,7 @@ class SkillRouter:
             success=False,
             skill_name="fallback",
             message=message,
-            reply_text="抱歉，我暂时无法处理您的请求。试试问我"本周有什么庭"吧！",
+            reply_text='抱歉，我暂时无法处理您的请求。试试问我"本周有什么庭"吧！',
         )
 # endregion
 # ============================================
@@ -306,19 +323,27 @@ class ContextManager:
     全局上下文管理器
     
     维护每个用户的最近会话上下文，供链式调用使用
+    支持 TTL 过期清理
     """
 
     def __init__(self, ttl_minutes: int = 30) -> None:
         self._contexts: dict[str, SkillContext] = {}
-        self._ttl_minutes = ttl_minutes
+        self._timestamps: dict[str, float] = {}  # 记录最后访问时间
+        self._ttl_seconds = ttl_minutes * 60
 
     def get(self, user_id: str) -> SkillContext | None:
         """获取用户上下文"""
-        return self._contexts.get(user_id)
+        ctx = self._contexts.get(user_id)
+        if ctx:
+            import time
+            self._timestamps[user_id] = time.time()  # 更新访问时间
+        return ctx
 
     def set(self, user_id: str, context: SkillContext) -> None:
         """设置用户上下文"""
+        import time
         self._contexts[user_id] = context
+        self._timestamps[user_id] = time.time()
 
     def update_result(
         self,
@@ -327,17 +352,37 @@ class ContextManager:
         result: dict[str, Any],
     ) -> None:
         """更新用户最近执行结果"""
+        import time
         ctx = self._contexts.get(user_id)
         if ctx:
             ctx.last_skill = skill_name
             ctx.last_result = result
+            self._timestamps[user_id] = time.time()
 
     def clear(self, user_id: str) -> None:
         """清除用户上下文"""
         self._contexts.pop(user_id, None)
+        self._timestamps.pop(user_id, None)
 
     def cleanup_expired(self) -> None:
-        """清理过期上下文（暂未实现时间检查，留作扩展）"""
-        pass
+        """清理过期上下文"""
+        import time
+        now = time.time()
+        expired_users = [
+            user_id
+            for user_id, ts in self._timestamps.items()
+            if now - ts > self._ttl_seconds
+        ]
+        for user_id in expired_users:
+            self._contexts.pop(user_id, None)
+            self._timestamps.pop(user_id, None)
+        
+        if expired_users:
+            logger.debug(f"Cleaned up {len(expired_users)} expired contexts")
+
+    def active_count(self) -> int:
+        """返回活跃上下文数量"""
+        return len(self._contexts)
 # endregion
 # ============================================
+

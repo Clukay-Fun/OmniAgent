@@ -77,7 +77,7 @@ class SummarySkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message="没有可汇总的数据",
-                reply_text="请先查询案件，再进行汇总。试试问我"本周有什么庭"吧！",
+                reply_text='请先查询案件，再进行汇总。试试问我"本周有什么庭"吧！',
             )
         
         # 获取记录列表

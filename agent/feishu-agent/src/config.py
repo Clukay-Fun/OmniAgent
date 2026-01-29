@@ -122,7 +122,7 @@ class ReplyTemplateSettings(BaseModel):
     error: str = "抱歉，处理请求时遇到问题：{message}"
     timeout: str = "思考超时，请简化问题后重试。"
     welcome: str = "你好！我是案件助手。"
-    guide: str = "目前仅支持案件/文档查询，可试试：\"找一下李四的案子\" 或 \"1月28号有什么庭要开\"。"
+    guide: str = '目前仅支持案件/文档查询，可试试："找一下李四的案子" 或 "1月28号有什么庭要开"。'
     small_talk: str = "你好！我可以帮你查询案件或文档。"
     thanks: str = "不客气！需要查询案件或文档随时告诉我。"
     goodbye: str = "好的，如需查询随时找我。"

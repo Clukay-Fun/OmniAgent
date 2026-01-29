@@ -105,19 +105,36 @@ class AgentOrchestrator:
         Returns:
             回复数据（type, text, card 等）
         """
-        # 清理过期会话
-        self._sessions.cleanup_expired()
+        import time
+        from src.utils.logger import set_request_context, clear_request_context, generate_request_id
+        from src.utils.metrics import record_request, record_intent_parse, set_active_sessions
         
-        # 记录用户消息
-        self._sessions.add_message(user_id, "user", text)
+        # 设置请求上下文（用于结构化日志）
+        request_id = generate_request_id()
+        set_request_context(request_id=request_id, user_id=user_id)
+        
+        start_time = time.perf_counter()
+        status = "success"
         
         try:
+            # 清理过期会话和上下文
+            self._sessions.cleanup_expired()
+            self._context_manager.cleanup_expired()
+            
+            # 更新活跃会话指标
+            set_active_sessions(self._context_manager.active_count())
+            
+            # 记录用户消息
+            self._sessions.add_message(user_id, "user", text)
+            
             # Step 1: 解析意图
+            intent_start = time.perf_counter()
             intent = await self._intent_parser.parse(text)
+            record_intent_parse(intent.method, time.perf_counter() - intent_start)
+            
             logger.info(
                 "Intent parsed",
                 extra={
-                    "user_id": user_id,
                     "query": text,
                     "intent": intent.to_dict(),
                 },
@@ -145,15 +162,34 @@ class AgentOrchestrator:
                 # 更新完整上下文
                 self._context_manager.set(user_id, context.with_result(result.skill_name, result.data))
             
+            if not result.success:
+                status = "failure"
+            
             # Step 5: 构建回复
             reply = result.to_reply()
             
         except Exception as e:
+            status = "error"
             logger.error(f"Message handling error: {e}", exc_info=True)
             reply = {
                 "type": "text",
                 "text": self._settings.reply.templates.error.format(message=str(e)),
             }
+        finally:
+            # 记录请求指标
+            duration = time.perf_counter() - start_time
+            record_request("handle_message", status)
+            
+            logger.info(
+                "Request completed",
+                extra={
+                    "status": status,
+                    "duration_ms": round(duration * 1000, 2),
+                },
+            )
+            
+            # 清除请求上下文
+            clear_request_context()
         
         # 记录助手回复
         self._sessions.add_message(user_id, "assistant", reply.get("text", ""))
