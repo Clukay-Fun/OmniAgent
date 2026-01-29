@@ -1,0 +1,18 @@
+{
+  "header": {
+    "event_id": "test-date-1"
+  },
+  "event": {
+    "message": {
+      "message_type": "text",
+      "chat_type": "p2p",
+      "chat_id": "test-chat",
+      "message_id": "mid-1",
+      "content": "{\"text\":\"1月28号有什么庭要开\"}"
+    },
+    "sender": {
+      "sender_type": "user",
+      "sender_id": {"user_id": "u1"}
+    }
+  }
+}

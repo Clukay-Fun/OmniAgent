@@ -5,6 +5,7 @@ Agent core orchestration.
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from src.agent.session import SessionManager
 from src.config import Settings
@@ -14,6 +15,9 @@ from src.utils.time_parser import parse_time_range
 
 
 class AgentCore:
+    _DATE_PATTERN = re.compile(
+        r"(?:\d{4}年)?\d{1,2}月\d{1,2}[日号]?|\d{4}-\d{1,2}-\d{1,2}"
+    )
     def __init__(
         self,
         settings: Settings,
@@ -33,6 +37,8 @@ class AgentCore:
 
         date_range = await self._resolve_time_range(text)
         keyword = self._extract_keyword(text)
+        if date_range:
+            keyword = self._strip_date_tokens(keyword)
         params: dict[str, Any] = {"keyword": keyword}
         if date_range:
             params["date_from"] = date_range.get("date_from")
@@ -102,11 +108,17 @@ class AgentCore:
         keyword = keyword.replace("的", "")
         return keyword.strip()
 
+    def _strip_date_tokens(self, keyword: str) -> str:
+        cleaned = self._DATE_PATTERN.sub("", keyword)
+        cleaned = re.sub(r"[\s，。！？,!.?]+", "", cleaned)
+        cleaned = re.sub(r"(有什么|哪些|什么|有|开庭|庭审|安排|情况|信息)$", "", cleaned)
+        return cleaned.strip()
+
     def _format_reply(self, tool_name: str, text: str, result: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "feishu.v1.doc.search":
             documents = result.get("documents") or []
             if not documents:
-                return {"type": "text", "text": self._settings.reply.templates.no_result}
+                return {"type": "text", "text": self._fallback_reply(text)}
             lines = []
             for index, doc in enumerate(documents, start=1):
                 title = doc.get("title") or "未命名文档"
@@ -117,7 +129,7 @@ class AgentCore:
 
         records = result.get("records") or []
         if not records:
-            return {"type": "text", "text": self._settings.reply.templates.no_result}
+            return {"type": "text", "text": self._fallback_reply(text)}
 
         title = self._settings.reply.case_list.title.format(count=len(records))
         items = []
@@ -148,3 +160,17 @@ class AgentCore:
             },
             "elements": elements,
         }
+
+    def _fallback_reply(self, text: str) -> str:
+        templates = self._settings.reply.templates
+        lowered = text.lower()
+        greetings = ["你好", "您好", "嗨", "在吗", "在不", "早上好", "下午好", "晚上好", "hi", "hello"]
+        thanks = ["谢谢", "多谢", "感谢", "辛苦", "thank"]
+        goodbyes = ["再见", "拜拜", "bye", "回头见"]
+        if any(token in text for token in greetings) or any(token in lowered for token in ("hi", "hello")):
+            return templates.small_talk
+        if any(token in text for token in thanks) or "thank" in lowered:
+            return templates.thanks
+        if any(token in text for token in goodbyes) or "bye" in lowered:
+            return templates.goodbye
+        return f"{templates.no_result} {templates.guide}"

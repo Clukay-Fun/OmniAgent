@@ -271,6 +271,10 @@ POST /agents/{agent_id}/datasources
 }
 ```
 
+## 排障指南
+
+常见问题与处理方式见 `TROUBLESHOOTING.md`。
+
 ## 环境变量配置
 
 必填

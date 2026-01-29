@@ -107,7 +107,6 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
             raise HTTPException(status_code=401, detail="Verification failed")
 
     event_id = header.get("event_id") or payload.get("event_id")
-        return {"status": "duplicate"}
 
     event = payload.get("event") or {}
     message = event.get("message") or {}
