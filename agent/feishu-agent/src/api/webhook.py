@@ -13,8 +13,8 @@ from typing import Any
 from Crypto.Cipher import AES
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from src.agent.core import AgentCore
-from src.agent.session import SessionManager
+from src.core.orchestrator import AgentOrchestrator
+from src.core.session import SessionManager
 from src.config import get_settings
 from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
@@ -26,7 +26,15 @@ settings = get_settings()
 session_manager = SessionManager(settings.session)
 mcp_client = MCPClient(settings)
 llm_client = create_llm_client(settings.llm)
-agent_core = AgentCore(settings, session_manager, mcp_client, llm_client)
+
+# 初始化 Agent 编排器（使用技能系统）
+agent_core = AgentOrchestrator(
+    settings=settings,
+    session_manager=session_manager,
+    mcp_client=mcp_client,
+    llm_client=llm_client,
+    skills_config_path="config/skills.yaml",
+)
 logger = logging.getLogger(__name__)
 
 
