@@ -875,9 +875,9 @@ Phase 3：Feishu Agent 开发
 
 Phase 4：集成联调与部署
   [x] Task 4.1 本地联调
-  [ ] Task 4.2 Docker 镜像构建
+  [x] Task 4.2 Docker 镜像构建
   [ ] Task 4.3 VPS 部署
-  [ ] Task 4.4 日志与监控
+  [x] Task 4.4 日志与监控
 
 Phase 5：优化与验收
   [ ] Task 5.1 异常处理完善

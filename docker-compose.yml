@@ -1,6 +1,15 @@
+# ============================================
+# OmniAgent Docker Compose 配置
+# 包含日志和监控配置
+# ============================================
+
 services:
+  # ===========================================
+  # MCP Feishu Server
+  # ===========================================
   mcp-feishu-server:
     build: ./mcp/mcp-feishu-server
+    container_name: omniagent-mcp-feishu
     ports:
       - "8081:8081"
     env_file:
@@ -10,19 +19,77 @@ services:
       resources:
         limits:
           memory: 512M
+    # 日志配置
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
+  # ===========================================
+  # Feishu Agent
+  # ===========================================
   feishu-agent:
     build: ./agent/feishu-agent
+    container_name: omniagent-feishu-agent
     ports:
       - "8080:8080"
     env_file:
       - ./agent/feishu-agent/.env
     environment:
       - MCP_SERVER_BASE=http://mcp-feishu-server:8081
+      # 日志格式：json 用于生产环境
+      - LOG_FORMAT=json
+      - LOG_LEVEL=INFO
     depends_on:
-      - mcp-feishu-server
+      mcp-feishu-server:
+        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
         limits:
           memory: 1G
+    # 日志配置
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # 配置卷挂载（支持热更新）
+    volumes:
+      - ./agent/feishu-agent/config:/app/config:ro
+
+  # ===========================================
+  # Prometheus（可选，生产环境部署）
+  # ===========================================
+  # prometheus:
+  #   image: prom/prometheus:v2.48.0
+  #   container_name: omniagent-prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #     - '--storage.tsdb.retention.time=15d'
+  #   restart: unless-stopped
+
+# ===========================================
+# Volumes
+# ===========================================
+# volumes:
+#   prometheus_data:
