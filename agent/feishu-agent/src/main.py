@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from src.api.health import router as health_router
+from src.api.metrics import router as metrics_router
 from src.api.webhook import router as webhook_router, agent_core
 from src.config import get_settings
 from src.utils.logger import setup_logging
@@ -85,6 +86,7 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(metrics_router)
 app.include_router(webhook_router)
 # endregion
 # ============================================

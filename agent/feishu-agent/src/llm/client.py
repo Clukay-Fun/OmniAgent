@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, cast
 
 from openai import AsyncOpenAI, BadRequestError
@@ -15,6 +16,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from src.config import LLMSettings
 from src.utils.exceptions import LLMTimeoutError
+from src.utils.metrics import record_llm_call
 
 
 class LLMClient:
@@ -35,6 +37,8 @@ class LLMClient:
     async def chat(self, messages: list[dict[str, str]], timeout: float | None = None) -> str:
         logger = self._logger
         timeout_seconds = timeout if timeout is not None else self._settings.timeout
+        start = time.perf_counter()
+        status = "success"
         try:
             response = await asyncio.wait_for(
                 self._client.chat.completions.create(
@@ -46,19 +50,25 @@ class LLMClient:
                 timeout=timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
+            status = "timeout"
             logger.warning("LLM request timeout after %ss", timeout_seconds)
             raise LLMTimeoutError(timeout_seconds) from exc
         except BadRequestError as exc:
+            status = "error"
             if exc.response is not None:
                 logger.error("LLM 400 response: %s", exc.response.text)
             logger.error("LLM request failed: %s", exc)
             raise
         except Exception as exc:
+            status = "error"
             response = getattr(exc, "response", None)
             if response is not None:
                 logger.error("LLM error response: %s", response.text)
             logger.error("LLM request failed: %s", exc)
             raise
+        finally:
+            duration = time.perf_counter() - start
+            record_llm_call("chat", status, duration)
         return response.choices[0].message.content or ""
 
     async def chat_json(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.core.session import SessionManager
 from src.config import SessionSettings
@@ -20,6 +20,6 @@ def test_session_truncate_and_cleanup() -> None:
     assert len(context) == 4
 
     session = manager.get_or_create("u1")
-    session.last_active = datetime.utcnow() - timedelta(minutes=10)
+    session.last_active = datetime.now(timezone.utc) - timedelta(minutes=10)
     manager.cleanup_expired()
     assert manager.get_context("u1") == []

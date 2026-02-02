@@ -5,7 +5,7 @@ In-memory session manager.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.config import SessionSettings
@@ -15,8 +15,8 @@ from src.config import SessionSettings
 class Session:
     user_id: str
     messages: list[dict[str, str]] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_active: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_active: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SessionManager:
@@ -29,13 +29,13 @@ class SessionManager:
         if not session:
             session = Session(user_id=user_id)
             self._sessions[user_id] = session
-        session.last_active = datetime.utcnow()
+        session.last_active = datetime.now(timezone.utc)
         return session
 
     def add_message(self, user_id: str, role: str, content: str) -> None:
         session = self.get_or_create(user_id)
         session.messages.append({"role": role, "content": content})
-        session.last_active = datetime.utcnow()
+        session.last_active = datetime.now(timezone.utc)
         if len(session.messages) > self._settings.max_rounds * 2:
             session.messages = session.messages[-self._settings.max_rounds * 2 :]
 
@@ -45,7 +45,7 @@ class SessionManager:
 
     def cleanup_expired(self) -> None:
         ttl = timedelta(minutes=self._settings.ttl_minutes)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired = [
             user_id
             for user_id, session in self._sessions.items()
