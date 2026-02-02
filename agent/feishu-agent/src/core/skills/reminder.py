@@ -11,7 +11,8 @@ import logging
 from datetime import datetime, time, timedelta
 from typing import Any
 
-from src.core.router import BaseSkill, SkillContext, SkillResult
+from src.core.skills.base import BaseSkill
+from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,9 @@ class ReminderSkill(BaseSkill):
         self._config = skills_config or {}
         
         # 从配置加载默认值
-        reminder_cfg = self._config.get("skills", {}).get("reminder", {})
+        reminder_cfg = self._config.get("reminder", {})
+        if not reminder_cfg:
+            reminder_cfg = self._config.get("skills", {}).get("reminder", {})
         self._default_time = reminder_cfg.get("default_time", self.DEFAULT_TIME)
         self._default_time_hint = reminder_cfg.get("default_time_hint", self.DEFAULT_TIME_HINT)
 

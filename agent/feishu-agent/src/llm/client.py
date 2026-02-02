@@ -52,6 +52,25 @@ class LLMClient:
             raise
         return response.choices[0].message.content or ""
 
+    async def chat_json(self, prompt: str, system: str | None = None) -> dict[str, Any]:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        content = await self.chat(messages)
+        try:
+            return json.loads(content)
+        except Exception:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(content[start : end + 1])
+                except Exception:
+                    return {}
+        return {}
+
     async def parse_time_range(self, text: str) -> dict[str, Any]:
         if not self._settings.api_key:
             return {}

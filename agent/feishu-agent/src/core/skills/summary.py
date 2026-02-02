@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.router import BaseSkill, SkillContext, SkillResult
+from src.core.skills.base import BaseSkill
+from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ class SummarySkill(BaseSkill):
         self._config = skills_config or {}
         
         # 从配置加载字段定义
-        summary_cfg = self._config.get("skills", {}).get("summary", {})
+        summary_cfg = self._config.get("summary", {})
+        if not summary_cfg:
+            summary_cfg = self._config.get("skills", {}).get("summary", {})
         self._default_fields = summary_cfg.get("default_fields", self.DEFAULT_FIELDS)
         self._extended_fields = summary_cfg.get("extended_fields", self.EXTENDED_FIELDS)
         self._extend_triggers = summary_cfg.get("extend_triggers", self.EXTEND_TRIGGERS)
@@ -222,7 +225,10 @@ class SummarySkill(BaseSkill):
 3. 如有多条，可按时间或类型分组
 4. 总字数控制在 200 字以内"""
 
-            response = await self._llm.chat(prompt)
+            response = await self._llm.chat([
+                {"role": "system", "content": "你是一个专业的律师助理。"},
+                {"role": "user", "content": prompt},
+            ])
             return response or self._template_summarize(data, self._default_fields)
         except Exception as e:
             logger.warning(f"LLM summarize failed: {e}")

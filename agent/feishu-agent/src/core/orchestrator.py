@@ -71,7 +71,10 @@ class AgentOrchestrator:
         )
         
         # 初始化技能路由器
-        max_hops = self._skills_config.get("routing", {}).get("max_hops", 2)
+        max_hops = self._skills_config.get("chain", {}).get(
+            "max_hops",
+            self._skills_config.get("routing", {}).get("max_hops", 2),
+        )
         self._router = SkillRouter(
             skills_config=self._skills_config,
             max_hops=max_hops,
@@ -260,7 +263,10 @@ class AgentOrchestrator:
             llm_client=self._llm,
         )
         
-        max_hops = self._skills_config.get("routing", {}).get("max_hops", 2)
+        max_hops = self._skills_config.get("chain", {}).get(
+            "max_hops",
+            self._skills_config.get("routing", {}).get("max_hops", 2),
+        )
         self._router = SkillRouter(
             skills_config=self._skills_config,
             max_hops=max_hops,

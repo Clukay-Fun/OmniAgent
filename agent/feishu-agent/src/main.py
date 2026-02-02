@@ -20,6 +20,7 @@ from src.api.health import router as health_router
 from src.api.webhook import router as webhook_router, agent_core
 from src.config import get_settings
 from src.utils.logger import setup_logging
+from src.utils.workspace import ensure_workspace
 from src.utils.hot_reload import HotReloadManager
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 settings = get_settings()
 setup_logging(settings.logging)
+ensure_workspace()
 
 # 热更新管理器
 hot_reload_manager = HotReloadManager()

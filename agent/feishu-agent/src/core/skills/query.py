@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.router import BaseSkill, SkillContext, SkillResult
+from src.core.skills.base import BaseSkill
+from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 

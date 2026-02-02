@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.router import BaseSkill, SkillContext, SkillResult
+from src.core.skills.base import BaseSkill
+from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,19 @@ class ChitchatSkill(BaseSkill):
         self._config = skills_config or {}
         
         # 从配置加载自定义设置
-        chitchat_cfg = self._config.get("skills", {}).get("chitchat", {})
-        self._greetings = chitchat_cfg.get("greetings", self.GREETINGS)
-        self._sensitive_topics = chitchat_cfg.get("sensitive_topics", self.SENSITIVE_TOPICS)
-        self._fallback_response = chitchat_cfg.get("fallback_response", self.RESPONSES["fallback"])
+        chitchat_cfg = self._config.get("chitchat", {})
+        if not chitchat_cfg:
+            chitchat_cfg = self._config.get("skills", {}).get("chitchat", {})
+
+        self._greetings = chitchat_cfg.get("whitelist", chitchat_cfg.get("greetings", self.GREETINGS))
+        self._sensitive_topics = chitchat_cfg.get(
+            "sensitive_reject",
+            chitchat_cfg.get("sensitive_topics", self.SENSITIVE_TOPICS),
+        )
+        fallback_response = chitchat_cfg.get("fallback_response")
+        if not fallback_response:
+            fallback_response = self.RESPONSES["fallback"]
+        self._fallback_response = fallback_response
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -163,12 +173,13 @@ class ChitchatSkill(BaseSkill):
 
     def _create_result(self, response_type: str, message: str) -> SkillResult:
         """创建响应结果"""
+        reply_text = self.RESPONSES.get(response_type) or self._fallback_response
         return SkillResult(
             success=True,
             skill_name=self.name,
             data={"type": response_type},
             message=message,
-            reply_text=self.RESPONSES.get(response_type, self._fallback_response),
+            reply_text=reply_text,
         )
 # endregion
 # ============================================

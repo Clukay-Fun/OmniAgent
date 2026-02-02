@@ -6,114 +6,24 @@ Routes intent to skills and manages execution context.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+import re
+from typing import TYPE_CHECKING, Any
 
 from src.core.intent import IntentResult, SkillMatch
+from src.core.types import SkillContext, SkillResult
+
+if TYPE_CHECKING:
+    from src.core.skills.base import BaseSkill
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region 执行上下文
-# ============================================
-@dataclass
-class SkillContext:
-    """
-    技能执行上下文，用于链式调用间传递数据
-    
-    Attributes:
-        query: 原始用户输入
-        last_result: 上一个技能的执行结果
-        last_skill: 上一个执行的技能名称
-        hop_count: 当前链式跳数
-        user_id: 用户 ID
-        extra: 额外数据（如时间范围、过滤条件等）
-    """
-    query: str
-    user_id: str = ""
-    last_result: dict[str, Any] | None = None
-    last_skill: str | None = None
-    hop_count: int = 0
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    def with_result(self, skill_name: str, result: dict[str, Any]) -> "SkillContext":
-        """创建新上下文，携带上一个技能的结果"""
-        return SkillContext(
-            query=self.query,
-            user_id=self.user_id,
-            last_result=result,
-            last_skill=skill_name,
-            hop_count=self.hop_count + 1,
-            extra=self.extra.copy(),
-        )
-# endregion
-# ============================================
-
-
-# ============================================
-# region 技能执行结果
-# ============================================
-@dataclass
-class SkillResult:
-    """技能执行结果"""
-    success: bool
-    skill_name: str
-    data: dict[str, Any] = field(default_factory=dict)
-    message: str = ""
-    reply_type: str = "text"  # text / card
-    reply_text: str = ""
-    reply_card: dict[str, Any] | None = None
-
-    def to_reply(self) -> dict[str, Any]:
-        """转换为回复格式"""
-        result = {
-            "type": self.reply_type,
-            "text": self.reply_text or self.message,
-        }
-        if self.reply_card:
-            result["card"] = self.reply_card
-        return result
-# endregion
-# ============================================
-
-
-# ============================================
-# region 技能基类
-# ============================================
-class BaseSkill:
-    """
-    技能基类，所有技能需继承此类
-    
-    子类需实现：
-    - name: 技能名称
-    - execute(): 执行逻辑
-    """
-    name: str = "BaseSkill"
-    description: str = ""
-
-    async def execute(self, context: SkillContext) -> SkillResult:
-        """
-        执行技能
-        
-        Args:
-            context: 执行上下文
-            
-        Returns:
-            SkillResult: 执行结果
-        """
-        raise NotImplementedError("Subclass must implement execute()")
-
-    async def can_handle(self, context: SkillContext) -> bool:
-        """
-        检查是否能处理当前上下文（可选重写）
-        
-        Returns:
-            True 表示可以处理
-        """
-        return True
-# endregion
-# ============================================
+_SKILL_NAME_MAP: dict[str, str] = {
+    "query": "QuerySkill",
+    "summary": "SummarySkill",
+    "reminder": "ReminderSkill",
+    "chitchat": "ChitchatSkill",
+}
 
 
 # ============================================
@@ -122,12 +32,6 @@ class BaseSkill:
 class SkillRouter:
     """
     技能路由器
-    
-    职责：
-    1. 注册技能
-    2. 根据 IntentResult 选择技能
-    3. 执行技能（支持链式）
-    4. 管理执行上下文
     """
 
     def __init__(
@@ -135,32 +39,24 @@ class SkillRouter:
         skills_config: dict[str, Any],
         max_hops: int = 2,
     ) -> None:
-        """
-        Args:
-            skills_config: skills.yaml 配置
-            max_hops: 链式调用最大跳数
-        """
         self._config = skills_config
         self._max_hops = max_hops
         self._skills: dict[str, BaseSkill] = {}
         self._chains = skills_config.get("chains", {})
+        self._chain_config = skills_config.get("chain", {})
 
     def register(self, skill: BaseSkill) -> None:
-        """注册技能"""
         self._skills[skill.name] = skill
         logger.debug(f"Registered skill: {skill.name}")
 
     def register_all(self, skills: list[BaseSkill]) -> None:
-        """批量注册技能"""
         for skill in skills:
             self.register(skill)
 
     def get_skill(self, name: str) -> BaseSkill | None:
-        """获取技能实例"""
         return self._skills.get(name)
 
     def list_skills(self) -> list[str]:
-        """列出所有已注册技能"""
         return list(self._skills.keys())
 
     async def route(
@@ -168,27 +64,15 @@ class SkillRouter:
         intent: IntentResult,
         context: SkillContext,
     ) -> SkillResult:
-        """
-        根据意图路由并执行技能
-        
-        Args:
-            intent: 意图识别结果
-            context: 执行上下文
-            
-        Returns:
-            SkillResult: 最终执行结果
-        """
         top_skill = intent.top_skill()
         if not top_skill:
             return self._fallback_result("无法识别意图")
 
-        # 检查是否需要链式执行
         if intent.is_chain:
             chain_sequence = self._resolve_chain(context.query)
             if chain_sequence:
                 return await self._execute_chain(chain_sequence, context)
 
-        # 单技能执行
         return await self._execute_skill(top_skill.name, context)
 
     async def _execute_skill(
@@ -196,17 +80,14 @@ class SkillRouter:
         skill_name: str,
         context: SkillContext,
     ) -> SkillResult:
-        """执行单个技能"""
         import time
         from src.utils.metrics import record_skill_execution
         from src.utils.exceptions import (
-            SkillNotFoundError,
-            SkillExecutionError,
             LLMTimeoutError,
             MCPTimeoutError,
             get_user_message,
         )
-        
+
         skill = self._skills.get(skill_name)
         if not skill:
             logger.warning(f"Skill not found: {skill_name}")
@@ -215,7 +96,7 @@ class SkillRouter:
 
         start_time = time.perf_counter()
         status = "success"
-        
+
         try:
             logger.info(
                 "Executing skill",
@@ -226,10 +107,10 @@ class SkillRouter:
                 },
             )
             result = await skill.execute(context)
-            
+
             if not result.success:
                 status = "failure"
-            
+
             logger.info(
                 "Skill executed",
                 extra={
@@ -240,7 +121,6 @@ class SkillRouter:
             )
             return result
         except (LLMTimeoutError, MCPTimeoutError) as e:
-            # 超时错误：记录但给用户友好提示
             status = "timeout"
             logger.warning(f"Skill timeout: {skill_name} - {e}")
             return SkillResult(
@@ -262,36 +142,20 @@ class SkillRouter:
             duration = time.perf_counter() - start_time
             record_skill_execution(skill_name, status, duration)
 
-
-
     async def _execute_chain(
         self,
         sequence: list[str],
         context: SkillContext,
     ) -> SkillResult:
-        """
-        执行链式技能
-        
-        Args:
-            sequence: 技能执行序列，如 ["query", "summary"]
-            context: 初始上下文
-            
-        Returns:
-            SkillResult: 链式执行的最终结果
-        """
         current_context = context
         last_result: SkillResult | None = None
 
-        for i, skill_key in enumerate(sequence):
+        for skill_key in sequence:
             if current_context.hop_count >= self._max_hops:
                 logger.warning(f"Chain execution hit max_hops: {self._max_hops}")
                 break
 
-            # 获取技能名称（从配置）
-            skill_cfg = self._config.get("skills", {}).get(skill_key, {})
-            skill_name = skill_cfg.get("name", skill_key)
-
-            # 执行技能
+            skill_name = self._resolve_skill_name(skill_key)
             result = await self._execute_skill(skill_name, current_context)
             last_result = result
 
@@ -299,36 +163,41 @@ class SkillRouter:
                 logger.warning(f"Chain broken at {skill_name}: {result.message}")
                 break
 
-            # 更新上下文，传递结果给下一个技能
             current_context = current_context.with_result(skill_name, result.data)
 
         return last_result or self._fallback_result("链式执行失败")
 
     def _resolve_chain(self, query: str) -> list[str] | None:
-        """
-        解析链式执行序列
-        
-        Args:
-            query: 用户输入
-            
-        Returns:
-            技能 key 列表，如 ["query", "summary"]
-        """
+        triggers = self._chain_config.get("triggers", [])
+        for trigger in triggers:
+            pattern = trigger.get("pattern")
+            if pattern and re.search(pattern, query):
+                skills = trigger.get("skills", [])
+                return [self._resolve_skill_name(name) for name in skills]
+
         for chain_key, chain_cfg in self._chains.items():
-            triggers = chain_cfg.get("trigger_keywords", [])
-            for trigger in triggers:
+            trigger_keywords = chain_cfg.get("trigger_keywords", [])
+            for trigger in trigger_keywords:
                 if trigger in query:
                     return chain_cfg.get("sequence", [])
         return None
 
+    def _resolve_skill_name(self, skill_key: str) -> str:
+        skills_cfg = self._config.get("skills", {})
+        if skill_key in skills_cfg:
+            skill_cfg = skills_cfg.get(skill_key, {})
+            return skill_cfg.get("name", skill_key)
+        return _SKILL_NAME_MAP.get(skill_key, skill_key)
+
     def _fallback_result(self, message: str) -> SkillResult:
-        """生成兜底结果"""
         return SkillResult(
             success=False,
             skill_name="fallback",
             message=message,
             reply_text='抱歉，我暂时无法处理您的请求。试试问我"本周有什么庭"吧！',
         )
+
+
 # endregion
 # ============================================
 
@@ -339,27 +208,24 @@ class SkillRouter:
 class ContextManager:
     """
     全局上下文管理器
-    
-    维护每个用户的最近会话上下文，供链式调用使用
-    支持 TTL 过期清理
     """
 
     def __init__(self, ttl_minutes: int = 30) -> None:
         self._contexts: dict[str, SkillContext] = {}
-        self._timestamps: dict[str, float] = {}  # 记录最后访问时间
+        self._timestamps: dict[str, float] = {}
         self._ttl_seconds = ttl_minutes * 60
 
     def get(self, user_id: str) -> SkillContext | None:
-        """获取用户上下文"""
         ctx = self._contexts.get(user_id)
         if ctx:
             import time
-            self._timestamps[user_id] = time.time()  # 更新访问时间
+
+            self._timestamps[user_id] = time.time()
         return ctx
 
     def set(self, user_id: str, context: SkillContext) -> None:
-        """设置用户上下文"""
         import time
+
         self._contexts[user_id] = context
         self._timestamps[user_id] = time.time()
 
@@ -369,8 +235,8 @@ class ContextManager:
         skill_name: str,
         result: dict[str, Any],
     ) -> None:
-        """更新用户最近执行结果"""
         import time
+
         ctx = self._contexts.get(user_id)
         if ctx:
             ctx.last_skill = skill_name
@@ -378,13 +244,12 @@ class ContextManager:
             self._timestamps[user_id] = time.time()
 
     def clear(self, user_id: str) -> None:
-        """清除用户上下文"""
         self._contexts.pop(user_id, None)
         self._timestamps.pop(user_id, None)
 
     def cleanup_expired(self) -> None:
-        """清理过期上下文"""
         import time
+
         now = time.time()
         expired_users = [
             user_id
@@ -394,13 +259,13 @@ class ContextManager:
         for user_id in expired_users:
             self._contexts.pop(user_id, None)
             self._timestamps.pop(user_id, None)
-        
+
         if expired_users:
             logger.debug(f"Cleaned up {len(expired_users)} expired contexts")
 
     def active_count(self) -> int:
-        """返回活跃上下文数量"""
         return len(self._contexts)
+
+
 # endregion
 # ============================================
-
