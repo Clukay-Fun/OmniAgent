@@ -78,6 +78,10 @@ class ReminderSkill(BaseSkill):
         """
         query = context.query
         user_id = context.user_id
+        chat_id = context.extra.get("chat_id") if context.extra else None
+        chat_type = context.extra.get("chat_type") if context.extra else None
+        if chat_type == "p2p":
+            chat_id = None
         
         # 处理列表/更新类请求
         if self._is_list_request(query):
@@ -110,6 +114,7 @@ class ReminderSkill(BaseSkill):
         try:
             reminder_id = await self._save_reminder(
                 user_id=user_id,
+                chat_id=chat_id,
                 content=content,
                 remind_time=remind_time,
                 priority=priority,
@@ -138,6 +143,7 @@ class ReminderSkill(BaseSkill):
                     "content": content,
                     "remind_time": time_str,
                     "priority": priority,
+                    "chat_id": chat_id,
                 },
                 message="提醒创建成功",
                 reply_text=reply_text,
@@ -378,6 +384,7 @@ class ReminderSkill(BaseSkill):
     async def _save_reminder(
         self,
         user_id: str,
+        chat_id: str | None,
         content: str,
         remind_time: datetime,
         priority: str,
@@ -397,6 +404,7 @@ class ReminderSkill(BaseSkill):
         if self._db:
             return await self._db.create_reminder(
                 user_id=user_id,
+                chat_id=chat_id,
                 content=content,
                 due_at=remind_time,
                 priority=priority,
@@ -416,6 +424,7 @@ class ReminderSkill(BaseSkill):
                 "content": content,
                 "remind_time": remind_time.isoformat(),
                 "priority": priority,
+                "chat_id": chat_id,
             },
         )
         return reminder_id

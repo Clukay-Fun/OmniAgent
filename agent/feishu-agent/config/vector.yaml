@@ -1,0 +1,20 @@
+# Vector memory configuration
+
+embedding:
+  provider: siliconflow
+  api_base: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
+  api_key: ${SILICONFLOW_API_KEY:-}
+  model: BAAI/bge-small-zh-v1.5
+  timeout: 10
+  batch_size: 32
+  fallback: keyword
+
+vector_store:
+  type: chroma
+
+chroma:
+  persist_path: ./workspace/chroma
+  collection_prefix: memory_vectors_
+
+retrieval:
+  top_k: 5

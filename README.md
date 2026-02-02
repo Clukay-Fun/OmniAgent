@@ -324,10 +324,17 @@ uvicorn src.main:app --port 8080
 CREATE TABLE reminders (
     id              SERIAL PRIMARY KEY,
     user_id         VARCHAR(64) NOT NULL,
+    chat_id         VARCHAR(64),
     content         TEXT NOT NULL,
     due_at          TIMESTAMP,
     priority        VARCHAR(16) DEFAULT 'medium',
     status          VARCHAR(16) DEFAULT 'pending',
-    created_at      TIMESTAMP DEFAULT NOW()
+    retry_count     INT DEFAULT 0,
+    last_error      TEXT,
+    notified_at     TIMESTAMP,
+    locked_by       VARCHAR(64),
+    locked_at       TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
 );
 ```

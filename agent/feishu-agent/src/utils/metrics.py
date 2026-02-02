@@ -69,6 +69,13 @@ if PROMETHEUS_AVAILABLE:
         ["operation"],
         buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
     )
+
+    # Reminder 推送计数
+    REMINDER_PUSH_COUNT = Counter(
+        "feishu_agent_reminder_push_total",
+        "Total number of reminder pushes",
+        ["status"],
+    )
     
     # MCP 工具调用计数
     MCP_TOOL_CALL_COUNT = Counter(
@@ -107,6 +114,7 @@ else:
     MCP_TOOL_CALL_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
+    REMINDER_PUSH_COUNT = DummyMetric()
 # endregion
 # ============================================
 
@@ -149,6 +157,11 @@ def set_active_sessions(count: int) -> None:
 def record_config_reload(config_file: str, status: str) -> None:
     """记录配置重载"""
     CONFIG_RELOAD_COUNT.labels(config_file=config_file, status=status).inc()
+
+
+def record_reminder_push(status: str) -> None:
+    """记录提醒推送"""
+    REMINDER_PUSH_COUNT.labels(status=status).inc()
 # endregion
 # ============================================
 

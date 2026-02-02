@@ -62,11 +62,12 @@ async def send_message(
     msg_type: str,
     content: dict[str, object],
     reply_message_id: str | None = None,
+    receive_id_type: str = "chat_id",
 ) -> None:
     token_manager = TokenManager(settings)
     token = await token_manager.get_token()
     url = f"{settings.feishu.api_base}/im/v1/messages"
-    params = {"receive_id_type": "chat_id"}
+    params = {"receive_id_type": receive_id_type}
     payload: dict[str, object] = {
         "receive_id": receive_id,
         "msg_type": msg_type,

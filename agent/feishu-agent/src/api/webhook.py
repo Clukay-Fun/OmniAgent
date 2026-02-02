@@ -145,6 +145,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         return
 
     chat_id = message.get("chat_id")
+    chat_type = message.get("chat_type")
     message_id = message.get("message_id")
     user_id = sender.get("sender_id", {}).get("user_id") or chat_id or "unknown"
 
@@ -152,7 +153,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         return
 
     try:
-        reply = await agent_core.handle_message(user_id, text)
+        reply = await agent_core.handle_message(user_id, text, chat_id=chat_id, chat_type=chat_type)
         if chat_id.startswith("test-"):
             logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
             return

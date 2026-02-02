@@ -43,6 +43,8 @@ reminder:
     - 记得
     - 别忘了
   default_time: "18:00"
+  scan_interval_seconds: 60
+  lock_timeout_seconds: 300
   priority_keywords:
     high: [紧急, 重要, 马上]
     low: [有空, 方便时]
@@ -67,3 +69,7 @@ chain:
     - pattern: "(总结|汇总).*(今天|明天|案)"
       skills: [QuerySkill, SummarySkill]
   max_hops: 2
+
+skills_market:
+  enabled: true
+  local_dir: src/skills_market

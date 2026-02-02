@@ -10,6 +10,7 @@ Feishu Agent entrypoint.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -20,9 +21,12 @@ from src.api.health import router as health_router
 from src.api.metrics import router as metrics_router
 from src.api.webhook import router as webhook_router, agent_core
 from src.config import get_settings
+from src.core.intent import load_skills_config
 from src.utils.logger import setup_logging
 from src.utils.workspace import ensure_workspace
 from src.utils.hot_reload import HotReloadManager
+from src.db.postgres import PostgresClient
+from src.jobs.reminder_scheduler import ReminderScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +68,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         interval_seconds=60,
     )
     hot_reload_manager.start_all()
+
+    skills_config = load_skills_config("config/skills.yaml")
+    reminder_cfg = skills_config.get("reminder", {})
+    if settings.postgres.dsn:
+        db = PostgresClient(settings.postgres)
+        interval_seconds = int(reminder_cfg.get("scan_interval_seconds", 60))
+        lock_timeout_seconds = int(reminder_cfg.get("lock_timeout_seconds", 300))
+        instance_id = os.getenv("OMNI_INSTANCE_ID", os.getenv("HOSTNAME", "instance"))
+        app.state.reminder_scheduler = ReminderScheduler(
+            settings=settings,
+            db=db,
+            interval_seconds=interval_seconds,
+            instance_id=instance_id,
+            lock_timeout_seconds=lock_timeout_seconds,
+        )
+        app.state.reminder_scheduler.start()
     logger.info("Feishu Agent started with hot-reload enabled")
     
     yield
     
     # 关闭
     hot_reload_manager.stop_all()
+    scheduler: ReminderScheduler | None = getattr(app.state, "reminder_scheduler", None)
+    if scheduler is not None:
+        await scheduler.stop()
     logger.info("Feishu Agent shutdown complete")
 # endregion
 # ============================================

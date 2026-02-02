@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 from src.core.session import SessionManager
@@ -21,6 +22,8 @@ from src.config import Settings
 from src.llm.client import LLMClient
 from src.mcp.client import MCPClient
 from src.utils.time_parser import parse_time_range
+from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorMemoryManager
+from src.skills_market import load_market_skills
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +67,28 @@ class AgentOrchestrator:
         self._mcp = mcp_client
         self._llm = llm_client
         
-        # 加载技能配置
-        self._skills_config = load_skills_config(skills_config_path)
-
-        # 初始化 Soul 与 Memory
-        self._soul_manager = SoulManager()
-        self._memory_manager = MemoryManager()
-        self._memory_manager.cleanup_logs()
+        self._skills_config_path = skills_config_path
 
         # 初始化 Postgres
         self._db = PostgresClient(settings.postgres) if settings.postgres.dsn else None
+
+        # 初始化向量记忆
+        self._vector_config = load_vector_config()
+        self._vector_top_k = int(
+            (self._vector_config or {}).get("retrieval", {}).get("top_k", 5)
+        )
+        self._vector_fallback = (
+            (self._vector_config or {}).get("embedding", {}).get("fallback", "keyword")
+        )
+        self._vector_memory = self._init_vector_memory(self._vector_config)
+
+        # 初始化 Soul 与 Memory
+        self._soul_manager = SoulManager()
+        self._memory_manager = MemoryManager(vector_memory=self._vector_memory)
+        self._memory_manager.cleanup_logs()
+
+        # 加载技能配置（含技能市场）
+        self._skills_config = self._load_skills_config(skills_config_path)
 
         # LLM 超时配置
         self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
@@ -108,10 +123,122 @@ class AgentOrchestrator:
             ReminderSkill(db_client=self._db, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config),
         ]
+        if getattr(self, "_market_skills", None):
+            skills.extend(self._market_skills)
         self._router.register_all(skills)
         logger.info(f"Registered skills: {self._router.list_skills()}")
 
-    async def handle_message(self, user_id: str, text: str) -> dict[str, Any]:
+    def _init_vector_memory(self, config: dict[str, Any] | None) -> VectorMemoryManager | None:
+        if not config:
+            logger.info("Vector config not found, vector memory disabled")
+            return None
+
+        store_cfg = config.get("vector_store", {})
+        store_type = store_cfg.get("type", "chroma")
+        if store_type != "chroma":
+            logger.warning("Unsupported vector store type: %s", store_type)
+            return None
+
+        embedding_cfg = config.get("embedding", {})
+        chroma_cfg = config.get("chroma", {})
+        if not embedding_cfg or not chroma_cfg:
+            logger.warning("Vector config incomplete, vector memory disabled")
+            return None
+        if not embedding_cfg.get("api_key") or not embedding_cfg.get("api_base"):
+            logger.warning("Embedding API config missing, vector memory disabled")
+            return None
+
+        store = ChromaStore(
+            persist_path=chroma_cfg.get("persist_path", "./workspace/chroma"),
+            collection_prefix=chroma_cfg.get("collection_prefix", "memory_vectors_"),
+        )
+        if not store.is_available():
+            logger.warning("Chroma not available, vector memory disabled")
+            return None
+
+        embedder = EmbeddingClient(embedding_cfg)
+        return VectorMemoryManager(
+            store=store,
+            embedder=embedder,
+            top_k=self._vector_top_k,
+            fallback=self._vector_fallback,
+        )
+
+    def _load_skills_config(self, config_path: str) -> dict[str, Any]:
+        base_config = load_skills_config(config_path)
+        self._market_skills = []
+        market_defs: dict[str, Any] = {}
+
+        market_cfg = base_config.get("skills_market", {})
+        if market_cfg.get("enabled", False):
+            try:
+                market_skills, market_defs = load_market_skills(
+                    market_cfg,
+                    config_path=config_path,
+                    dependencies={
+                        "mcp_client": self._mcp,
+                        "llm_client": self._llm,
+                        "settings": self._settings,
+                        "db_client": self._db,
+                        "skills_config": base_config,
+                    },
+                )
+                builtin_names = {"QuerySkill", "SummarySkill", "ReminderSkill", "ChitchatSkill"}
+                self._market_skills = [
+                    skill for skill in market_skills if skill.name not in builtin_names
+                ]
+                market_defs = {
+                    name: cfg for name, cfg in market_defs.items() if name not in builtin_names
+                }
+            except Exception as exc:
+                logger.warning("Failed to load skills market: %s", exc)
+
+        return self._merge_skills_config(base_config, market_defs)
+
+    def _merge_skills_config(
+        self,
+        base_config: dict[str, Any],
+        market_defs: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(base_config)
+        skills_registry: dict[str, Any] = {}
+
+        if isinstance(base_config.get("skills"), dict):
+            skills_registry.update(base_config.get("skills", {}))
+        else:
+            builtin_map = {
+                "query": "QuerySkill",
+                "summary": "SummarySkill",
+                "reminder": "ReminderSkill",
+                "chitchat": "ChitchatSkill",
+            }
+            for key, default_name in builtin_map.items():
+                cfg = base_config.get(key)
+                if not isinstance(cfg, dict):
+                    continue
+                normalized = dict(cfg)
+                normalized.setdefault("name", default_name)
+                if key == "chitchat" and "keywords" not in normalized:
+                    normalized["keywords"] = normalized.get("whitelist", [])
+                skills_registry[key] = normalized
+
+        for key, cfg in (market_defs or {}).items():
+            if key in skills_registry:
+                logger.warning("Market skill key already exists: %s", key)
+                continue
+            skills_registry[key] = cfg
+
+        if skills_registry:
+            merged["skills"] = skills_registry
+        return merged
+
+    async def handle_message(
+        self,
+        user_id: str,
+        text: str,
+        chat_id: str | None = None,
+        chat_type: str | None = None,
+    ) -> dict[str, Any]:
         """
         处理用户消息
         
@@ -145,7 +272,7 @@ class AgentOrchestrator:
             self._sessions.add_message(user_id, "user", text)
             
             # Step 1: 构建 LLM 上下文并解析意图
-            llm_context = self._build_llm_context(user_id)
+            llm_context = await self._build_llm_context(user_id, query=text)
             intent_start = time.perf_counter()
             intent = await self._intent_parser.parse(text, llm_context=llm_context)
             record_intent_parse(intent.method, time.perf_counter() - intent_start)
@@ -162,6 +289,8 @@ class AgentOrchestrator:
             # 尝试获取上次查询结果（用于链式调用）
             prev_context = self._context_manager.get(user_id)
             extra = await self._build_extra(text, user_id, llm_context)
+            extra["chat_id"] = chat_id
+            extra["chat_type"] = chat_type
             
             context = SkillContext(
                 query=text,
@@ -243,7 +372,7 @@ class AgentOrchestrator:
         
         # Soul + Memory
         if llm_context is None:
-            llm_context = self._build_llm_context(user_id)
+            llm_context = await self._build_llm_context(user_id, query=text)
 
         context_data = llm_context or {}
         extra["soul_prompt"] = context_data.get("soul_prompt", "")
@@ -315,7 +444,17 @@ class AgentOrchestrator:
             if date_from or date_to:
                 date_hint = f"（时间范围：{date_from or '-'} ~ {date_to or '-'}）"
             event_text = f"事件: 查询案件共 {count} 条{date_hint}"
-            self._memory_manager.append_daily_log(user_id, event_text)
+            self._memory_manager.append_daily_log(
+                user_id,
+                event_text,
+                vectorize=True,
+                metadata={
+                    "type": "auto",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "event",
+                    "tags": f"skill:{skill_name}" if skill_name else "event",
+                },
+            )
 
         if skill_name == "ReminderSkill":
             content = result_data.get("content") if result_data else None
@@ -323,7 +462,17 @@ class AgentOrchestrator:
             if not content and not remind_time:
                 return
             event_text = f"事件: 创建提醒 {content or ''} {remind_time or ''}".strip()
-            self._memory_manager.append_daily_log(user_id, event_text)
+            self._memory_manager.append_daily_log(
+                user_id,
+                event_text,
+                vectorize=True,
+                metadata={
+                    "type": "auto",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "event",
+                    "tags": f"skill:{skill_name}" if skill_name else "event",
+                },
+            )
 
         if skill_name == "SummarySkill":
             total = result_data.get("total") if result_data else None
@@ -331,16 +480,36 @@ class AgentOrchestrator:
             if count <= 0:
                 return
             event_text = f"事件: 已生成汇总（共 {count} 条）"
-            self._memory_manager.append_daily_log(user_id, event_text)
+            self._memory_manager.append_daily_log(
+                user_id,
+                event_text,
+                vectorize=True,
+                metadata={
+                    "type": "auto",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "event",
+                    "tags": f"skill:{skill_name}" if skill_name else "event",
+                },
+            )
 
         if skill_name == "ChitchatSkill":
             response_type = result_data.get("type") if result_data else None
             if not response_type:
                 return
             event_text = f"事件: 闲聊响应（{response_type}）"
-            self._memory_manager.append_daily_log(user_id, event_text)
+            self._memory_manager.append_daily_log(
+                user_id,
+                event_text,
+                vectorize=True,
+                metadata={
+                    "type": "auto",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "event",
+                    "tags": f"skill:{skill_name}" if skill_name else "event",
+                },
+            )
 
-    def _build_llm_context(self, user_id: str) -> dict[str, str]:
+    async def _build_llm_context(self, user_id: str, query: str | None = None) -> dict[str, str]:
         context: dict[str, str] = {
             "soul_prompt": "",
             "shared_memory": "",
@@ -361,6 +530,24 @@ class AgentOrchestrator:
             context["shared_memory"] = ""
             context["user_memory"] = ""
             context["recent_logs"] = ""
+
+        if query and query.strip():
+            try:
+                vector_hits = await self._memory_manager.search_memory(
+                    user_id,
+                    query,
+                    top_k=self._vector_top_k,
+                )
+            except Exception:
+                vector_hits = ""
+
+            if vector_hits:
+                if context["user_memory"]:
+                    context["user_memory"] = "\n".join([vector_hits, context["user_memory"]]).strip()
+                elif context["recent_logs"]:
+                    context["recent_logs"] = "\n".join([vector_hits, context["recent_logs"]]).strip()
+                else:
+                    context["user_memory"] = vector_hits
 
         return context
 
@@ -434,7 +621,7 @@ class AgentOrchestrator:
             config_path: 配置文件路径
         """
         logger.info(f"Reloading skills config from {config_path}")
-        self._skills_config = load_skills_config(config_path)
+        self._skills_config = self._load_skills_config(config_path)
         
         # 重新初始化解析器和路由器
         self._intent_parser = IntentParser(
