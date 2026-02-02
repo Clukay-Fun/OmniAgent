@@ -178,12 +178,17 @@ class ReminderSkill(BaseSkill):
         
         # 日期偏移
         date_offset = 0
-        if "今天" in query:
-            date_offset = 0
-        elif "明天" in query:
+        has_date_keyword = False
+        
+        if "明天" in query:
             date_offset = 1
+            has_date_keyword = True
         elif "后天" in query:
             date_offset = 2
+            has_date_keyword = True
+        elif "今天" in query:
+            date_offset = 0
+            has_date_keyword = True
         
         target_date = now.date() + timedelta(days=date_offset)
         
@@ -205,10 +210,9 @@ class ReminderSkill(BaseSkill):
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return datetime.combine(target_date, time(hour, minute))
         
-        # 仅有日期偏移，无具体时间
-        if date_offset > 0:
-            # 有日期但无时间，仍返回 None 触发默认时间
-            return None
+        # 有日期关键词但无具体时间：使用该日期的默认时间（上午9点）
+        if has_date_keyword:
+            return datetime.combine(target_date, time(9, 0))
         
         return None
 

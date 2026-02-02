@@ -6,9 +6,9 @@
 # 路由配置
 routing:
   # 规则匹配阈值（高于此值直接使用规则结果）
-  rule_threshold: 0.7
+  rule_threshold: 0.6
   # LLM 确认阈值（介于此值和 rule_threshold 之间需要 LLM 确认）
-  llm_confirm_threshold: 0.4
+  llm_confirm_threshold: 0.3
   # 最大链式调用跳数
   max_hops: 2
   # LLM 意图解析超时（秒）
@@ -18,39 +18,78 @@ routing:
 
 # 技能定义
 skills:
+  # 闲聊技能（优先匹配）
+  chitchat:
+    name: ChitchatSkill
+    description: 闲聊、问候、帮助请求
+    priority: 10  # 高优先级
+    keywords:
+      - 你好
+      - 您好
+      - 嗨
+      - hi
+      - hello
+      - 帮助
+      - 怎么用
+      - 怎么使用
+      - 可以做什么
+      - 能做什么
+      - 有什么功能
+      - 谢谢
+      - 感谢
+      - 再见
+      - 拜拜
+      - 天气
+      - 今天天气
+    weights:
+      你好: 2.0
+      帮助: 2.0
+      怎么用: 2.0
+      天气: 2.0
+
   # 查询技能
   query:
     name: QuerySkill
     description: 查询案件、开庭、当事人、律师等信息
+    priority: 5
     keywords:
       - 查
       - 查询
       - 查一下
+      - 找一下
       - 案件
       - 案号
       - 开庭
       - 庭审
+      - 什么庭
+      - 有什么庭
       - 当事人
       - 原告
       - 被告
       - 律师
       - 代理人
+    # 时间词单独匹配不触发查询，需要配合其他关键词
+    time_keywords:
       - 本周
       - 这周
       - 下周
       - 今天
       - 明天
+      - 后天
     weights:
       查: 1.0
       案件: 1.5
       开庭: 1.5
       庭审: 1.5
       案号: 1.2
+      什么庭: 1.8
+      有什么庭: 2.0
 
   # 总结技能
   summary:
     name: SummarySkill
     description: 总结、汇总查询结果
+    priority: 5
     keywords:
       - 总结
       - 汇总
@@ -59,7 +98,6 @@ skills:
       - 统计
       - 多少个
       - 几个
-      - 有哪些
     weights:
       总结: 1.5
       汇总: 1.5
@@ -69,6 +107,7 @@ skills:
   reminder:
     name: ReminderSkill
     description: 创建提醒、待办事项
+    priority: 5
     keywords:
       - 提醒
       - 待办
@@ -77,25 +116,12 @@ skills:
       - 备忘
       - 不要忘了
       - 别忘了
+      - 我的提醒
+      - 有哪些提醒
     weights:
       提醒: 1.5
       待办: 1.5
-
-  # 闲聊技能
-  chitchat:
-    name: ChitchatSkill
-    description: 闲聊、问候、帮助请求
-    keywords:
-      - 你好
-      - 您好
-      - 嗨
-      - hi
-      - hello
-      - 帮助
-      - 怎么用
-      - 可以做什么
-      - 谢谢
-      - 再见
+      提醒我: 2.0
 
 # 链式调用配置
 chains:
