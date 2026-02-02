@@ -252,7 +252,7 @@ summary:
 | Phase 3 | Memory 记忆系统 | ✅ 完成 |
 | Phase 4 | Skill 系统完善 | ✅ 完成 |
 | Phase 5 | 集成与编排 | ✅ 完成 |
-| Phase 6 | 测试与监控 | 🔄 进行中 |
+| Phase 6 | 测试与监控 | ✅ 完成 |
 
 详细任务进度见 `TASK.md`。
 
@@ -280,6 +280,40 @@ uvicorn src.main:app --port 8081
 cd agent/feishu-agent
 pip install -r requirements.txt
 uvicorn src.main:app --port 8080
+```
+
+---
+
+## 监控与可视化
+
+- 指标端点：`/metrics`
+- Prometheus 配置：`monitoring/prometheus.yml`
+- Grafana 仪表盘：`monitoring/grafana/dashboards/omniagent.json`
+
+### 运行脚本
+
+```bash
+./monitoring/run_monitoring.sh
+```
+
+```powershell
+./monitoring/run_monitoring.ps1
+```
+
+## 测试覆盖率
+
+```bash
+./scripts/run_coverage.sh
+```
+
+```powershell
+./scripts/run_coverage.ps1
+```
+
+### 可选部署（docker-compose）
+
+```yaml
+# prometheus + grafana 也可通过 monitoring/docker-compose.monitoring.yml 启动
 ```
 
 ---

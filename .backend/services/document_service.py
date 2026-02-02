@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from typing import cast
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from markitdown import MarkItDown
@@ -172,7 +172,7 @@ def persist_structure(
             payload_json,
             raw_text,
             error,
-            datetime.utcnow(),
+            datetime.now(timezone.utc),
             row[0],
         ),
     )
@@ -391,7 +391,7 @@ def persist_document(
         文档ID
     """
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     metadata: dict[str, object] = {}
     if party_a_name:
         metadata["party_a_name"] = party_a_name

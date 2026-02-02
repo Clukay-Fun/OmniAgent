@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from psycopg import Connection
 
@@ -21,7 +21,7 @@ from psycopg import Connection
 # ============================================
 def create_session(conn: Connection, user_id: str | None) -> tuple[str, str | None]:
     session_id = str(uuid.uuid4())
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     conn.execute(
         """
         INSERT INTO chat_sessions (session_id, user_id, title, message_count, created_at, updated_at)
@@ -76,7 +76,7 @@ def append_message(
     citations: list[dict[str, object]] | None = None,
     token_count: int | None = None,
 ) -> int:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     citations_json = json.dumps(citations, ensure_ascii=False) if citations else None
     row = conn.execute(
         """

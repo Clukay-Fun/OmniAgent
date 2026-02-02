@@ -101,11 +101,11 @@ Phase 6：测试与监控
 
 ### 任务清单
 - [x] 6.1 单元测试（Soul / Memory / Intent / Skills）
-- [ ] 6.2 集成测试（端到端流程）
+- [x] 6.2 集成测试（端到端流程）
 - [x] 6.3 日志埋点（JSON 结构化日志）
 - [x] 6.4 监控指标（Prometheus metrics）
 
 ### 验收标准
-- [ ] 测试覆盖率 > 80%
+- [x] 测试覆盖率 > 80%
 - [x] 日志可按 skill / user_id / score 过滤
-- [ ] Grafana 可视化请求量 / 延迟 / 错误率
+- [x] Grafana 可视化请求量 / 延迟 / 错误率

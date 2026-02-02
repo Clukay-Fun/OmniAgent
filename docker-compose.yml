@@ -88,8 +88,25 @@ services:
   #     - '--storage.tsdb.retention.time=15d'
   #   restart: unless-stopped
 
+  # grafana:
+  #   image: grafana/grafana:10.4.2
+  #   container_name: omniagent-grafana
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_USER=admin
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #   volumes:
+  #     - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+  #     - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+  #     - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/omniagent:ro
+  #   depends_on:
+  #     - prometheus
+  #   restart: unless-stopped
+
 # ===========================================
 # Volumes
 # ===========================================
 # volumes:
 #   prometheus_data:
+#   grafana_data:
