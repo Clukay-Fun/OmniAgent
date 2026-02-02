@@ -16,6 +16,7 @@ from src.core.router import SkillRouter, SkillContext, ContextManager
 from src.core.skills import QuerySkill, SummarySkill, ReminderSkill, ChitchatSkill
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
+from src.db.postgres import PostgresClient
 from src.config import Settings
 from src.llm.client import LLMClient
 from src.mcp.client import MCPClient
@@ -70,6 +71,9 @@ class AgentOrchestrator:
         self._soul_manager = SoulManager()
         self._memory_manager = MemoryManager()
         self._memory_manager.cleanup_logs()
+
+        # 初始化 Postgres
+        self._db = PostgresClient(settings.postgres) if settings.postgres.dsn else None
         
         # 初始化意图解析器
         self._intent_parser = IntentParser(
@@ -98,7 +102,7 @@ class AgentOrchestrator:
         skills = [
             QuerySkill(mcp_client=self._mcp, settings=self._settings),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
-            ReminderSkill(db_client=None, skills_config=self._skills_config),
+            ReminderSkill(db_client=self._db, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config),
         ]
         self._router.register_all(skills)

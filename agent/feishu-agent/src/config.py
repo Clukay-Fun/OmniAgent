@@ -49,6 +49,13 @@ class MCPSettings(BaseModel):
     request: MCPRequestSettings = Field(default_factory=MCPRequestSettings)
 
 
+class PostgresSettings(BaseModel):
+    dsn: str = ""
+    min_size: int = 1
+    max_size: int = 5
+    timeout: int = 10
+
+
 class LLMFallbackSettings(BaseModel):
     enabled: bool = False
     provider: str = "deepseek"
@@ -191,6 +198,7 @@ class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
+    postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
@@ -241,6 +249,10 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_VERIFICATION_TOKEN": ["feishu", "verification_token"],
         "FEISHU_ENCRYPT_KEY": ["feishu", "encrypt_key"],
         "MCP_SERVER_BASE": ["mcp", "base_url"],
+        "POSTGRES_DSN": ["postgres", "dsn"],
+        "POSTGRES_MIN_SIZE": ["postgres", "min_size"],
+        "POSTGRES_MAX_SIZE": ["postgres", "max_size"],
+        "POSTGRES_TIMEOUT": ["postgres", "timeout"],
         "LLM_API_KEY": ["llm", "api_key"],
         "LLM_API_BASE": ["llm", "api_base"],
         "LLM_FALLBACK_API_KEY": ["llm", "fallback", "api_key"],

@@ -41,6 +41,11 @@ class ReminderSkill(BaseSkill):
     # 默认时间提示语
     DEFAULT_TIME_HINT = '已设置为今天 {time}，如需修改请回复"修改提醒时间为 XX:XX"。'
 
+    LIST_TRIGGERS = ["查看提醒", "提醒列表", "我的提醒", "查看待办", "待办列表", "查看待办事项"]
+    DONE_TRIGGERS = ["完成提醒", "标记完成", "完成", "已完成"]
+    CANCEL_TRIGGERS = ["取消提醒", "撤销提醒", "取消", "撤销"]
+    DELETE_TRIGGERS = ["删除提醒", "删除"]
+
     def __init__(
         self,
         db_client: Any = None,
@@ -74,7 +79,15 @@ class ReminderSkill(BaseSkill):
         query = context.query
         user_id = context.user_id
         
-        # 解析提醒内容和时间
+        # 处理列表/更新类请求
+        if self._is_list_request(query):
+            return await self._list_reminders(user_id)
+
+        action = self._extract_update_action(query)
+        if action:
+            return await self._update_reminder(user_id, query, action)
+
+        # 解析提醒内容和时间（创建）
         content = self._extract_content(query)
         remind_time = self._extract_time(query)
         
@@ -92,17 +105,15 @@ class ReminderSkill(BaseSkill):
             remind_time = self._get_default_time()
             time_hint = self._default_time_hint.format(time=self._default_time)
         
-        # 存储提醒（Phase 1）
-        reminder_data = {
-            "user_id": user_id,
-            "content": content,
-            "remind_time": remind_time.isoformat(),
-            "created_at": datetime.now().isoformat(),
-            "status": "pending",
-        }
+        priority = self._extract_priority(query)
         
         try:
-            reminder_id = await self._save_reminder(reminder_data)
+            reminder_id = await self._save_reminder(
+                user_id=user_id,
+                content=content,
+                remind_time=remind_time,
+                priority=priority,
+            )
             
             # 构建回复
             time_str = remind_time.strftime("%Y-%m-%d %H:%M")
@@ -122,9 +133,11 @@ class ReminderSkill(BaseSkill):
                 success=True,
                 skill_name=self.name,
                 data={
+                    "action": "create",
                     "reminder_id": reminder_id,
                     "content": content,
                     "remind_time": time_str,
+                    "priority": priority,
                 },
                 message="提醒创建成功",
                 reply_text=reply_text,
@@ -165,6 +178,20 @@ class ReminderSkill(BaseSkill):
         # 清理
         content = content.strip("，。！？ ")
         return content if content else None
+
+    def _extract_priority(self, query: str) -> str:
+        reminder_cfg = self._config.get("reminder", {})
+        if not reminder_cfg:
+            reminder_cfg = self._config.get("skills", {}).get("reminder", {})
+        priority_keywords = reminder_cfg.get("priority_keywords", {})
+
+        for word in priority_keywords.get("high", []):
+            if word in query:
+                return "high"
+        for word in priority_keywords.get("low", []):
+            if word in query:
+                return "low"
+        return "medium"
 
     def _extract_time(self, query: str) -> datetime | None:
         """
@@ -231,25 +258,166 @@ class ReminderSkill(BaseSkill):
         
         return default
 
-    async def _save_reminder(self, data: dict[str, Any]) -> str:
+    def _is_list_request(self, query: str) -> bool:
+        return any(trigger in query for trigger in self.LIST_TRIGGERS)
+
+    def _extract_update_action(self, query: str) -> str | None:
+        if any(trigger in query for trigger in self.DELETE_TRIGGERS):
+            return "delete"
+        if any(trigger in query for trigger in self.CANCEL_TRIGGERS):
+            return "cancelled"
+        if any(trigger in query for trigger in self.DONE_TRIGGERS):
+            return "done"
+        return None
+
+    def _extract_reminder_id(self, query: str) -> int | None:
+        import re
+
+        match = re.search(r"(\d+)", query)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    async def _list_reminders(self, user_id: str) -> SkillResult:
+        if not self._db:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="数据库未配置",
+                reply_text="当前未配置数据库，无法查询提醒列表。",
+            )
+
+        try:
+            reminders = await self._db.list_reminders(user_id=user_id, status="pending")
+        except Exception as e:
+            logger.error(f"Failed to list reminders: {e}")
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message=str(e),
+                reply_text="查询提醒失败，请稍后重试。",
+            )
+
+        if not reminders:
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"action": "list", "total": 0},
+                message="暂无提醒",
+                reply_text="当前没有待办提醒。",
+            )
+
+        lines = [f"📌 我的提醒（共 {len(reminders)} 条）", ""]
+        for idx, item in enumerate(reminders, start=1):
+            due_at = item.get("due_at")
+            due_text = due_at.strftime("%Y-%m-%d %H:%M") if due_at else "未设置时间"
+            lines.append(f"{idx}. #{item.get('id')} {item.get('content', '')}")
+            lines.append(f"   ⏰ {due_text} ｜ 优先级 {item.get('priority', 'medium')}")
+
+        return SkillResult(
+            success=True,
+            skill_name=self.name,
+            data={"action": "list", "total": len(reminders)},
+            message="提醒列表",
+            reply_text="\n".join(lines),
+        )
+
+    async def _update_reminder(self, user_id: str, query: str, action: str) -> SkillResult:
+        if not self._db:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="数据库未配置",
+                reply_text="当前未配置数据库，无法更新提醒。",
+            )
+
+        reminder_id = self._extract_reminder_id(query)
+        if reminder_id is None:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="缺少提醒 ID",
+                reply_text='请提供提醒编号，例如："完成提醒 12" 或 "删除提醒 12"。',
+            )
+
+        try:
+            if action == "delete":
+                updated = await self._db.delete_reminder(reminder_id, user_id=user_id)
+                verb = "删除"
+            else:
+                updated = await self._db.update_status(reminder_id, user_id=user_id, status=action)
+                verb = "更新"
+        except Exception as e:
+            logger.error(f"Failed to update reminder: {e}")
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message=str(e),
+                reply_text="更新提醒失败，请稍后重试。",
+            )
+
+        if not updated:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="提醒不存在",
+                reply_text="未找到对应的提醒编号，请检查后再试。",
+            )
+
+        return SkillResult(
+            success=True,
+            skill_name=self.name,
+            data={"action": action, "reminder_id": reminder_id},
+            message="提醒已更新",
+            reply_text=f"已{verb}提醒 #{reminder_id}。",
+        )
+
+    async def _save_reminder(
+        self,
+        user_id: str,
+        content: str,
+        remind_time: datetime,
+        priority: str,
+    ) -> int:
         """
         存储提醒到数据库
         
         Args:
-            data: 提醒数据
-            
+            user_id: 用户 ID
+            content: 提醒内容
+            remind_time: 提醒时间
+            priority: 优先级
+        
         Returns:
             reminder_id: 提醒 ID
         """
         if self._db:
-            # 实际存储逻辑（待实现）
-            # return await self._db.insert("reminders", data)
-            pass
-        
+            return await self._db.create_reminder(
+                user_id=user_id,
+                content=content,
+                due_at=remind_time,
+                priority=priority,
+                status="pending",
+                source="manual",
+            )
+
         # Mock：生成临时 ID
-        import uuid
-        reminder_id = str(uuid.uuid4())[:8]
-        logger.info(f"Reminder saved (mock): {reminder_id} - {data}")
+        import random
+
+        reminder_id = random.randint(1000, 9999)
+        logger.info(
+            "Reminder saved (mock): %s - %s",
+            reminder_id,
+            {
+                "user_id": user_id,
+                "content": content,
+                "remind_time": remind_time.isoformat(),
+                "priority": priority,
+            },
+        )
         return reminder_id
 # endregion
 # ============================================

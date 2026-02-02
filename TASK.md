@@ -64,20 +64,20 @@ Phase 6：测试与监控
 ## Phase 4：Skill 系统
 
 ### 任务清单
-- [ ] 4.1 BaseSkill 基类（统一接口）
-- [ ] 4.2 IntentParser（规则匹配 + LLM 兜底）
-- [ ] 4.3 SkillRouter（阈值判断 + 分发）
-- [ ] 4.4 SkillChain（链式执行，max_hops=2）
-- [ ] 4.5 QuerySkill（案件查询，调用 MCP）
-- [ ] 4.6 SummarySkill（总结 last_result）
-- [ ] 4.7 ReminderSkill（CRUD，Postgres）
-- [ ] 4.8 ChitchatSkill（白名单 + 引导）
+- [x] 4.1 BaseSkill 基类（统一接口）
+- [x] 4.2 IntentParser（规则匹配 + LLM 兜底）
+- [x] 4.3 SkillRouter（阈值判断 + 分发）
+- [x] 4.4 SkillChain（链式执行，max_hops=2）
+- [x] 4.5 QuerySkill（案件查询，调用 MCP）
+- [x] 4.6 SummarySkill（总结 last_result）
+- [x] 4.7 ReminderSkill（CRUD，Postgres）
+- [x] 4.8 ChitchatSkill（白名单 + 引导）
 
 ### 验收标准
-- [ ] "查一下今天的庭" 命中 QuerySkill
-- [ ] "帮我总结今天的案子" 触发 Query → Summary 链式
-- [ ] "提醒我明天开庭" 创建提醒
-- [ ] "你好" 返回问候 + 功能引导
+- [x] "查一下今天的庭" 命中 QuerySkill
+- [x] "帮我总结今天的案子" 触发 Query → Summary 链式
+- [x] "提醒我明天开庭" 创建提醒
+- [x] "你好" 返回问候 + 功能引导
 
 ---
 
