@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from src.core.skills.base import BaseSkill
-from src.core.types import SkillContext, SkillResult
+from src.core.router import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,17 @@ class SummarySkill(BaseSkill):
         
         # 生成汇总
         if records:
-            return await self._summarize_cases(records, query, use_extended)
+            soul_prompt = context.extra.get("soul_prompt", "")
+            user_memory = context.extra.get("user_memory", "")
+            shared_memory = context.extra.get("shared_memory", "")
+            return await self._summarize_cases(
+                records,
+                query,
+                use_extended,
+                soul_prompt=soul_prompt,
+                user_memory=user_memory,
+                shared_memory=shared_memory,
+            )
         else:
             return await self._summarize_docs(documents, query)
 
@@ -113,6 +123,9 @@ class SummarySkill(BaseSkill):
         records: list[dict[str, Any]],
         query: str,
         use_extended: bool,
+        soul_prompt: str = "",
+        user_memory: str = "",
+        shared_memory: str = "",
     ) -> SkillResult:
         """
         汇总案件记录
@@ -145,7 +158,13 @@ class SummarySkill(BaseSkill):
         
         if self._llm:
             # 使用 LLM 生成自然语言摘要
-            summary_text = await self._llm_summarize(summary_data, query)
+            summary_text = await self._llm_summarize(
+                summary_data,
+                query,
+                soul_prompt=soul_prompt,
+                user_memory=user_memory,
+                shared_memory=shared_memory,
+            )
         else:
             # 简单模板汇总
             summary_text = self._template_summarize(summary_data, fields_to_show)
@@ -204,6 +223,9 @@ class SummarySkill(BaseSkill):
         self,
         data: list[dict[str, Any]],
         query: str,
+        soul_prompt: str = "",
+        user_memory: str = "",
+        shared_memory: str = "",
     ) -> str:
         """使用 LLM 生成自然语言摘要"""
         try:
@@ -211,6 +233,15 @@ class SummarySkill(BaseSkill):
             data_desc = "\n".join(
                 f"- {item}" for item in data[:10]  # 限制数量避免 token 过多
             )
+
+            memory_notes = []
+            if user_memory:
+                memory_notes.append(f"用户偏好/记忆：\n{user_memory.strip()}")
+            if shared_memory:
+                memory_notes.append(f"团队共享记忆：\n{shared_memory.strip()}")
+            memory_block = "\n\n".join(memory_notes)
+            if memory_block:
+                memory_block = f"\n\n参考记忆：\n{memory_block}"
             
             prompt = f"""请根据以下案件数据，用简洁的中文生成汇总摘要。
 
@@ -218,6 +249,7 @@ class SummarySkill(BaseSkill):
 
 案件数据：
 {data_desc}
+{memory_block}
 
 要求：
 1. 用简洁的自然语言描述
@@ -225,8 +257,12 @@ class SummarySkill(BaseSkill):
 3. 如有多条，可按时间或类型分组
 4. 总字数控制在 200 字以内"""
 
+            system_prompt = "你是一个专业的律师助理。"
+            if soul_prompt:
+                system_prompt = f"{soul_prompt.strip()}\n\n{system_prompt}"
+
             response = await self._llm.chat([
-                {"role": "system", "content": "你是一个专业的律师助理。"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ])
             return response or self._template_summarize(data, self._default_fields)

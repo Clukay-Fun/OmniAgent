@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from src.agent.session import SessionManager
+from src.core.session import SessionManager
 from src.config import SessionSettings
 
 

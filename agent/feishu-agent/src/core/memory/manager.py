@@ -23,11 +23,13 @@ class MemoryManager:
         workspace_root: Path | None = None,
         retention_days: int = 30,
         lock_timeout: float = 5.0,
+        max_context_tokens: int = 2000,
     ) -> None:
         self._workspace_root = Path(workspace_root) if workspace_root else get_workspace_root()
         ensure_workspace(self._workspace_root)
         self._retention_days = retention_days
         self._lock_timeout = lock_timeout
+        self._max_context_tokens = max_context_tokens
 
     def load_shared_memory(self) -> str:
         path = self._workspace_root / "MEMORY.md"
@@ -49,7 +51,8 @@ class MemoryManager:
             path = daily_dir / f"{date_str}.md"
             if path.exists():
                 parts.append(path.read_text(encoding="utf-8"))
-        return "\n".join(reversed(parts)).strip()
+        merged = "\n".join(reversed(parts)).strip()
+        return self._truncate_text(merged, self._max_context_tokens)
 
     def append_daily_log(self, user_id: str, content: str) -> None:
         daily_dir = self._daily_dir(user_id)
@@ -106,3 +109,16 @@ class MemoryManager:
 
     def _daily_dir(self, user_id: str) -> Path:
         return self._user_dir(user_id) / "daily"
+
+    @staticmethod
+    def _truncate_text(text: str, max_tokens: int) -> str:
+        if not text:
+            return ""
+
+        words = text.split()
+        if len(words) >= max_tokens:
+            return " ".join(words[-max_tokens:])
+
+        if len(text) <= max_tokens:
+            return text
+        return text[-max_tokens:]

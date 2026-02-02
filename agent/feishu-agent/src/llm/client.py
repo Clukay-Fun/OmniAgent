@@ -71,9 +71,12 @@ class LLMClient:
                     return {}
         return {}
 
-    async def parse_time_range(self, text: str) -> dict[str, Any]:
+    async def parse_time_range(self, text: str, system_context: str | None = None) -> dict[str, Any]:
         if not self._settings.api_key:
             return {}
+        system_prompt = "你是时间解析助手。"
+        if system_context:
+            system_prompt = f"{system_context.strip()}\n\n{system_prompt}"
         prompt = (
             "将用户的时间表达解析为 JSON: {\"date_from\": \"YYYY-MM-DD\", "
             "\"date_to\": \"YYYY-MM-DD\"}. 只返回 JSON。\n\n"
@@ -81,7 +84,7 @@ class LLMClient:
         )
         try:
             content = await self.chat([
-                {"role": "system", "content": "你是时间解析助手。"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ])
             return json.loads(content)

@@ -1,8 +1,4 @@
-"""
-共享类型定义
-
-将 SkillContext 和 SkillResult 放在独立模块中，避免循环导入。
-"""
+"""Shared core types."""
 
 from __future__ import annotations
 
@@ -10,14 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-# ============================================
-# region 执行上下文
-# ============================================
 @dataclass
 class SkillContext:
-    """
-    技能执行上下文，用于链式调用间传递数据
-    """
+    """技能执行上下文，用于链式调用间传递数据"""
 
     query: str
     user_id: str = ""
@@ -35,13 +26,8 @@ class SkillContext:
             hop_count=self.hop_count + 1,
             extra=self.extra.copy(),
         )
-# endregion
-# ============================================
 
 
-# ============================================
-# region 技能执行结果
-# ============================================
 @dataclass
 class SkillResult:
     """技能执行结果"""
@@ -62,5 +48,3 @@ class SkillResult:
         if self.reply_card:
             result["card"] = self.reply_card
         return result
-# endregion
-# ============================================

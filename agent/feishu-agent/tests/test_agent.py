@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from src.agent.core import AgentCore
-from src.agent.session import SessionManager
+from src.core.orchestrator import AgentCore
+from src.core.session import SessionManager
 from src.config import Settings
 
 
@@ -28,7 +28,10 @@ class FakeMCP:
 
 
 class FakeLLM:
-    async def parse_time_range(self, text: str) -> dict:
+    async def parse_time_range(self, text: str, system_context: str | None = None) -> dict:
+        return {}
+
+    async def chat_json(self, prompt: str, system: str | None = None) -> dict:
         return {}
 
 
@@ -37,7 +40,7 @@ def test_agent_returns_text_reply() -> None:
         settings = Settings()
         sessions = SessionManager(settings.session)
         agent = AgentCore(settings, sessions, FakeMCP(), FakeLLM())
-        reply = await agent.handle_message("u1", "李四")
+        reply = await agent.handle_message("u1", "查案号李四")
         assert "案件查询结果" in reply["text"]
         assert "https://example.com" in reply["text"]
 

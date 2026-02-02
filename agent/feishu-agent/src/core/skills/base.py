@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.core.router.router import SkillContext, SkillResult
+    from src.core.types import SkillContext, SkillResult
 
 
 class BaseSkill:

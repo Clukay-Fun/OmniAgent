@@ -71,7 +71,7 @@ def get_workspace_root() -> Path:
     env_root = os.getenv("OMNI_WORKSPACE_ROOT")
     if env_root:
         return Path(env_root)
-    return Path(__file__).resolve().parents[2] / "workspace"
+    return Path(__file__).resolve().parents[3] / "workspace"
 
 
 def ensure_workspace(root: str | Path | None = None) -> Path:

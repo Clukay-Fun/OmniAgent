@@ -14,6 +14,8 @@ from src.core.session import SessionManager
 from src.core.intent import IntentParser, load_skills_config
 from src.core.router import SkillRouter, SkillContext, ContextManager
 from src.core.skills import QuerySkill, SummarySkill, ReminderSkill, ChitchatSkill
+from src.core.soul import SoulManager
+from src.core.memory import MemoryManager
 from src.config import Settings
 from src.llm.client import LLMClient
 from src.mcp.client import MCPClient
@@ -63,6 +65,11 @@ class AgentOrchestrator:
         
         # 加载技能配置
         self._skills_config = load_skills_config(skills_config_path)
+
+        # 初始化 Soul 与 Memory
+        self._soul_manager = SoulManager()
+        self._memory_manager = MemoryManager()
+        self._memory_manager.cleanup_logs()
         
         # 初始化意图解析器
         self._intent_parser = IntentParser(
@@ -130,9 +137,10 @@ class AgentOrchestrator:
             # 记录用户消息
             self._sessions.add_message(user_id, "user", text)
             
-            # Step 1: 解析意图
+            # Step 1: 构建 LLM 上下文并解析意图
+            llm_context = self._build_llm_context(user_id)
             intent_start = time.perf_counter()
-            intent = await self._intent_parser.parse(text)
+            intent = await self._intent_parser.parse(text, llm_context=llm_context)
             record_intent_parse(intent.method, time.perf_counter() - intent_start)
             
             logger.info(
@@ -146,7 +154,7 @@ class AgentOrchestrator:
             # Step 2: 构建执行上下文
             # 尝试获取上次查询结果（用于链式调用）
             prev_context = self._context_manager.get(user_id)
-            extra = await self._build_extra(text)
+            extra = await self._build_extra(text, user_id, llm_context)
             
             context = SkillContext(
                 query=text,
@@ -170,6 +178,16 @@ class AgentOrchestrator:
             
             # Step 5: 构建回复
             reply = result.to_reply()
+
+            # Step 6: 写入记忆（日志 + 关键偏好）
+            self._record_memory(
+                user_id,
+                text,
+                reply.get("text", ""),
+                result.skill_name,
+                result.data or {},
+                context.extra,
+            )
             
         except Exception as e:
             status = "error"
@@ -199,7 +217,12 @@ class AgentOrchestrator:
         
         return reply
 
-    async def _build_extra(self, text: str) -> dict[str, Any]:
+    async def _build_extra(
+        self,
+        text: str,
+        user_id: str,
+        llm_context: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """
         构建额外上下文数据（时间范围等）
         
@@ -211,15 +234,159 @@ class AgentOrchestrator:
         """
         extra: dict[str, Any] = {}
         
+        # Soul + Memory
+        if llm_context is None:
+            llm_context = self._build_llm_context(user_id)
+
+        context_data = llm_context or {}
+        extra["soul_prompt"] = context_data.get("soul_prompt", "")
+        extra["shared_memory"] = context_data.get("shared_memory", "")
+        extra["user_memory"] = context_data.get("user_memory", "")
+        extra["recent_logs"] = context_data.get("recent_logs", "")
+
         # 解析时间范围
-        date_range = await self._resolve_time_range(text)
+        date_range = await self._resolve_time_range(text, llm_context)
         if date_range:
             extra["date_from"] = date_range.get("date_from")
             extra["date_to"] = date_range.get("date_to")
         
         return extra
 
-    async def _resolve_time_range(self, text: str) -> dict[str, str] | None:
+    def _record_memory(
+        self,
+        user_id: str,
+        user_text: str,
+        reply_text: str,
+        skill_name: str,
+        result_data: dict[str, Any],
+        extra: dict[str, Any],
+    ) -> None:
+        """写入对话日志与用户记忆"""
+        try:
+            self._memory_manager.append_daily_log(user_id, f"用户: {user_text}")
+            self._memory_manager.append_daily_log(user_id, f"助手({skill_name}): {reply_text}")
+        except Exception:
+            return
+
+        try:
+            remembered = self._extract_memory_trigger(user_text)
+            if remembered:
+                self._memory_manager.remember_user(user_id, remembered)
+        except Exception:
+            return
+
+        self._record_event(user_id, skill_name, result_data, extra)
+
+    def _extract_memory_trigger(self, text: str) -> str | None:
+        """识别并提取用户的长期记忆内容"""
+        triggers = ["记住", "请记住", "帮我记住"]
+        for trigger in triggers:
+            if trigger in text:
+                content = text.split(trigger, 1)[-1]
+                content = content.strip("，。！？：； ")
+                return content or None
+        return None
+
+    def _record_event(
+        self,
+        user_id: str,
+        skill_name: str,
+        result_data: dict[str, Any],
+        extra: dict[str, Any],
+    ) -> None:
+        """自动事件写入策略"""
+        if skill_name == "QuerySkill":
+            records = result_data.get("records", []) if result_data else []
+            total = result_data.get("total") if result_data else None
+            count = total if isinstance(total, int) else len(records)
+            if count <= 0:
+                return
+
+            date_from = extra.get("date_from")
+            date_to = extra.get("date_to")
+            date_hint = ""
+            if date_from or date_to:
+                date_hint = f"（时间范围：{date_from or '-'} ~ {date_to or '-'}）"
+            event_text = f"事件: 查询案件共 {count} 条{date_hint}"
+            self._memory_manager.append_daily_log(user_id, event_text)
+
+        if skill_name == "ReminderSkill":
+            content = result_data.get("content") if result_data else None
+            remind_time = result_data.get("remind_time") if result_data else None
+            if not content and not remind_time:
+                return
+            event_text = f"事件: 创建提醒 {content or ''} {remind_time or ''}".strip()
+            self._memory_manager.append_daily_log(user_id, event_text)
+
+        if skill_name == "SummarySkill":
+            total = result_data.get("total") if result_data else None
+            count = total if isinstance(total, int) else 0
+            if count <= 0:
+                return
+            event_text = f"事件: 已生成汇总（共 {count} 条）"
+            self._memory_manager.append_daily_log(user_id, event_text)
+
+        if skill_name == "ChitchatSkill":
+            response_type = result_data.get("type") if result_data else None
+            if not response_type:
+                return
+            event_text = f"事件: 闲聊响应（{response_type}）"
+            self._memory_manager.append_daily_log(user_id, event_text)
+
+    def _build_llm_context(self, user_id: str) -> dict[str, str]:
+        context: dict[str, str] = {
+            "soul_prompt": "",
+            "shared_memory": "",
+            "user_memory": "",
+            "recent_logs": "",
+        }
+        try:
+            context["soul_prompt"] = self._soul_manager.build_system_prompt()
+        except Exception:
+            context["soul_prompt"] = ""
+
+        try:
+            snapshot = self._memory_manager.snapshot(user_id)
+            context["shared_memory"] = snapshot.shared_memory
+            context["user_memory"] = snapshot.user_memory
+            context["recent_logs"] = snapshot.recent_logs
+        except Exception:
+            context["shared_memory"] = ""
+            context["user_memory"] = ""
+            context["recent_logs"] = ""
+
+        return context
+
+    def _format_llm_context(self, llm_context: dict[str, str] | None) -> str:
+        if not llm_context:
+            return ""
+
+        parts = []
+        soul_prompt = llm_context.get("soul_prompt", "").strip()
+        if soul_prompt:
+            parts.append(soul_prompt)
+
+        memory_parts = []
+        user_memory = llm_context.get("user_memory", "").strip()
+        shared_memory = llm_context.get("shared_memory", "").strip()
+        recent_logs = llm_context.get("recent_logs", "").strip()
+        if user_memory:
+            memory_parts.append(f"用户记忆：\n{user_memory}")
+        if shared_memory:
+            memory_parts.append(f"团队共享记忆：\n{shared_memory}")
+        if recent_logs:
+            memory_parts.append(f"最近日志：\n{recent_logs}")
+
+        if memory_parts:
+            parts.append("参考记忆：\n" + "\n\n".join(memory_parts))
+
+        return "\n\n".join(parts)
+
+    async def _resolve_time_range(
+        self,
+        text: str,
+        llm_context: dict[str, str] | None = None,
+    ) -> dict[str, str] | None:
         """解析时间范围"""
         # 优先使用规则解析
         parsed = parse_time_range(text)
@@ -232,7 +399,8 @@ class AgentOrchestrator:
         
         # 尝试 LLM 解析
         try:
-            content = await self._llm.parse_time_range(text)
+            system_context = self._format_llm_context(llm_context)
+            content = await self._llm.parse_time_range(text, system_context=system_context)
             if "date_from" in content and "date_to" in content:
                 return {"date_from": content["date_from"], "date_to": content["date_to"]}
         except Exception:

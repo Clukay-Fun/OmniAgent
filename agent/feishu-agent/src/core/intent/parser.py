@@ -104,7 +104,7 @@ class IntentParser:
         self._skills = self._normalize_skills_config(self._config)
         self._chains = self._config.get("chains", {})
 
-    async def parse(self, query: str) -> IntentResult:
+    async def parse(self, query: str, llm_context: dict[str, str] | None = None) -> IntentResult:
         """解析用户输入，返回意图识别结果"""
 
         rule_matches = self._rule_match(query)
@@ -134,27 +134,28 @@ class IntentParser:
                 method="rule",
             )
 
-        if requires_llm_confirm:
-            try:
-                llm_result = await self._llm_classify(query, rule_matches[:3])
-                if llm_result:
-                    llm_result.method = "llm"
-                    llm_result.is_chain = llm_result.is_chain or is_chain
-                    llm_result.requires_llm_confirm = True
-                    return llm_result
-            except Exception as e:
-                logger.warning(f"LLM classification failed: {e}, falling back to rule")
+        if top_score >= self._llm_confirm_threshold:
+            if self._llm:
+                try:
+                    llm_result = await self._llm_classify(query, rule_matches[:3], llm_context)
+                    if llm_result:
+                        llm_result.method = "llm"
+                        llm_result.is_chain = llm_result.is_chain or is_chain
+                        llm_result.requires_llm_confirm = True
+                        return llm_result
+                except Exception as e:
+                    logger.warning(f"LLM classification failed: {e}, falling back to rule")
 
             return IntentResult(
                 skills=rule_matches[:3],
                 is_chain=is_chain,
-                requires_llm_confirm=True,
+                requires_llm_confirm=self._llm is not None,
                 method="rule",
             )
 
         if self._llm:
             try:
-                llm_result = await self._llm_classify(query)
+                llm_result = await self._llm_classify(query, None, llm_context)
                 if llm_result:
                     llm_result.method = "llm"
                     return llm_result
@@ -262,6 +263,7 @@ class IntentParser:
         self,
         query: str,
         hints: list[SkillMatch] | None = None,
+        llm_context: dict[str, str] | None = None,
     ) -> IntentResult | None:
         if not self._llm:
             return None
@@ -299,8 +301,10 @@ class IntentParser:
 3. reason 用简短中文说明判断依据
 4. is_chain 表示是否需要链式执行多个技能"""
 
+        system_prompt = self._build_llm_system_prompt(llm_context)
+
         try:
-            response = await self._llm.chat_json(prompt)
+            response = await self._llm.chat_json(prompt, system=system_prompt)
             if not response:
                 return None
 
@@ -323,6 +327,32 @@ class IntentParser:
         except Exception as e:
             logger.error(f"LLM classify error: {e}")
             return None
+
+    def _build_llm_system_prompt(self, llm_context: dict[str, str] | None) -> str:
+        base_prompt = "你是一个意图分类器。"
+        if not llm_context:
+            return base_prompt
+
+        parts = []
+        soul_prompt = llm_context.get("soul_prompt", "").strip()
+        if soul_prompt:
+            parts.append(soul_prompt)
+
+        memory_parts = []
+        user_memory = llm_context.get("user_memory", "").strip()
+        shared_memory = llm_context.get("shared_memory", "").strip()
+        recent_logs = llm_context.get("recent_logs", "").strip()
+        if user_memory:
+            memory_parts.append(f"用户记忆：\n{user_memory}")
+        if shared_memory:
+            memory_parts.append(f"团队共享记忆：\n{shared_memory}")
+        if recent_logs:
+            memory_parts.append(f"最近日志：\n{recent_logs}")
+        if memory_parts:
+            parts.append("参考记忆：\n" + "\n\n".join(memory_parts))
+
+        parts.append(base_prompt)
+        return "\n\n".join(parts)
 
 
 # endregion
