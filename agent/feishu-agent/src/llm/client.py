@@ -4,6 +4,7 @@ LLM client wrapper.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, cast
@@ -13,6 +14,7 @@ import httpx
 from openai.types.chat import ChatCompletionMessageParam
 
 from src.config import LLMSettings
+from src.utils.exceptions import LLMTimeoutError
 
 
 class LLMClient:
@@ -30,15 +32,22 @@ class LLMClient:
         if response.status_code >= 400:
             self._logger.error("LLM http %s response: %s", response.status_code, response.text)
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
+    async def chat(self, messages: list[dict[str, str]], timeout: float | None = None) -> str:
         logger = self._logger
+        timeout_seconds = timeout if timeout is not None else self._settings.timeout
         try:
-            response = await self._client.chat.completions.create(
-                model=self._settings.model,
-                messages=cast(list[ChatCompletionMessageParam], messages),
-                temperature=self._settings.temperature,
-                max_tokens=self._settings.max_tokens,
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._settings.model,
+                    messages=cast(list[ChatCompletionMessageParam], messages),
+                    temperature=self._settings.temperature,
+                    max_tokens=self._settings.max_tokens,
+                ),
+                timeout=timeout_seconds,
             )
+        except asyncio.TimeoutError as exc:
+            logger.warning("LLM request timeout after %ss", timeout_seconds)
+            raise LLMTimeoutError(timeout_seconds) from exc
         except BadRequestError as exc:
             if exc.response is not None:
                 logger.error("LLM 400 response: %s", exc.response.text)
@@ -52,13 +61,18 @@ class LLMClient:
             raise
         return response.choices[0].message.content or ""
 
-    async def chat_json(self, prompt: str, system: str | None = None) -> dict[str, Any]:
+    async def chat_json(
+        self,
+        prompt: str,
+        system: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        content = await self.chat(messages)
+        content = await self.chat(messages, timeout=timeout)
         try:
             return json.loads(content)
         except Exception:
@@ -71,7 +85,12 @@ class LLMClient:
                     return {}
         return {}
 
-    async def parse_time_range(self, text: str, system_context: str | None = None) -> dict[str, Any]:
+    async def parse_time_range(
+        self,
+        text: str,
+        system_context: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         if not self._settings.api_key:
             return {}
         system_prompt = "你是时间解析助手。"
@@ -86,7 +105,7 @@ class LLMClient:
             content = await self.chat([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
-            ])
+            ], timeout=timeout)
             return json.loads(content)
         except Exception:
             return {}

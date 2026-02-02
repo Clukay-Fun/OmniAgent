@@ -163,8 +163,8 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
             msg_type = "text"
             content = {"text": reply.get("text", "")}
         await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
-    except Exception as exc:
-        error_text = settings.reply.templates.error.format(message=str(exc))
+    except Exception:
+        error_text = settings.reply.templates.error.format(message="处理出错")
         await send_message(
             settings,
             chat_id,

@@ -74,6 +74,9 @@ class AgentOrchestrator:
 
         # 初始化 Postgres
         self._db = PostgresClient(settings.postgres) if settings.postgres.dsn else None
+
+        # LLM 超时配置
+        self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
         
         # 初始化意图解析器
         self._intent_parser = IntentParser(
@@ -198,7 +201,7 @@ class AgentOrchestrator:
             logger.error(f"Message handling error: {e}", exc_info=True)
             reply = {
                 "type": "text",
-                "text": self._settings.reply.templates.error.format(message=str(e)),
+                "text": self._settings.reply.templates.error.format(message="处理出错"),
             }
         finally:
             # 记录请求指标
@@ -404,7 +407,11 @@ class AgentOrchestrator:
         # 尝试 LLM 解析
         try:
             system_context = self._format_llm_context(llm_context)
-            content = await self._llm.parse_time_range(text, system_context=system_context)
+            content = await self._llm.parse_time_range(
+                text,
+                system_context=system_context,
+                timeout=self._llm_timeout,
+            )
             if "date_from" in content and "date_to" in content:
                 return {"date_from": content["date_from"], "date_to": content["date_to"]}
         except Exception:
@@ -443,6 +450,8 @@ class AgentOrchestrator:
             skills_config=self._skills_config,
             max_hops=max_hops,
         )
+
+        self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
         
         # 重新注册技能
         self._register_skills()

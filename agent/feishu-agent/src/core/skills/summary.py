@@ -57,9 +57,13 @@ class SummarySkill(BaseSkill):
         summary_cfg = self._config.get("summary", {})
         if not summary_cfg:
             summary_cfg = self._config.get("skills", {}).get("summary", {})
+        intent_cfg = self._config.get("intent", {})
         self._default_fields = summary_cfg.get("default_fields", self.DEFAULT_FIELDS)
         self._extended_fields = summary_cfg.get("extended_fields", self.EXTENDED_FIELDS)
         self._extend_triggers = summary_cfg.get("extend_triggers", self.EXTEND_TRIGGERS)
+        self._llm_timeout = float(
+            summary_cfg.get("llm_timeout", intent_cfg.get("llm_timeout", 10))
+        )
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -264,7 +268,7 @@ class SummarySkill(BaseSkill):
             response = await self._llm.chat([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
-            ])
+            ], timeout=self._llm_timeout)
             return response or self._template_summarize(data, self._default_fields)
         except Exception as e:
             logger.warning(f"LLM summarize failed: {e}")

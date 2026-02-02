@@ -103,6 +103,7 @@ class IntentParser:
 
         self._skills = self._normalize_skills_config(self._config)
         self._chains = self._config.get("chains", {})
+        self._llm_timeout = float(intent_cfg.get("llm_timeout", 10))
 
     async def parse(self, query: str, llm_context: dict[str, str] | None = None) -> IntentResult:
         """解析用户输入，返回意图识别结果"""
@@ -304,7 +305,11 @@ class IntentParser:
         system_prompt = self._build_llm_system_prompt(llm_context)
 
         try:
-            response = await self._llm.chat_json(prompt, system=system_prompt)
+            response = await self._llm.chat_json(
+                prompt,
+                system=system_prompt,
+                timeout=self._llm_timeout,
+            )
             if not response:
                 return None
 
