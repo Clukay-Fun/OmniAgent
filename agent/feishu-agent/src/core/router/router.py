@@ -34,6 +34,17 @@ class SkillRouter:
     技能路由器
     """
 
+    SKILL_NAME_MAP: dict[str, str] = {
+        "chitchat": "ChitchatSkill",
+        "query": "QuerySkill",
+        "summary": "SummarySkill",
+        "reminder": "ReminderSkill",
+        "ChitchatSkill": "ChitchatSkill",
+        "QuerySkill": "QuerySkill",
+        "SummarySkill": "SummarySkill",
+        "ReminderSkill": "ReminderSkill",
+    }
+
     def __init__(
         self,
         skills_config: dict[str, Any],
@@ -88,11 +99,22 @@ class SkillRouter:
             get_user_message,
         )
 
-        skill = self._skills.get(skill_name)
+        normalized_name = self._normalize_skill_name(skill_name)
+        skill = self._skills.get(normalized_name)
+        if not skill and normalized_name != "ChitchatSkill":
+            fallback_skill = self._skills.get("ChitchatSkill")
+            if fallback_skill:
+                logger.warning(
+                    "Skill not found: %s, fallback to ChitchatSkill",
+                    normalized_name,
+                )
+                normalized_name = "ChitchatSkill"
+                skill = fallback_skill
+
         if not skill:
-            logger.warning(f"Skill not found: {skill_name}")
-            record_skill_execution(skill_name, "not_found", 0)
-            return self._fallback_result(f"技能 {skill_name} 未注册")
+            logger.warning("Skill not found: %s", normalized_name)
+            record_skill_execution(normalized_name, "not_found", 0)
+            return self._fallback_result(f"技能 {normalized_name} 未注册")
 
         start_time = time.perf_counter()
         status = "success"
@@ -101,7 +123,7 @@ class SkillRouter:
             logger.info(
                 "Executing skill",
                 extra={
-                    "skill": skill_name,
+                    "skill": normalized_name,
                     "query": context.query,
                     "hop": context.hop_count,
                 },
@@ -114,7 +136,7 @@ class SkillRouter:
             logger.info(
                 "Skill executed",
                 extra={
-                    "skill": skill_name,
+                    "skill": normalized_name,
                     "success": result.success,
                     "duration_ms": round((time.perf_counter() - start_time) * 1000, 2),
                 },
@@ -122,25 +144,25 @@ class SkillRouter:
             return result
         except (LLMTimeoutError, MCPTimeoutError) as e:
             status = "timeout"
-            logger.warning(f"Skill timeout: {skill_name} - {e}")
+            logger.warning(f"Skill timeout: {normalized_name} - {e}")
             return SkillResult(
                 success=False,
-                skill_name=skill_name,
+                skill_name=normalized_name,
                 message=str(e),
                 reply_text=get_user_message(e),
             )
         except Exception as e:
             status = "error"
-            logger.error(f"Skill execution error: {skill_name} - {e}", exc_info=True)
+            logger.error(f"Skill execution error: {normalized_name} - {e}", exc_info=True)
             return SkillResult(
                 success=False,
-                skill_name=skill_name,
+                skill_name=normalized_name,
                 message=f"技能执行出错：{str(e)}",
                 reply_text="抱歉，处理请求时遇到问题，请稍后重试。",
             )
         finally:
             duration = time.perf_counter() - start_time
-            record_skill_execution(skill_name, status, duration)
+            record_skill_execution(normalized_name, status, duration)
 
     async def _execute_chain(
         self,
@@ -186,8 +208,17 @@ class SkillRouter:
         skills_cfg = self._config.get("skills", {})
         if skill_key in skills_cfg:
             skill_cfg = skills_cfg.get(skill_key, {})
-            return skill_cfg.get("name", skill_key)
-        return _SKILL_NAME_MAP.get(skill_key, skill_key)
+            return self._normalize_skill_name(skill_cfg.get("name", skill_key))
+        return self._normalize_skill_name(skill_key)
+
+    def _normalize_skill_name(self, name: str) -> str:
+        if name in self.SKILL_NAME_MAP:
+            return self.SKILL_NAME_MAP[name]
+        lower_name = name.lower()
+        for key, value in self.SKILL_NAME_MAP.items():
+            if key.lower() == lower_name:
+                return value
+        return _SKILL_NAME_MAP.get(name, name)
 
     def _fallback_result(self, message: str) -> SkillResult:
         return SkillResult(

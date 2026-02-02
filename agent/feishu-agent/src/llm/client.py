@@ -73,26 +73,48 @@ class LLMClient:
 
     async def chat_json(
         self,
-        prompt: str,
+        prompt_or_messages: Any,
         system: str | None = None,
         timeout: float | None = None,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        messages: list[dict[str, str]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        del context
+        if isinstance(prompt_or_messages, list):
+            messages = prompt_or_messages
+        else:
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": str(prompt_or_messages)})
 
         content = await self.chat(messages, timeout=timeout)
+        return self._safe_json_loads(content)
+
+    def _safe_json_loads(self, content: str) -> dict[str, Any]:
+        if not content:
+            return {}
+
+        text = content.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
         try:
-            return json.loads(content)
-        except Exception:
-            start = content.find("{")
-            end = content.rfind("}")
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
             if start != -1 and end != -1 and end > start:
                 try:
-                    return json.loads(content[start : end + 1])
-                except Exception:
+                    return json.loads(text[start : end + 1])
+                except json.JSONDecodeError:
                     return {}
+        except Exception as exc:
+            self._logger.error("chat_json error: %s", exc)
         return {}
 
     async def parse_time_range(

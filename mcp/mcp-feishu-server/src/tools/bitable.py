@@ -117,11 +117,19 @@ async def _fetch_fields_info(tool: "BitableSearchTool", app_token: str, table_id
         )
         data = response.get("data") or {}
         items = data.get("items") or []
-        return {
-            item.get("field_name"): int(item.get("field_type"))
-            for item in items
-            if item.get("field_name")
-        }
+        fields: dict[str, int] = {}
+        for item in items:
+            name = item.get("field_name")
+            if not name:
+                continue
+            field_type = item.get("field_type")
+            if field_type is None:
+                field_type = item.get("type")
+            try:
+                fields[name] = int(field_type) if field_type is not None else -1
+            except (TypeError, ValueError):
+                fields[name] = -1
+        return fields
     except Exception:
         return {}
 
@@ -172,22 +180,30 @@ class BitableSearchTool(BaseTool):
         }
 
         hearing_field = settings.bitable.field_mapping.get("hearing_date", "开庭日")
+        if not field_names:
+            hearing_field = ""
         if hearing_field:
             resolved = normalized_lookup.get(_normalize_field_name(hearing_field))
             if resolved:
                 hearing_field = resolved
             elif field_names and hearing_field not in field_names:
                 hearing_field = ""
+        if not hearing_field and field_names:
+            for name in field_names:
+                if "开庭" in name or "庭审" in name:
+                    hearing_field = name
+                    break
 
         keyword_fields = settings.bitable.search.searchable_fields
         keyword_candidates = []
-        for field in keyword_fields:
-            if not field_names:
-                keyword_candidates.append(field)
-                continue
-            resolved = normalized_lookup.get(_normalize_field_name(field))
-            if resolved:
-                keyword_candidates.append(resolved)
+        if field_names:
+            for field in keyword_fields:
+                resolved = normalized_lookup.get(_normalize_field_name(field))
+                if not resolved:
+                    continue
+                field_type = field_info.get(resolved, -1)
+                if field_type == 1:
+                    keyword_candidates.append(resolved)
         if not keyword_candidates and hearing_field:
             keyword_candidates = [hearing_field]
 
@@ -199,10 +215,14 @@ class BitableSearchTool(BaseTool):
         date_conditions: list[dict[str, Any]] = []
         date_filter_supported = False
         if hearing_field:
-            field_type = field_info.get(hearing_field)
+            field_type = field_info.get(hearing_field, -1)
             date_filter_supported = field_type in {5, 6, 7}
             if date_filter_supported:
                 date_conditions = _build_date_conditions(hearing_field, date_from, date_to)
+            elif field_type == 1 and (date_from or date_to):
+                date_value = date_from or date_to
+                if date_value:
+                    date_conditions = [_build_keyword_condition(date_value, hearing_field)]
         extra_conditions = _build_filters(filters)
 
         conjunction = "and"

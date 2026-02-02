@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.core.intent.rules import match_date_query
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,9 +110,32 @@ class IntentParser:
     async def parse(self, query: str, llm_context: dict[str, str] | None = None) -> IntentResult:
         """解析用户输入，返回意图识别结果"""
 
+        is_chain = self._detect_chain(query)
+        date_score = match_date_query(query)
+        if date_score >= 0.9:
+            match = SkillMatch(
+                name=self._get_skill_name("query"),
+                score=date_score,
+                reason="日期查询规则命中",
+            )
+            logger.info(
+                "Intent parsed by date rule",
+                extra={
+                    "query": query,
+                    "top_skill": match.name,
+                    "score": date_score,
+                    "method": "rule",
+                },
+            )
+            return IntentResult(
+                skills=[match],
+                is_chain=is_chain,
+                requires_llm_confirm=False,
+                method="rule",
+            )
+
         rule_matches = self._rule_match(query)
         top_score = rule_matches[0].score if rule_matches else 0.0
-        is_chain = self._detect_chain(query)
 
         requires_llm_confirm = (
             self._llm is not None
