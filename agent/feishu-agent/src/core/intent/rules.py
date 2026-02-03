@@ -21,6 +21,8 @@ DATE_QUERY_PATTERNS = [
 
 
 def match_date_query(query: str) -> float:
+    if any(trigger in query for trigger in ("提醒", "记得", "别忘了")):
+        return 0.0
     for pattern in DATE_QUERY_PATTERNS:
         if re.search(pattern, query):
             return 0.95

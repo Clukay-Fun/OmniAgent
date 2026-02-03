@@ -252,6 +252,8 @@ class IntentParser:
             hit_bonus = min((hit_count - 1) * 0.1, 0.3)
             time_bonus = 0.1 if time_hits else 0.0
             score = min(base_score + hit_bonus + time_bonus, 1.0)
+            if skill_key == "reminder" and "提醒" in query:
+                score = min(score + 0.15, 1.0)
 
             reason = f"命中关键词: {', '.join(hit_keywords[:3])}"
             if len(hit_keywords) > 3:

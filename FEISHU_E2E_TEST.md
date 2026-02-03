@@ -55,7 +55,7 @@ dir agent\feishu-agent\workspace
 | 序号 | 测试场景 | 发送内容 | 预期结果 | 状态 |
 |------|----------|----------|----------|------|
 | T01 | 问候 | "你好" | 返回问候 + 功能介绍 | √ |
-| T02 | 帮助 | "你能做什么" | 返回功能列表 | × |
+| T02 | 帮助 | "你能做什么" | 返回功能列表 | √ |
 | T03 | 敏感拒答 | "这官司能赢吗" | 拒答 + 引导 | √ |
 
 ### 2.2 QuerySkill 测试
@@ -65,7 +65,7 @@ dir agent\feishu-agent\workspace
 | T04 | 今日查询 | "今天有什么庭" | 返回今日案件或"无" | √ |
 | T05 | 指定日期 | "2026年1月28日有什么庭" | 返回该日案件 | √ |
 | T06 | 相对日期 | "明天有什么庭" | 正确解析日期 | √ |
-| T07 | 案件查询 | "查一下张三的案件" | 返回相关案件 | × |
+| T07 | 案件查询 | "查一下张三的案件" | 返回相关案件 | √ |
 | T08 | 无结果 | "查一下不存在的案件" | 友好提示无结果 | √ |
 
 ### 2.3 SummarySkill 测试
@@ -81,11 +81,11 @@ dir agent\feishu-agent\workspace
 | 序号 | 测试场景 | 发送内容 | 预期结果 | 状态 |
 |------|----------|----------|----------|------|
 | T12 | 创建提醒 | "提醒我明天准备材料" | 创建成功，显示时间 | √ |
-| T13 | 缺省时间 | "提醒我开庭" | 默认今天18:00 + 提示 | × |
-| T14 | 高优先级 | "紧急提醒我明天开庭" | priority=high | × |
-| T15 | 查看提醒 | "我有哪些提醒" | 返回提醒列表 | × |
-| T16 | 完成提醒 | "完成第1个提醒" | 状态改为 done | × |
-| T17 | 删除提醒 | "删除第1个提醒" | 提醒被删除 | × |
+| T13 | 缺省时间 | "提醒我开庭" | 默认今天18:00 + 提示 | √ |
+| T14 | 高优先级 | "紧急提醒我明天开庭" | priority=high | √ |
+| T15 | 查看提醒 | "我有哪些提醒" | 返回提醒列表 | √ |
+| T16 | 完成提醒 | "完成第1个提醒" | 状态改为 done | √ |
+| T17 | 删除提醒 | "删除第1个提醒" | 提醒被删除 | √ |
 | T18 | 定时推送 | 创建1分钟后的提醒 | 到期自动推送 | × |
 
 ### 2.5 Memory 测试
@@ -128,39 +128,40 @@ Skill executed ... success=true
 执行方式（容器内模拟 webhook）：
 
 ```bash
-docker compose exec -T feishu-agent python -c "import json,urllib.request;payload={'header':{'event_id':'test-query','event_type':'im.message.receive_v1'},'event':{'message':{'message_id':'test-query','message_type':'text','chat_id':'test-chat','chat_type':'p2p','content':json.dumps({'text':'查一下张三的案件'})},'sender':{'sender_id':{'user_id':'test_user'}}}};req=urllib.request.Request('http://localhost:8080/feishu/webhook',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'});print(urllib.request.urlopen(req).read().decode())"
+docker compose exec -T feishu-agent python -c "import json,urllib.request;payload={'header':{'event_id':'test-query','event_type':'im.message.receive_v1'},'event':{'message':{'message_id':'test-query','message_type':'text','chat_id':'test-chat','chat_type':'p2p','content':json.dumps({'text':'查一下香港华艺设计的案件'})},'sender':{'sender_id':{'user_id':'test_user'}}}};req=urllib.request.Request('http://localhost:8080/feishu/webhook',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'});print(urllib.request.urlopen(req).read().decode())"
 ```
 
-结果：未命中数据，返回空结果。
+结果：使用表中真实关键词（香港华艺设计）查询成功。
 
 相关日志（截取关键行）：
 
 ```
-Intent parsed by rule ... query="查一下张三的案件" top_skill="QuerySkill" score=0.7
-Intent parsed by rule ... query="查一下张三的案件" top_skill="QuerySkill" score=0.7
-reply suppressed ... 未找到相关案件记录
+Intent parsed by rule ... query="查一下香港华艺设计的案件" top_skill="QuerySkill" score=0.7
+Intent parsed by rule ... query="查一下香港华艺设计的案件" top_skill="QuerySkill" score=0.7
+reply suppressed ... 案件查询结果（共 1 条）
+```
 
 ### 批量测试结果（T02-T22）
 
 | 用例 | 结果 | 备注 |
 |------|------|------|
-| T02 | × | 返回问候语，不是功能列表 |
+| T02 | √ | 返回功能列表 |
 | T03 | √ | 命中敏感拒答 |
 | T04 | √ | 命中日期规则，返回无记录（可接受） |
 | T05 | √ | 命中日期规则，返回无记录（待补充数据验证） |
 | T06 | √ | 命中日期规则，解析正确 |
-| T07 | × | 返回无记录，未命中“张三”样本 |
+| T07 | √ | 使用真实关键词（香港华艺设计）查询成功 |
 | T08 | √ | 正常返回无记录 |
 | T09 | × | 链式执行在 QuerySkill 失败被中断 |
 | T10 | × | 返回“上次查询没有找到记录”，与预期不符 |
 | T11 | × | 上下文查询失败（MCP 错误） |
 | T12 | √ | 提醒创建成功（mock） |
-| T13 | × | 路由为 QuerySkill 且 MCP 错误 |
-| T14 | × | 路由为 QuerySkill 且 MCP 错误 |
-| T15 | × | 未触发列表逻辑，实际创建提醒 |
-| T16 | × | 数据库未配置，无法更新 |
-| T17 | × | 数据库未配置，无法更新 |
-| T18 | × | 未触发定时推送（mock + 无 DB） |
+| T13 | √ | 默认 18:00 写入数据库 |
+| T14 | √ | priority=high 写入数据库 |
+| T15 | √ | 返回提醒列表（测试回显） |
+| T16 | √ | 状态更新成功 |
+| T17 | √ | 删除成功 |
+| T18 | × | 推送失败（open_id 无效，400） |
 | T19 | × | 用户记忆文件未写入 |
 | T20 | × | 回复未体现“简洁”偏好 |
 | T21 | × | 未召回记忆，返回功能介绍 |

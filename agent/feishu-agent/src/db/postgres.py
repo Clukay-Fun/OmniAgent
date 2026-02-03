@@ -135,7 +135,7 @@ class PostgresClient:
                   AND due_at <= NOW()
                   AND (
                     locked_at IS NULL
-                    OR locked_at < NOW() - ($1 || ' seconds')::interval
+                    OR locked_at < NOW() - ($1 * interval '1 second')
                   )
                 ORDER BY due_at ASC
                 LIMIT $2

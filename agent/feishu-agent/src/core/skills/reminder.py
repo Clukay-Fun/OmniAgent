@@ -41,7 +41,16 @@ class ReminderSkill(BaseSkill):
     # 默认时间提示语
     DEFAULT_TIME_HINT = '已设置为今天 {time}，如需修改请回复"修改提醒时间为 XX:XX"。'
 
-    LIST_TRIGGERS = ["查看提醒", "提醒列表", "我的提醒", "查看待办", "待办列表", "查看待办事项"]
+    LIST_TRIGGERS = [
+        "查看提醒",
+        "提醒列表",
+        "我的提醒",
+        "我有哪些提醒",
+        "有哪些提醒",
+        "查看待办",
+        "待办列表",
+        "查看待办事项",
+    ]
     DONE_TRIGGERS = ["完成提醒", "标记完成", "完成", "已完成"]
     CANCEL_TRIGGERS = ["取消提醒", "撤销提醒", "取消", "撤销"]
     DELETE_TRIGGERS = ["删除提醒", "删除"]
@@ -211,6 +220,16 @@ class ReminderSkill(BaseSkill):
         import re
         
         now = datetime.now()
+
+        relative_match = re.search(r"(\d{1,3})\s*分钟后", query)
+        if relative_match:
+            minutes = int(relative_match.group(1))
+            return now + timedelta(minutes=minutes)
+
+        hour_match = re.search(r"(\d{1,2})\s*小时后", query)
+        if hour_match:
+            hours = int(hour_match.group(1))
+            return now + timedelta(hours=hours)
         
         # 日期偏移
         date_offset = 0

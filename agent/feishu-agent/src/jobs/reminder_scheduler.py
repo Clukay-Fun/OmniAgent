@@ -43,7 +43,14 @@ class ReminderScheduler:
         self._scheduler = AsyncIOScheduler()
 
     def start(self) -> None:
-        self._scheduler.add_job(self._scan_and_push, "interval", seconds=self._interval)
+        self._scheduler.add_job(
+            self._scan_and_push,
+            "interval",
+            seconds=self._interval,
+            misfire_grace_time=max(self._interval, 30),
+            coalesce=True,
+            max_instances=1,
+        )
         self._scheduler.start()
         logger.info("Reminder scheduler started")
 
