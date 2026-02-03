@@ -113,16 +113,36 @@ class QuerySkill(BaseSkill):
         return params
 
     def _extract_keyword(self, query: str) -> str:
-        """提取关键词（去除常见无效词）"""
+        """
+        提取关键词（去除常见无效词）
+        
+        如果过滤后没有有效关键词，返回空字符串（MCP 会查询全部）
+        """
         keyword = query
-        noise_words = [
+        
+        # 查询动作词（需要去除）
+        action_words = [
             "找一下", "查一下", "查询", "搜索", "帮我", "请帮我", 
-            "一下", "案子", "案件", "有什么", "有哪些", "庭要开",
-            "庭审", "信息", "详情", "的",
+            "一下", "你能", "能不能", "可以", "请",
         ]
-        for word in noise_words:
+        
+        # 通用语义词（需要去除，但不是关键词）
+        general_words = [
+            "案子", "案件", "有什么", "有哪些", "都有哪些", "目前",
+            "庭要开", "庭审", "信息", "详情", "的", "吗", "呢",
+            "看看", "告诉我", "列出",
+        ]
+        
+        for word in action_words + general_words:
             keyword = keyword.replace(word, "")
-        return keyword.strip()
+        
+        keyword = keyword.strip()
+        
+        # 如果关键词太短或只是常见词，返回空（查询全部）
+        if len(keyword) <= 1:
+            return ""
+            
+        return keyword
 
     def _empty_result(self, message: str) -> SkillResult:
         """空结果"""

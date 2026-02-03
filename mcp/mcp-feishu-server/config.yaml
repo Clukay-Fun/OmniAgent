@@ -1,0 +1,133 @@
+# ============================================================
+# MCP Feishu Server 配置文件
+# ============================================================
+# 使用方式：
+#   1. 复制此文件为 config.yaml
+#   2. 修改配置项或通过环境变量覆盖
+#   3. 环境变量优先级高于配置文件
+# ============================================================
+
+# ------------------------------------------------------------
+# 服务配置
+# ------------------------------------------------------------
+server:
+  host: "0.0.0.0"
+  port: 8081
+  workers: 1                      # 1C2G 建议单 worker
+  debug: false
+
+# ------------------------------------------------------------
+# 飞书应用配置
+# ------------------------------------------------------------
+feishu:
+  # 应用凭证（必填，建议通过环境变量配置）
+  app_id: ${FEISHU_APP_ID}
+  app_secret: ${FEISHU_APP_SECRET}
+
+  # API 基础地址
+  api_base: "https://open.feishu.cn/open-apis"
+
+  # Token 配置
+  token:
+    # Token 提前刷新时间（秒），默认提前 5 分钟刷新
+    refresh_ahead_seconds: 300
+
+  # 请求配置
+  request:
+    timeout: 30                   # 请求超时（秒）
+    max_retries: 3                # 最大重试次数
+    retry_delay: 1                # 重试间隔（秒）
+
+# ------------------------------------------------------------
+# 多维表格配置
+# ------------------------------------------------------------
+bitable:
+  # 企业飞书域名（用于生成 record_url）
+  domain: ${BITABLE_DOMAIN:-your-company}          # 例如：xxx.feishu.cn 中的 xxx
+
+  # 默认表格配置（可被工具参数覆盖）
+  default_app_token: ${BITABLE_APP_TOKEN}
+  default_table_id: ${BITABLE_TABLE_ID}
+  default_view_id: ${BITABLE_VIEW_ID:-}    # 可选，留空则不包含在 URL 中
+
+  # 字段映射（根据实际表格调整）
+  field_mapping:
+    # 显示名称 -> 实际字段名（已根据表格实际字段更新）
+    case_number: "案号"
+    client: "委托人及联系方式"
+    opponent: "对方当事人"
+    cause: "案由"
+    court: "审理法院"
+    stage: "程序阶段"
+    hearing_date: "开庭日"
+    judge: "承办法官、助理及联系方式"    # 修正：实际字段名有顿号
+    lawyer: "主办律师"
+    progress: "案件进展"
+    todo: "待做事项"
+    remark: "备注"
+
+  # 搜索配置
+  search:
+    # 默认搜索字段（关键词匹配，仅支持文本类型字段）
+    searchable_fields:
+      - "案号"
+      - "委托人及联系方式"
+      - "对方当事人"
+      - "主办律师"
+      - "审理法院"
+      - "案件进展"
+    # 单次查询最大记录数
+    max_records: 100
+    # 默认返回记录数
+    default_limit: 20
+
+# ------------------------------------------------------------
+# 文档配置
+# ------------------------------------------------------------
+doc:
+  # 搜索配置
+  search:
+    # 默认搜索范围（可选，留空则搜索全部）
+    default_folder_token: ${DOC_FOLDER_TOKEN:-}
+    # 预览摘要长度
+    preview_length: 200
+    # 默认返回数量
+    default_limit: 10
+
+# ------------------------------------------------------------
+# 工具配置
+# ------------------------------------------------------------
+tools:
+  # 启用的工具列表
+  enabled:
+    - "feishu.v1.bitable.search"
+    - "feishu.v1.bitable.record.get"
+    - "feishu.v1.doc.search"
+    # Phase 2
+    # - "feishu.v1.file.upload"
+    # - "feishu.v1.file.download"
+
+# ------------------------------------------------------------
+# 日志配置
+# ------------------------------------------------------------
+logging:
+  level: "INFO"                   # DEBUG | INFO | WARNING | ERROR
+  format: "json"                  # json | text
+
+  # 日志输出
+  output:
+    console: true
+    file:
+      enabled: false
+      path: "logs/mcp-server.log"
+      max_size_mb: 100
+      backup_count: 5
+
+# ------------------------------------------------------------
+# 安全配置（可选）
+# ------------------------------------------------------------
+security:
+  # 是否校验请求来源（未来扩展）
+  verify_source: false
+  # 允许的调用方 IP（空则不限制）
+  allowed_ips: []

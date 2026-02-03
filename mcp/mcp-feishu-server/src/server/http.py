@@ -72,3 +72,71 @@ async def call_tool(tool_name: str, request: ToolRequest) -> ToolResponse:
             success=False,
             error=ToolError(code="MCP_001", message=str(exc), detail=None),
         )
+
+
+@router.get("/bitable/fields")
+async def get_bitable_fields() -> dict[str, Any]:
+    """
+    获取当前配置的多维表格的所有字段
+    
+    用于调试字段映射配置
+    """
+    settings = get_settings()
+    client = FeishuClient(settings)
+    
+    app_token = settings.bitable.default_app_token
+    table_id = settings.bitable.default_table_id
+    
+    if not app_token or not table_id:
+        raise HTTPException(status_code=400, detail="Bitable not configured")
+    
+    try:
+        response = await client.request(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+        )
+        data = response.get("data") or {}
+        items = data.get("items") or []
+        
+        fields = []
+        for item in items:
+            fields.append({
+                "name": item.get("field_name"),
+                "type": item.get("type"),
+                "type_name": _get_field_type_name(item.get("type")),
+            })
+        
+        return {
+            "app_token": app_token,
+            "table_id": table_id,
+            "fields": fields,
+            "total": len(fields),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _get_field_type_name(field_type: int | None) -> str:
+    """字段类型映射"""
+    type_map = {
+        1: "文本",
+        2: "数字",
+        3: "单选",
+        4: "多选",
+        5: "日期",
+        7: "复选框",
+        11: "人员",
+        13: "电话",
+        15: "超链接",
+        17: "附件",
+        18: "单向关联",
+        19: "公式",
+        20: "双向关联",
+        21: "地理位置",
+        22: "群组",
+        23: "创建时间",
+        1001: "创建人",
+        1002: "修改人",
+        1003: "修改时间",
+    }
+    return type_map.get(field_type, f"未知({field_type})")
