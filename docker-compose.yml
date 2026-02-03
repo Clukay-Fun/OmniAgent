@@ -70,7 +70,7 @@ services:
     # 配置卷挂载（支持热更新）
     volumes:
       - ./agent/feishu-agent/config:/app/config:ro
-      - ./agent/feishu-agent/workspace:/app/workspace
+      - ./agent/feishu-agent/workspace:/workspace
 
   # ===========================================
   # Postgres (Reminder)

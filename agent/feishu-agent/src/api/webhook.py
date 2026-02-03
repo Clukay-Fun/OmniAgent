@@ -147,7 +147,10 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
     chat_id = message.get("chat_id")
     chat_type = message.get("chat_type")
     message_id = message.get("message_id")
-    user_id = sender.get("sender_id", {}).get("user_id") or chat_id or "unknown"
+    sender_id = sender.get("sender_id", {})
+    user_id = sender_id.get("open_id") or sender_id.get("user_id") or chat_id or "unknown"
+    if sender_id.get("open_id"):
+        logger.info("Webhook sender open_id: %s", sender_id.get("open_id"))
 
     if not chat_id:
         return

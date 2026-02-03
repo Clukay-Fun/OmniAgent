@@ -12,12 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from typing import Any
 
 from dotenv import load_dotenv
 
 # 必须在导入 config 之前加载 .env
 load_dotenv()
+
+# Windows 兼容性：设置事件循环策略
+# lark_oapi 在导入时会创建事件循环，需要先设置策略
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
