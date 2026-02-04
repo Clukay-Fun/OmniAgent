@@ -177,7 +177,7 @@ def _load_manifest(path: Path) -> SkillManifest | None:
     )
 
 
-    )
+
 
 
 def _load_entrypoint(entrypoint: str) -> type[BaseSkill] | None:

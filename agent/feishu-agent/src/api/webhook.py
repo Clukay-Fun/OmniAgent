@@ -117,7 +117,7 @@ def _get_text_content(message: dict[str, Any]) -> str:
     try:
         payload = json.loads(content)
         return payload.get("text") or ""
-except json.JSONDecodeError:
+    except json.JSONDecodeError:
         return ""
 # endregion
 
@@ -225,6 +225,11 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
     except Exception:
         error_text = settings.reply.templates.error.format(message="处理出错")
+        await send_message(
+            settings,
+            chat_id,
+            "text",
+            {"text": error_text},
             reply_message_id=message_id,
         )
 # endregion

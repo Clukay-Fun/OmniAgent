@@ -32,12 +32,7 @@ class ConfigWatcher:
         interval: 轮询间隔 (秒)
     """
     
-    def __init__(
-        self,
-        config_path: str,
-        reload_callback: Callable[[dict[str, Any]], None],
-        interval_seconds: int = 60,
-    ) -> None:
+
     def __init__(
         self,
         config_path: str,
@@ -149,12 +144,7 @@ class HotReloadManager:
     def __init__(self) -> None:
         self._watchers: list[ConfigWatcher] = []
 
-    def add_watcher(
-        self,
-        config_path: str,
-        reload_callback: Callable[[dict[str, Any]], None],
-        interval_seconds: int = 60,
-    ) -> ConfigWatcher:
+
     def add_watcher(
         self,
         config_path: str,

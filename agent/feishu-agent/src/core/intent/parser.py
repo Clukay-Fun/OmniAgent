@@ -39,6 +39,10 @@ class SkillMatch:
         reason: 匹配理由
     """
 
+    name: str
+    score: float
+    reason: str
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,

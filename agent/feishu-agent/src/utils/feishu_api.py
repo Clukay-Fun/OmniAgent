@@ -32,6 +32,7 @@ class TokenManager:
         - 缓存 Token 并在过期前刷新
         - 线程安全 (AsyncLock)
     """
+    def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._token: str | None = None
         self._expires_at: float = 0.0
