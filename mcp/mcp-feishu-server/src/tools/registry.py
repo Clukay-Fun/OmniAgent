@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Type
 
 from src.tools.base import BaseTool
@@ -16,10 +17,20 @@ from src.tools.base import BaseTool
 class ToolRegistry:
     """工具注册中心 (单例模式)"""
     _tools: dict[str, Type[BaseTool]] = {}
+    _logger = logging.getLogger(__name__)
 
     @classmethod
     def register(cls, tool_cls: Type[BaseTool]) -> Type[BaseTool]:
-        cls._tools[tool_cls.name] = tool_cls
+        tool_name = getattr(tool_cls, "name", "")
+        if not tool_name:
+            cls._logger.warning(
+                "Tool %s has no 'name' attribute, skipping registration",
+                tool_cls.__name__,
+            )
+            return tool_cls
+        if tool_name in cls._tools:
+            cls._logger.warning("Tool %s already registered, overwriting", tool_name)
+        cls._tools[tool_name] = tool_cls
         return tool_cls
 
     @classmethod

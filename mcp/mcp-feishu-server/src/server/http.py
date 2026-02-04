@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.feishu.client import FeishuClient, FeishuAPIError
 from src.server.schema import ToolRequest, ToolResponse, ToolError
 from src.tools.base import ToolContext
@@ -20,6 +20,15 @@ from src.tools.registry import ToolRegistry
 
 
 router = APIRouter()
+
+_feishu_client: FeishuClient | None = None
+
+
+def get_feishu_client(settings: Settings) -> FeishuClient:
+    global _feishu_client
+    if _feishu_client is None:
+        _feishu_client = FeishuClient(settings)
+    return _feishu_client
 
 
 # region 基础路由
@@ -71,7 +80,7 @@ async def call_tool(tool_name: str, request: ToolRequest) -> ToolResponse:
     settings = get_settings()
     if settings.tools.enabled and tool_name not in settings.tools.enabled:
         raise HTTPException(status_code=403, detail="Tool disabled")
-    context = ToolContext(settings=settings, client=FeishuClient(settings))
+    context = ToolContext(settings=settings, client=get_feishu_client(settings))
     tool = tool_cls(context)
 
     try:
@@ -111,7 +120,7 @@ async def get_bitable_fields() -> dict[str, Any]:
         字段列表及元数据
     """
     settings = get_settings()
-    client = FeishuClient(settings)
+    client = get_feishu_client(settings)
     
     app_token = settings.bitable.default_app_token
     table_id = settings.bitable.default_table_id
@@ -168,4 +177,5 @@ def _get_field_type_name(field_type: int | None) -> str:
         1002: "修改人",
         1003: "修改时间",
     }
+    return type_map.get(field_type, "未知")
 # endregion

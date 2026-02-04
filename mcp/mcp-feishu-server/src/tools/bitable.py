@@ -186,6 +186,35 @@ class BitableSearchTool(BaseTool):
         - 根据关键词、日期范围搜索记录
         - 支持字段筛选和自定义视图
     """
+    name = "feishu.v1.bitable.search"
+    description = "搜索飞书多维表格记录，支持关键词、日期范围、字段过滤"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "keyword": {
+                "type": "string",
+                "description": "搜索关键词",
+            },
+            "date_from": {
+                "type": "string",
+                "description": "开始日期 (YYYY-MM-DD)",
+            },
+            "date_to": {
+                "type": "string",
+                "description": "结束日期 (YYYY-MM-DD)",
+            },
+            "filters": {
+                "type": "object",
+                "description": "额外过滤条件",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "返回数量限制",
+                "default": 20,
+            },
+        },
+        "required": [],
+    }
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         keyword = params.get("keyword") or ""
@@ -375,6 +404,24 @@ class BitableRecordGetTool(BaseTool):
     """
     name = "feishu.v1.bitable.record.get"
     description = "Get a single bitable record by record_id."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "record_id": {
+                "type": "string",
+                "description": "记录 ID",
+            },
+            "app_token": {
+                "type": "string",
+                "description": "多维表格 app_token (可选)",
+            },
+            "table_id": {
+                "type": "string",
+                "description": "数据表 table_id (可选)",
+            },
+        },
+        "required": ["record_id"],
+    }
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         record_id = params.get("record_id")

@@ -98,9 +98,6 @@ def load_market_skills(
     return skills, skill_defs
 
 
-    return skills, skill_defs
-
-
 def _resolve_market_dir(market_config: dict[str, Any], config_path: str) -> Path | None:
     """解析市场目录绝对路径"""
     local_dir = market_config.get("local_dir") or "src/skills_market"
@@ -118,9 +115,6 @@ def _resolve_market_dir(market_config: dict[str, Any], config_path: str) -> Path
     return (base_dir / path).resolve()
 
 
-    return (base_dir / path).resolve()
-
-
 def _find_manifests(market_dir: Path) -> list[Path]:
     """递归查找 manifest 文件 (.yaml/.yml/.json)"""
     manifests = []
@@ -128,9 +122,6 @@ def _find_manifests(market_dir: Path) -> list[Path]:
         if path.suffix.lower() not in {".yaml", ".yml", ".json"}:
             continue
         manifests.append(path)
-    return sorted(manifests)
-
-
     return sorted(manifests)
 
 
@@ -191,7 +182,9 @@ def _load_entrypoint(entrypoint: str) -> type[BaseSkill] | None:
         return None
 
     if "." not in module_path:
-        module_path = f"skills_market.{module_path}"
+        module_path = f"src.skills_market.{module_path}"
+    elif module_path.startswith("skills_market."):
+        module_path = f"src.{module_path}"
 
     try:
         module = importlib.import_module(module_path)
@@ -208,9 +201,6 @@ def _load_entrypoint(entrypoint: str) -> type[BaseSkill] | None:
         return target
 
     logger.warning("Entrypoint is not a BaseSkill: %s", entrypoint)
-    return None
-
-
     return None
 
 
@@ -247,9 +237,6 @@ def _instantiate_skill(skill_cls: type[BaseSkill], dependencies: dict[str, Any])
         return skill_cls(**kwargs)
     except Exception as exc:
         logger.warning("Failed to init skill %s: %s", skill_cls, exc)
-        return None
-
-
         return None
 
 

@@ -70,10 +70,17 @@ class TokenManager:
         if not token or not expire:
             raise FeishuAPIError("Invalid token response")
         return token, int(expire)
-
-
-        return token, int(expire)
 # endregion
+
+
+_token_manager: TokenManager | None = None
+
+
+def get_token_manager(settings: Settings) -> TokenManager:
+    global _token_manager
+    if _token_manager is None:
+        _token_manager = TokenManager(settings)
+    return _token_manager
 
 
 # region 消息 API
@@ -96,8 +103,7 @@ async def send_message(
         reply_message_id: 回复的消息 ID (可选)
         receive_id_type: 接收 ID 类型 (默认为 chat_id)
     """
-    token_manager = TokenManager(settings)
-    token = await token_manager.get_token()
+    token = await get_token_manager(settings).get_token()
     url = f"{settings.feishu.api_base}/im/v1/messages"
     params = {"receive_id_type": receive_id_type}
     payload: dict[str, object] = {

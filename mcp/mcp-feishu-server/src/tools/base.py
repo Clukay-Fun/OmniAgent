@@ -25,11 +25,14 @@ class ToolContext:
 
 class BaseTool(ABC):
     """MCP 工具抽象基类"""
-    name: str = "base_tool"
-    description: str = "Base tool description"
+    name: str = ""
+    description: str = ""
+    parameters: dict[str, Any] = {}
 
     def __init__(self, context: ToolContext) -> None:
         self.context = context
+        if not self.name:
+            raise ValueError(f"{self.__class__.__name__} must define 'name' attribute")
 
     @abstractmethod
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -43,4 +46,12 @@ class BaseTool(ABC):
             执行结果字典
         """
         raise NotImplementedError
+
+    def to_schema(self) -> dict[str, Any]:
+        """返回工具 schema (用于工具发现或 function calling)"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
 # endregion

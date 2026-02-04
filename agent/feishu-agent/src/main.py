@@ -40,6 +40,7 @@ setup_logging(settings.logging)
 ensure_workspace()
 
 # 热更新管理器
+hot_reload_manager = HotReloadManager()
 # endregion
 
 
