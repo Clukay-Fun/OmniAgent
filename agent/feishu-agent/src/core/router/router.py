@@ -1,6 +1,10 @@
 """
-Skill router with chain execution support.
-Routes intent to skills and manages execution context.
+描述: 技能路由与链式执行管理器
+主要功能:
+    - 意图(Intent) -> 技能(Skill) 路由分发
+    - 支持单一技能执行与链式(Chain)执行
+    - 全局上下文生命周期管理 (ContextManager)
+    - 运行时异常处理与降级策略
 """
 
 from __future__ import annotations
@@ -31,7 +35,13 @@ _SKILL_NAME_MAP: dict[str, str] = {
 # ============================================
 class SkillRouter:
     """
-    技能路由器
+    技能路由器核心类
+    
+    功能:
+        - 维护已注册技能表
+        - 解析意图并调度技能执行
+        - 处理技能链 (Chain) 逻辑
+        - 统一异常捕获与指标记录
     """
 
     SKILL_NAME_MAP: dict[str, str] = {
@@ -75,6 +85,21 @@ class SkillRouter:
         intent: IntentResult,
         context: SkillContext,
     ) -> SkillResult:
+        """
+        核心路由入口
+
+        逻辑:
+            1. 检查意图是否为空
+            2. 判断是否为链式意图 (Chain)
+            3. 执行单个技能或技能链
+            
+        参数:
+            intent: 意图分析结果
+            context: 当前会话上下文
+            
+        返回:
+            SkillResult: 执行结果
+        """
         top_skill = intent.top_skill()
         if not top_skill:
             return self._fallback_result("无法识别意图")
@@ -91,6 +116,15 @@ class SkillRouter:
         skill_name: str,
         context: SkillContext,
     ) -> SkillResult:
+        """
+        执行单个技能 (带监控与错误处理)
+        
+        流程:
+            1. 规范化技能名称
+            2. 查找技能实例 (未找到则降级到 Chitchat)
+            3. 执行并记录耗时/结果
+            4. 处理超时与异常
+        """
         import time
         from src.utils.metrics import record_skill_execution
         from src.utils.exceptions import (
@@ -238,7 +272,12 @@ class SkillRouter:
 # ============================================
 class ContextManager:
     """
-    全局上下文管理器
+    全局上下文管理器 (Memory Store)
+    
+    功能:
+        - 存储用户会话上下文 (SkillContext)
+        - 管理上下文生命周期 (TTL 过期清理)
+        - 记录最后一次技能执行结果 (用于多轮对话)
     """
 
     def __init__(self, ttl_minutes: int = 30) -> None:

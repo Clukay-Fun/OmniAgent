@@ -45,3 +45,6 @@ temp/
 
 # Workspace (local runtime)
 agent/workspace/
+
+docs/
+scripts/

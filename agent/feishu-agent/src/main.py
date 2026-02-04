@@ -1,10 +1,10 @@
 """
-Feishu Agent entrypoint.
-
-功能：
-- FastAPI 应用初始化
-- 配置热更新启动
-- 优雅关闭处理
+描述: Feishu Agent 主入口
+主要功能:
+    - FastAPI 应用初始化
+    - 配置热更新 (Hot Reload) 启动
+    - 数据库与定时任务调度
+    - 优雅停止 (Graceful Shutdown)
 """
 
 from __future__ import annotations
@@ -40,21 +40,18 @@ setup_logging(settings.logging)
 ensure_workspace()
 
 # 热更新管理器
-hot_reload_manager = HotReloadManager()
 # endregion
-# ============================================
 
 
-# ============================================
 # region 生命周期管理
-# ============================================
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
-    应用生命周期管理
-    
-    - 启动时：初始化热更新监控
-    - 关闭时：优雅停止
+    应用生命周期回调
+
+    功能:
+        - Startup: 启动热更新、连接数据库、初始化调度器
+        - Shutdown: 停止任务、关闭连接
     """
     # 启动配置热更新
     hot_reload_manager.add_watcher(
@@ -95,12 +92,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await scheduler.stop()
     logger.info("Feishu Agent shutdown complete")
 # endregion
-# ============================================
 
 
-# ============================================
-# region FastAPI 应用
-# ============================================
+# region FastAPI 应用实例
 app = FastAPI(
     title="Feishu Agent",
     version="0.2.0",
@@ -112,4 +106,3 @@ app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(webhook_router)
 # endregion
-# ============================================

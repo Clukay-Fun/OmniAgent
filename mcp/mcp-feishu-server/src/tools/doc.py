@@ -1,5 +1,8 @@
 """
-Document search tool.
+描述: 飞书云文档搜索工具
+主要功能:
+    - 关键词搜索云文档 (Wiki, Doc, Sheet, Bitable)
+    - 支持指定文件夹范围
 """
 
 from __future__ import annotations
@@ -10,12 +13,26 @@ from src.tools.base import BaseTool
 from src.tools.registry import ToolRegistry
 
 
+# region 云文档搜索
 @ToolRegistry.register
 class DocSearchTool(BaseTool):
+    """
+    云文档搜索工具
+
+    功能:
+        - 调用搜索 API 查找相关文档
+        - 返回文档标题、链接及预览片段
+    """
     name = "feishu.v1.doc.search"
     description = "Search Feishu documents by keyword."
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        执行搜索
+
+        参数:
+            params: 参数字典 (keyword, folder_token, limit)
+        """
         keyword = params.get("keyword")
         if not keyword:
             return {"documents": []}
@@ -64,3 +81,4 @@ class DocSearchTool(BaseTool):
             })
 
         return {"documents": documents, "total": len(documents)}
+# endregion

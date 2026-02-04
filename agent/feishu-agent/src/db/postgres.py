@@ -1,11 +1,9 @@
 """
-PostgreSQL client.
-
-Responsibilities:
-    - Connection pool management
-    - Reminder CRUD
-    - Advisory locks for scheduling
-Dependencies: asyncpg
+描述: PostgreSQL 数据库客户端
+主要功能:
+    - 异步连接池管理 (asyncpg Pool)
+    - 提醒事项 CRUD 操作
+    - 分布式锁 (Advisory Locks) 支持
 """
 
 from __future__ import annotations
@@ -17,8 +15,22 @@ from typing import Any
 import asyncpg
 
 
+# region 数据库客户端
 class PostgresClient:
+    """
+    PostgreSQL 异步客户端
+
+    功能:
+        - 封装 asyncpg 连接池
+        - 提供数据访问对象 (DAO) 方法
+    """
     def __init__(self, settings: Any) -> None:
+        """
+        初始化客户端
+
+        参数:
+            settings: 数据库配置对象
+        """
         self._settings = {
             "dsn": getattr(settings, "dsn", ""),
             "min_size": int(getattr(settings, "min_size", 1)),
@@ -29,6 +41,7 @@ class PostgresClient:
         self._lock = asyncio.Lock()
 
     async def _ensure_pool(self) -> asyncpg.Pool:
+        """获取或创建连接池 (双重检查锁定)"""
         if self._pool:
             return self._pool
 
@@ -45,12 +58,19 @@ class PostgresClient:
             return self._pool
 
     async def close(self) -> None:
+        """关闭连接池"""
         if self._pool:
             await self._pool.close()
             self._pool = None
 
     @asynccontextmanager
     async def advisory_lock(self, key: str):
+        """
+        获取分布式咨询锁 (Advisory Lock)
+
+        参数:
+            key: 锁标识键
+        """
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             locked = await conn.fetchval(
@@ -77,6 +97,12 @@ class PostgresClient:
         case_id: str | None = None,
         chat_id: str | None = None,
     ) -> int:
+        """
+        创建提醒事项
+
+        返回:
+            新记录 ID
+        """
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -102,6 +128,7 @@ class PostgresClient:
         status: str = "pending",
         limit: int = 20,
     ) -> list[dict[str, Any]]:
+        """查询用户提醒列表"""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -125,6 +152,14 @@ class PostgresClient:
         lock_timeout_seconds: int,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        """
+        获取待发送的提醒 (原子性加锁)
+
+        Query 说明:
+            - 筛选到期且未锁定的记录
+            - 使用 SKIP LOCKED 避免阻塞
+            - 原子更新 locked_by 和 locked_at
+        """
         rows = await conn.fetch(
             """
             WITH candidates AS (
@@ -154,6 +189,7 @@ class PostgresClient:
         return [dict(row) for row in rows]
 
     async def mark_reminder_sent(self, reminder_id: int) -> None:
+        """标记提醒为已发送"""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -166,6 +202,7 @@ class PostgresClient:
             )
 
     async def mark_reminder_failed(self, reminder_id: int, error: str) -> None:
+        """标记发送失败 (增加重试计数)"""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -181,6 +218,7 @@ class PostgresClient:
             )
 
     async def update_status(self, reminder_id: int, user_id: str, status: str) -> bool:
+        """更新提醒状态"""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             result = await conn.execute(
@@ -196,6 +234,7 @@ class PostgresClient:
             return result.startswith("UPDATE")
 
     async def delete_reminder(self, reminder_id: int, user_id: str) -> bool:
+        """删除提醒"""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             result = await conn.execute(
@@ -204,3 +243,4 @@ class PostgresClient:
                 user_id,
             )
             return result.startswith("DELETE")
+# endregion

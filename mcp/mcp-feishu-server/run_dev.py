@@ -1,7 +1,9 @@
 """
-带热重载的启动脚本（Windows 兼容）
-
-用法：python run_dev.py
+描述: MCP Server 开发启动脚本
+主要功能:
+    - 自动监控 src 目录文件变更
+    - 支持热重载 (Hot Reload)
+    - 兼容 Windows/Linux 环境
 """
 import asyncio
 import os
@@ -17,8 +19,14 @@ if sys.platform == "win32":
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+# region 热重载逻辑
 def run_with_reload():
-    """使用 watchdog 监控文件变化并重载"""
+    """
+    启动热重载开发服务器
+    
+    依赖:
+        - watchdog (文件监控)
+    """
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
@@ -29,12 +37,14 @@ def run_with_reload():
         return
 
     class ReloadHandler(FileSystemEventHandler):
+        """文件变更事件处理器"""
         def __init__(self, process_starter):
             self.process_starter = process_starter
             self.process = None
             self.last_reload = 0
 
         def start_process(self):
+            """启动或重启子进程"""
             if self.process:
                 self.process.terminate()
                 self.process.wait()
@@ -42,6 +52,7 @@ def run_with_reload():
             self.process = self.process_starter()
 
         def on_modified(self, event):
+            """处理文件修改事件 (带防抖)"""
             if event.is_directory:
                 return
             if not event.src_path.endswith('.py') and not event.src_path.endswith('.yaml'):
@@ -89,10 +100,18 @@ def run_with_reload():
         if handler.process:
             handler.process.terminate()
     observer.join()
+# endregion
 
 
+# region 普通启动模式
 def run_normal():
-    """普通模式（无热重载）"""
+    """
+    及普通模式启动 (无热重载)
+    
+    适用:
+        - 生产环境
+        - watchdog 未安装时降级
+    """
     from dotenv import load_dotenv
     load_dotenv()
     
@@ -108,3 +127,4 @@ def run_normal():
 
 if __name__ == "__main__":
     run_with_reload()
+# endregion

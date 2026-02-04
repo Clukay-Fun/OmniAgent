@@ -1,5 +1,9 @@
 """
-Bitable tools.
+描述: 多维表格 (Bitable) 工具集
+主要功能:
+    - 搜索记录 (支持关键词、时间范围、自定义筛选)
+    - 获取单条记录详情
+    - 创建和更新记录
 """
 
 from __future__ import annotations
@@ -14,7 +18,9 @@ from src.tools.registry import ToolRegistry
 from src.utils.url_builder import build_record_url
 
 
+# region 辅助函数
 def _build_keyword_condition(keyword: str, field: str) -> dict[str, Any]:
+    """构建关键词搜索条件"""
     return {
         "field_name": field,
         "operator": "contains",
@@ -23,6 +29,7 @@ def _build_keyword_condition(keyword: str, field: str) -> dict[str, Any]:
 
 
 def _build_date_conditions(field: str, date_from: str | None, date_to: str | None) -> list[dict[str, Any]]:
+    """构建日期范围筛选条件"""
     conditions: list[dict[str, Any]] = []
     if date_from:
         conditions.append({
@@ -40,6 +47,7 @@ def _build_date_conditions(field: str, date_from: str | None, date_to: str | Non
 
 
 def _build_filters(filters: dict[str, Any]) -> list[dict[str, Any]]:
+    """构建自定义字段筛选条件"""
     conditions: list[dict[str, Any]] = []
     for field, value in filters.items():
         if value is None:
@@ -53,6 +61,7 @@ def _build_filters(filters: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _format_timestamp(value: int | float) -> str:
+    """格式化时间戳 (毫秒) 为可读字符串"""
     try:
         tz = timezone(timedelta(hours=8))
         return (
@@ -65,10 +74,12 @@ def _format_timestamp(value: int | float) -> str:
 
 
 def _normalize_field_name(name: str) -> str:
+    """归一化字段名 (去除空白字符)"""
     return re.sub(r"\s+", "", name)
 
 
 def _parse_text_blob(value: str) -> str | None:
+    """尝试解析飞书富文本 Blob 结构"""
     raw_value = value.strip()
     if not raw_value.startswith("{"):
         return None
@@ -86,6 +97,14 @@ def _parse_text_blob(value: str) -> str | None:
 
 
 def parse_field_value(value: Any) -> Any:
+    """
+    解析飞书字段值 (多态处理)
+    
+    处理:
+        - 时间戳转字符串
+        - 对象/列表转字符串描述
+        - 富文本解析
+    """
     if value is None:
         return None
     if isinstance(value, (int, float)) and value > 1_000_000_000_000:
@@ -110,6 +129,7 @@ def parse_field_value(value: Any) -> Any:
 
 
 async def _fetch_fields_info(tool: "BitableSearchTool", app_token: str, table_id: str) -> dict[str, int]:
+    """获取数据表字段定义元数据"""
     try:
         response = await tool.context.client.request(
             "GET",
@@ -135,6 +155,7 @@ async def _fetch_fields_info(tool: "BitableSearchTool", app_token: str, table_id
 
 
 def _parse_date_text(value: Any) -> date | None:
+    """解析自然语言或格式化日期字符串"""
     if not value:
         return None
     if isinstance(value, (int, float)):
@@ -152,12 +173,19 @@ def _parse_date_text(value: Any) -> date | None:
         except ValueError:
             return None
     return None
+# endregion
 
 
+# region MCP 工具实现
 @ToolRegistry.register
 class BitableSearchTool(BaseTool):
-    name = "feishu.v1.bitable.search"
-    description = "Search bitable records with keyword and date range."
+    """
+    多维表格搜索工具
+
+    功能:
+        - 根据关键词、日期范围搜索记录
+        - 支持字段筛选和自定义视图
+    """
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         keyword = params.get("keyword") or ""
@@ -339,6 +367,12 @@ class BitableSearchTool(BaseTool):
 
 @ToolRegistry.register
 class BitableRecordGetTool(BaseTool):
+    """
+    获取记录详情工具
+
+    功能:
+        - 根据 record_id 获取单条记录完整信息
+    """
     name = "feishu.v1.bitable.record.get"
     description = "Get a single bitable record by record_id."
 
@@ -378,3 +412,138 @@ class BitableRecordGetTool(BaseTool):
             "fields_text": fields_text,
             "record_url": record_url,
         }
+
+
+@ToolRegistry.register
+class BitableRecordCreateTool(BaseTool):
+    """
+    创建记录工具
+
+    功能:
+        - 在指定表格中创建新记录
+        - 返回新记录的 ID 和链接
+    """
+    
+    name = "feishu.v1.bitable.record.create"
+    description = "Create a new bitable record with specified fields."
+
+    async def run(self, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        执行创建
+
+        参数:
+            params: 参数字典
+                - fields: 字段值字典
+                - app_token: 应用 Token (可选)
+                - table_id: 数据表 ID (可选)
+
+        返回:
+            创建结果
+        """
+        fields = params.get("fields") or {}
+        if not fields:
+            return {"success": False, "error": "No fields provided"}
+
+        settings = self.context.settings
+        app_token = params.get("app_token") or settings.bitable.default_app_token
+        table_id = params.get("table_id") or settings.bitable.default_table_id
+        view_id = params.get("view_id") or settings.bitable.default_view_id
+
+        if not app_token or not table_id:
+            return {"success": False, "error": "Bitable not configured"}
+
+        payload = {"fields": fields}
+
+        response = await self.context.client.request(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
+            json_body=payload,
+        )
+        data = response.get("data") or {}
+        record = data.get("record") or {}
+        record_id = record.get("record_id")
+
+        record_url = ""
+        if record_id:
+            record_url = build_record_url(
+                settings.bitable.domain,
+                app_token,
+                table_id,
+                record_id,
+                view_id=view_id,
+            )
+
+        return {
+            "success": True,
+            "record_id": record_id,
+            "fields": record.get("fields", {}),
+            "record_url": record_url,
+        }
+
+
+@ToolRegistry.register
+class BitableRecordUpdateTool(BaseTool):
+    """
+    更新记录工具
+
+    功能:
+        - 更新指定记录的字段值
+    """
+    
+    name = "feishu.v1.bitable.record.update"
+    description = "Update an existing bitable record."
+
+    async def run(self, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        执行更新
+
+        参数:
+            params: 参数字典
+                - record_id: 记录 ID
+                - fields: 更新字段字典
+
+        返回:
+            更新结果
+        """
+        record_id = params.get("record_id")
+        fields = params.get("fields") or {}
+        
+        if not record_id:
+            return {"success": False, "error": "No record_id provided"}
+        if not fields:
+            return {"success": False, "error": "No fields to update"}
+
+        settings = self.context.settings
+        app_token = params.get("app_token") or settings.bitable.default_app_token
+        table_id = params.get("table_id") or settings.bitable.default_table_id
+        view_id = params.get("view_id") or settings.bitable.default_view_id
+
+        if not app_token or not table_id:
+            return {"success": False, "error": "Bitable not configured"}
+
+        payload = {"fields": fields}
+
+        response = await self.context.client.request(
+            "PUT",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+            json_body=payload,
+        )
+        data = response.get("data") or {}
+        record = data.get("record") or {}
+
+        record_url = build_record_url(
+            settings.bitable.domain,
+            app_token,
+            table_id,
+            record_id,
+            view_id=view_id,
+        )
+
+        return {
+            "success": True,
+            "record_id": record_id,
+            "fields": record.get("fields", {}),
+            "record_url": record_url,
+        }
+
+# endregion

@@ -1,4 +1,9 @@
-"""Shared core types."""
+"""
+描述: 核心数据类型定义
+主要功能:
+    - SkillContext: 技能执行上下文
+    - SkillResult: 技能执行结果
+"""
 
 from __future__ import annotations
 
@@ -6,9 +11,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# region 技能上下文
 @dataclass
 class SkillContext:
-    """技能执行上下文，用于链式调用间传递数据"""
+    """
+    技能执行上下文
+    
+    功能:
+        - 传递 Query 和 UserID
+        - 存储链式调用间的结果 (last_result)
+        - 传递扩展信息 (extra)
+    """
 
     query: str
     user_id: str = ""
@@ -18,6 +31,7 @@ class SkillContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def with_result(self, skill_name: str, result: dict[str, Any]) -> "SkillContext":
+        """生成包含本次执行结果的新上下文"""
         return SkillContext(
             query=self.query,
             user_id=self.user_id,
@@ -26,11 +40,22 @@ class SkillContext:
             hop_count=self.hop_count + 1,
             extra=self.extra.copy(),
         )
+# endregion
 
 
+# region 技能结果
 @dataclass
 class SkillResult:
-    """技能执行结果"""
+    """
+    技能执行结果
+    
+    属性:
+        success: 是否成功
+        skill_name: 执行技能名
+        data: 结构化数据
+        reply_text: 回复文本
+        reply_card: 飞书卡片数据 (可选)
+    """
 
     success: bool
     skill_name: str
@@ -41,6 +66,7 @@ class SkillResult:
     reply_card: dict[str, Any] | None = None
 
     def to_reply(self) -> dict[str, Any]:
+        """转换为标准回复字典"""
         result = {
             "type": self.reply_type,
             "text": self.reply_text or self.message,
@@ -48,3 +74,4 @@ class SkillResult:
         if self.reply_card:
             result["card"] = self.reply_card
         return result
+# endregion

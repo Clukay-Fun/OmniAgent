@@ -1,5 +1,9 @@
 """
-HTTP API for MCP tools.
+描述: MCP Server HTTP 接口层
+主要功能:
+    - 提供 MCP 工具列表查询
+    - 处理工具调用请求
+    - 辅助调试接口
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from src.tools.registry import ToolRegistry
 router = APIRouter()
 
 
+# region 基础路由
 @router.get("/")
 async def root() -> dict[str, str]:
     return {"status": "ok", "service": "mcp-feishu-server"}
@@ -33,8 +38,13 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# endregion
+
+
+# region MCP 工具接口
 @router.get("/mcp/tools")
 async def list_tools() -> dict[str, Any]:
+    """获取可用工具列表"""
     settings = get_settings()
     tools = ToolRegistry.list_tools()
     if settings.tools.enabled:
@@ -44,6 +54,16 @@ async def list_tools() -> dict[str, Any]:
 
 @router.post("/mcp/tools/{tool_name}", response_model=ToolResponse)
 async def call_tool(tool_name: str, request: ToolRequest) -> ToolResponse:
+    """
+    调用 MCP 工具
+
+    参数:
+        tool_name: 工具名称
+        request: 调用请求参数
+
+    返回:
+        工具执行结果
+    """
     tool_cls = ToolRegistry.get(tool_name)
     if not tool_cls:
         raise HTTPException(status_code=404, detail="Tool not found")
@@ -74,12 +94,21 @@ async def call_tool(tool_name: str, request: ToolRequest) -> ToolResponse:
         )
 
 
+# endregion
+
+
+# region 调试接口
 @router.get("/bitable/fields")
 async def get_bitable_fields() -> dict[str, Any]:
     """
-    获取当前配置的多维表格的所有字段
-    
-    用于调试字段映射配置
+    获取多维表格字段元数据
+
+    功能:
+        - 读取当前配置的 Table 所有字段
+        - 用于辅助配置字段映射关系
+
+    返回:
+        字段列表及元数据
     """
     settings = get_settings()
     client = FeishuClient(settings)
@@ -117,7 +146,7 @@ async def get_bitable_fields() -> dict[str, Any]:
 
 
 def _get_field_type_name(field_type: int | None) -> str:
-    """字段类型映射"""
+    """多维表格字段类型映射"""
     type_map = {
         1: "文本",
         2: "数字",
@@ -139,4 +168,4 @@ def _get_field_type_name(field_type: int | None) -> str:
         1002: "修改人",
         1003: "修改时间",
     }
-    return type_map.get(field_type, f"未知({field_type})")
+# endregion

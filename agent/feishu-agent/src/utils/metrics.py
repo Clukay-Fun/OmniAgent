@@ -1,11 +1,9 @@
 """
-Prometheus 指标模块
-
-功能：
-- 请求计数器
-- 技能执行延迟直方图
-- 技能成功/失败计数
-- 活跃会话数
+描述: Prometheus 指标收集模块
+主要功能:
+    - 定义核心业务指标 (Counter, Histogram, Gauge)
+    - 提供指标记录的工具函数与装饰器
+    - 兼容 Prometheus 客户端未安装的降级模式
 """
 
 from __future__ import annotations
@@ -116,67 +114,63 @@ else:
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
 # endregion
-# ============================================
 
 
-# ============================================
-# region 指标记录辅助函数
-# ============================================
+# region 指标记录工具函数
 def record_request(endpoint: str, status: str = "success") -> None:
-    """记录请求"""
+    """记录 API 请求"""
     REQUEST_COUNT.labels(endpoint=endpoint, status=status).inc()
 
 
 def record_skill_execution(skill_name: str, status: str, duration: float) -> None:
-    """记录技能执行"""
+    """记录技能执行状态与耗时"""
     SKILL_EXECUTION_COUNT.labels(skill_name=skill_name, status=status).inc()
     SKILL_EXECUTION_DURATION.labels(skill_name=skill_name).observe(duration)
 
 
 def record_intent_parse(method: str, duration: float) -> None:
-    """记录意图解析"""
+    """记录意图解析耗时"""
     INTENT_PARSE_DURATION.labels(method=method).observe(duration)
 
 
 def record_llm_call(operation: str, status: str, duration: float) -> None:
-    """记录 LLM 调用"""
+    """记录 LLM 调用指标"""
     LLM_CALL_COUNT.labels(operation=operation, status=status).inc()
     LLM_CALL_DURATION.labels(operation=operation).observe(duration)
 
 
 def record_mcp_tool_call(tool_name: str, status: str) -> None:
-    """记录 MCP 工具调用"""
+    """记录 MCP 工具调用结果"""
     MCP_TOOL_CALL_COUNT.labels(tool_name=tool_name, status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:
-    """设置活跃会话数"""
+    """更新当前活跃会话数 (Gauge)"""
     ACTIVE_SESSIONS.set(count)
 
 
 def record_config_reload(config_file: str, status: str) -> None:
-    """记录配置重载"""
+    """记录配置热重载事件"""
     CONFIG_RELOAD_COUNT.labels(config_file=config_file, status=status).inc()
 
 
 def record_reminder_push(status: str) -> None:
-    """记录提醒推送"""
+    """记录提醒推送结果"""
     REMINDER_PUSH_COUNT.labels(status=status).inc()
 # endregion
-# ============================================
 
 
-# ============================================
-# region 装饰器
-# ============================================
+# region 监控装饰器
 def track_skill_execution(skill_name: str):
     """
-    技能执行指标追踪装饰器
+    技能执行监控装饰器
+
+    参数:
+        skill_name: 技能名称
     
-    用法：
-        @track_skill_execution("QuerySkill")
-        async def execute(self, context):
-            ...
+    功能:
+        - 自动捕获异常并标记为失败
+        - 记录执行成功/失败计数与耗时
     """
     def decorator(func: Callable):
         @wraps(func)
@@ -200,12 +194,10 @@ def track_skill_execution(skill_name: str):
 
 def track_llm_call(operation: str):
     """
-    LLM 调用指标追踪装饰器
-    
-    用法：
-        @track_llm_call("chat")
-        async def chat(self, prompt):
-            ...
+    LLM 调用监控装饰器
+
+    参数:
+        operation: 操作类型 (e.g. 'chat', 'embedding')
     """
     def decorator(func: Callable):
         @wraps(func)
@@ -223,23 +215,19 @@ def track_llm_call(operation: str):
         return wrapper
     return decorator
 # endregion
-# ============================================
 
 
-# ============================================
-# region 指标导出
-# ============================================
+# region 指标导出接口
 def get_metrics() -> bytes:
-    """获取 Prometheus 格式的指标数据"""
+    """获取 Prometheus 格式的指标数据 (用于 /metrics 端点)"""
     if PROMETHEUS_AVAILABLE:
         return generate_latest()
     return b"# Prometheus client not installed\n"
 
 
 def get_metrics_content_type() -> str:
-    """获取指标数据的 Content-Type"""
+    """获取指标数据的 Content-Type (适配 OpenMetrics)"""
     if PROMETHEUS_AVAILABLE:
         return CONTENT_TYPE_LATEST
     return "text/plain"
 # endregion
-# ============================================

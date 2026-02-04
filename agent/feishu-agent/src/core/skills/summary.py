@@ -1,7 +1,9 @@
 """
-SummarySkill - 汇总技能
-
-职责：对查询结果进行 LLM 总结，生成结构化摘要
+描述: 汇总技能 (SummarySkill)
+主要功能:
+    - 结构化查询结果汇总
+    - 案件记录/文档搜索结果聚合
+    - 调用 LLM 生成自然语言摘要
 """
 
 from __future__ import annotations
@@ -15,17 +17,15 @@ from src.core.router import SkillContext, SkillResult
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region SummarySkill
-# ============================================
+# region 汇总技能实现
 class SummarySkill(BaseSkill):
     """
-    汇总技能
-    
-    功能：
-    - 基于 last_result（上一次查询结果）生成摘要
-    - 默认字段：案号、案由、当事人、开庭日、主办律师
-    - 扩展字段（详细总结）：审理法院、案件状态、程序阶段
+    汇总技能核心类
+
+    功能:
+        - 基于上下文历史生成内容摘要
+        - 支持普通模式与扩展字段模式
+        - 智能分组与自然语言生成
     """
     
     name: str = "SummarySkill"
@@ -46,9 +46,11 @@ class SummarySkill(BaseSkill):
         skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
-        Args:
-            llm_client: LLM 客户端（用于生成摘要）
-            skills_config: skills.yaml 配置
+        初始化技能
+
+        参数:
+            llm_client: LLM 客户端实例
+            skills_config: 技能配置
         """
         self._llm = llm_client
         self._config = skills_config or {}
@@ -67,13 +69,13 @@ class SummarySkill(BaseSkill):
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
-        执行汇总
-        
-        Args:
-            context: 执行上下文（需包含 last_result）
-            
-        Returns:
-            SkillResult: 汇总结果
+        执行汇总逻辑
+
+        参数:
+            context: 上下文 (必须包含 last_result)
+
+        返回:
+            SkillResult: 汇总结果消息
         """
         query = context.query
         last_result = context.last_result
@@ -132,12 +134,12 @@ class SummarySkill(BaseSkill):
         shared_memory: str = "",
     ) -> SkillResult:
         """
-        汇总案件记录
-        
-        Args:
+        汇总多维表格案件记录
+
+        参数:
             records: 案件记录列表
-            query: 用户原始查询
-            use_extended: 是否使用扩展字段
+            query: 用户提问
+            use_extended: 启用扩展字段
         """
         # 选择字段
         fields_to_show = self._default_fields.copy()
@@ -189,7 +191,7 @@ class SummarySkill(BaseSkill):
         )
 
     def _get_field_value(self, fields: dict[str, Any], field_name: str) -> str | None:
-        """获取字段值（处理字段名映射）"""
+        """从字段字典中提取值 (支持别名映射)"""
         # 直接匹配
         if field_name in fields:
             return str(fields[field_name])
@@ -213,7 +215,7 @@ class SummarySkill(BaseSkill):
         data: list[dict[str, Any]],
         fields: list[str],
     ) -> str:
-        """模板汇总（无 LLM 时使用）"""
+        """基于模板的简单汇总 (兜底方案)"""
         lines = []
         for i, item in enumerate(data, start=1):
             parts = [f"{i}. "]
@@ -231,7 +233,7 @@ class SummarySkill(BaseSkill):
         user_memory: str = "",
         shared_memory: str = "",
     ) -> str:
-        """使用 LLM 生成自然语言摘要"""
+        """调用 LLM 生成自然语言摘要"""
         try:
             # 构建数据描述
             data_desc = "\n".join(
@@ -279,7 +281,7 @@ class SummarySkill(BaseSkill):
         documents: list[dict[str, Any]],
         query: str,
     ) -> SkillResult:
-        """汇总文档结果"""
+        """汇总云文档搜索结果"""
         count = len(documents)
         
         lines = [f"📄 文档汇总（共 {count} 篇）", ""]
@@ -301,4 +303,3 @@ class SummarySkill(BaseSkill):
             reply_text=reply_text,
         )
 # endregion
-# ============================================

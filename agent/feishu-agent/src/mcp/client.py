@@ -1,10 +1,10 @@
 """
-MCP client for Feishu Agent.
-
-优化：
-- 连接池复用
-- 指标记录
-- 自定义异常
+描述: Feishu Agent MCP 客户端
+主要功能:
+    - 代理调用 MCP Server 工具接口
+    - 维护 HTTP 连接池 (Connection Pooling)
+    - 自动重试与指标上报
+    - 统一异常封装
 """
 
 from __future__ import annotations
@@ -22,12 +22,10 @@ from src.utils.metrics import record_mcp_tool_call
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region MCPClient
-# ============================================
+# region 客户端与异常模型
 class MCPClientError(RuntimeError):
-    """MCP 客户端错误（向后兼容）"""
-    
+    """MCP 客户端错误基类"""
+
     def __init__(self, code: str, message: str, detail: object | None = None) -> None:
         super().__init__(message)
         self.code = code
@@ -37,11 +35,12 @@ class MCPClientError(RuntimeError):
 class MCPClient:
     """
     MCP 客户端
-    
-    特性：
-    - HTTP 连接池复用
-    - 自动重试
-    - 指标记录
+
+    功能:
+        - 封装 MCP 协议调用逻辑
+        - 复用 AsyncClient 以提升并发性能
+        - 实现指数退避重试 (Exponential Backoff)
+        - 收集吞吐量与耗时指标
     """
     
     def __init__(self, settings: Settings) -> None:
@@ -55,7 +54,7 @@ class MCPClient:
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建 HTTP 客户端"""
+        """获取或创建 HTTP 客户端 (实现单例模式)"""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
@@ -75,18 +74,18 @@ class MCPClient:
     async def call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """
         调用 MCP 工具
-        
-        Args:
+
+        参数:
             tool_name: 工具名称
-            params: 工具参数
-            
-        Returns:
-            工具执行结果
-            
-        Raises:
-            MCPTimeoutError: 超时
-            MCPToolError: 工具执行失败
-            MCPConnectionError: 连接失败
+            params: 参数字典
+
+        返回:
+            工具执行结果 (Data 字段)
+
+        抛出:
+            MCPTimeoutError: 请求超时
+            MCPToolError: 工具返回错误或 HTTP 状态异常
+            MCPConnectionError: 网络连接失败
         """
         url = f"{self._base_url}/mcp/tools/{tool_name}"
         status = "success"
@@ -150,7 +149,7 @@ class MCPClient:
         raise MCPToolError(tool_name, "Max retries exceeded")
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        """列出可用工具"""
+        """列出 Server 端所有可用工具"""
         url = f"{self._base_url}/mcp/tools"
         client = await self._get_client()
         response = await client.get(url)
@@ -158,4 +157,3 @@ class MCPClient:
         data = response.json()
         return data.get("tools") or []
 # endregion
-# ============================================

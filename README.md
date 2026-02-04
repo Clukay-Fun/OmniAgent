@@ -80,7 +80,7 @@ OmniAgent/
 │       │   │   ├── orchestrator.py # 编排器
 │       │   │   ├── intent/         # 意图解析
 │       │   │   ├── router/         # 技能路由
-│       │   │   ├── skills/         # 技能实现
+│       │   │   ├── skills/         # 技能实现（Query/Create/Summary/Reminder/Chitchat）
 │       │   │   ├── soul/           # 人格系统
 │       │   │   └── memory/         # 记忆系统
 │       │   ├── llm/                # LLM 客户端
@@ -170,6 +170,7 @@ OmniAgent/
 │   │   │   └── skills/
 │   │   │       ├── base.py
 │   │   │       ├── query.py
+│   │   │       ├── create.py
 │   │   │       ├── summary.py
 │   │   │       ├── reminder.py
 │   │   │       └── chitchat.py

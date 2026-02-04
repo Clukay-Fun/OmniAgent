@@ -9,9 +9,11 @@ from src.core.skills.query import QuerySkill
 from src.core.skills.summary import SummarySkill
 from src.core.skills.reminder import ReminderSkill
 from src.core.skills.chitchat import ChitchatSkill
+from src.core.skills.create import CreateSkill
 
 __all__ = [
     "QuerySkill",
+    "CreateSkill",
     "SummarySkill",
     "ReminderSkill",
     "ChitchatSkill",

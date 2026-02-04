@@ -1,5 +1,9 @@
 """
-Feishu Agent configuration loader.
+描述: Feishu Agent 全局配置加载器
+主要功能:
+    - 统一管理应用配置 (Settings)
+    - 支持 YAML 文件加载与环境变量覆盖 (Env Override)
+    - 提供 Pydantic 类型校验
 """
 
 from __future__ import annotations
@@ -17,7 +21,9 @@ from pydantic import BaseModel, Field
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
+# region 配置模型定义
 class ServerSettings(BaseModel):
+    """服务器配置"""
     host: str = "0.0.0.0"
     port: int = 8080
     workers: int = 1
@@ -30,6 +36,7 @@ class FeishuMessageSettings(BaseModel):
 
 
 class FeishuSettings(BaseModel):
+    """飞书开放平台配置"""
     app_id: str = ""
     app_secret: str = ""
     verification_token: str = ""
@@ -45,11 +52,13 @@ class MCPRequestSettings(BaseModel):
 
 
 class MCPSettings(BaseModel):
+    """MCP Server 连接配置"""
     base_url: str = "http://localhost:8081"
     request: MCPRequestSettings = Field(default_factory=MCPRequestSettings)
 
 
 class PostgresSettings(BaseModel):
+    """PostgreSQL 数据库配置"""
     dsn: str = ""
     min_size: int = 1
     max_size: int = 5
@@ -65,6 +74,7 @@ class LLMFallbackSettings(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    """LLM 模型配置"""
     provider: str = "openai"
     model: str = "gpt-4o-mini"
     api_key: str = ""
@@ -89,6 +99,7 @@ class ToolSettings(BaseModel):
 
 
 class AgentSettings(BaseModel):
+    """Agent 核心行为配置"""
     name: str = "feishu-case-assistant"
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
@@ -195,6 +206,7 @@ class HealthSettings(BaseModel):
 
 
 class Settings(BaseModel):
+    """全局配置聚合根"""
     server: ServerSettings = Field(default_factory=ServerSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
@@ -207,9 +219,14 @@ class Settings(BaseModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
+# endregion
+
+
+# region 配置加载逻辑
 
 
 def _expand_env(value: Any) -> Any:
+    """递归展开配置中的环境变量占位符 (${VAR} 或 ${VAR:-default})"""
     if isinstance(value, str):
         def replace(match: re.Match[str]) -> str:
             expr = match.group(1)
@@ -227,6 +244,7 @@ def _expand_env(value: Any) -> Any:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
+    """读取 YAML 配置文件"""
     if not path.exists():
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -241,6 +259,11 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    应用环境变量覆盖
+    
+    优先级: 显式环境变量 > config.yaml > 默认值
+    """
     mapping = {
         "LLM_PROVIDER": ["llm", "provider"],
         "LLM_MODEL": ["llm", "model"],
@@ -265,6 +288,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_settings(config_path: str | None = None) -> Settings:
+    """加载并验证完整配置"""
     path = Path(config_path or os.getenv("CONFIG_PATH", "config.yaml"))
     data = _load_yaml(path)
     data = _apply_env_overrides(data)
@@ -273,4 +297,6 @@ def load_settings(config_path: str | None = None) -> Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """获取单例配置对象 (LRU Cache)"""
     return load_settings()
+# endregion

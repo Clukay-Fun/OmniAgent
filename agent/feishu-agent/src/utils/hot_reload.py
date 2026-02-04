@@ -1,10 +1,9 @@
 """
-配置热更新模块
-
-功能：
-- 监控 YAML 配置文件变更
-- 60 秒周期自动 reload
-- 线程安全
+描述: 配置/文件热更新工具
+主要功能:
+    - 监听文件系统变更事件 (Polling)
+    - 支持 YAML 配置自动 Reload
+    - 线程安全的资源管理
 """
 
 from __future__ import annotations
@@ -28,10 +27,9 @@ class ConfigWatcher:
     """
     配置文件监控器
     
-    功能：
-    - 定期检查配置文件修改时间
-    - 文件变更时触发回调
-    - 线程安全的热更新
+    属性:
+        config_path: 监控文件路径
+        interval: 轮询间隔 (秒)
     """
     
     def __init__(
@@ -40,11 +38,19 @@ class ConfigWatcher:
         reload_callback: Callable[[dict[str, Any]], None],
         interval_seconds: int = 60,
     ) -> None:
+    def __init__(
+        self,
+        config_path: str,
+        reload_callback: Callable[[dict[str, Any]], None],
+        interval_seconds: int = 60,
+    ) -> None:
         """
-        Args:
-            config_path: 配置文件路径
-            reload_callback: 配置变更时的回调函数
-            interval_seconds: 检查间隔（秒）
+        初始化监控器
+
+        参数:
+            config_path: 配置文件绝对路径
+            reload_callback: 变更回调函数 (接受 dict 配置)
+            interval_seconds: 轮询间隔 (默认 60s)
         """
         self._config_path = Path(config_path)
         self._callback = reload_callback
@@ -126,13 +132,18 @@ class ConfigWatcher:
 
 
 # ============================================
-# region HotReloadManager
+# endregion
+
+
+# region 热更新管理器
 # ============================================
 class HotReloadManager:
     """
-    热更新管理器
+    全局热更新管理器
     
-    统一管理多个配置文件的热更新
+    功能:
+        - 统一管理多个 ConfigWatcher
+        - 批量启动/停止监控
     """
     
     def __init__(self) -> None:
@@ -144,16 +155,22 @@ class HotReloadManager:
         reload_callback: Callable[[dict[str, Any]], None],
         interval_seconds: int = 60,
     ) -> ConfigWatcher:
+    def add_watcher(
+        self,
+        config_path: str,
+        reload_callback: Callable[[dict[str, Any]], None],
+        interval_seconds: int = 60,
+    ) -> ConfigWatcher:
         """
-        添加配置监控器
-        
-        Args:
-            config_path: 配置文件路径
-            reload_callback: 配置变更回调
-            interval_seconds: 检查间隔
-            
-        Returns:
-            ConfigWatcher 实例
+        注册新的监控任务
+
+        参数:
+            config_path: 目标文件路径
+            reload_callback: 回调函数
+            interval_seconds: 检查周期
+
+        返回:
+            ConfigWatcher: 监控器实例
         """
         watcher = ConfigWatcher(
             config_path=config_path,

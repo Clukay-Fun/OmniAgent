@@ -1,6 +1,9 @@
 """
-Intent parser with rule-based matching and LLM fallback.
-Output fixed JSON: skills Top-3 + score + reason + is_chain.
+描述: 意图解析器
+主要功能:
+    - 基于规则的意图识别
+    - LLM 兜底识别
+    - 输出 Top-3 匹配技能及置信度
 """
 
 from __future__ import annotations
@@ -17,22 +20,24 @@ logger = logging.getLogger(__name__)
 
 _SKILL_NAME_MAP: dict[str, str] = {
     "query": "QuerySkill",
+    "create": "CreateSkill",
     "summary": "SummarySkill",
     "reminder": "ReminderSkill",
     "chitchat": "ChitchatSkill",
 }
 
 
-# ============================================
 # region 数据结构
-# ============================================
 @dataclass
 class SkillMatch:
-    """单个技能匹配结果"""
+    """
+    单个技能匹配结果
 
-    name: str
-    score: float
-    reason: str
+    属性:
+        name: 技能名称
+        score: 匹配分数
+        reason: 匹配理由
+    """
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,12 +49,20 @@ class SkillMatch:
 
 @dataclass
 class IntentResult:
-    """意图识别结果（固定 JSON 格式）"""
+    """
+    意图识别结果（固定 JSON 格式）
+
+    属性:
+        skills: 匹配的技能列表
+        is_chain: 是否为链式调用
+        requires_llm_confirm: 是否需要 LLM 确认
+        method: 识别方法 (rule / llm / fallback)
+    """
 
     skills: list[SkillMatch] = field(default_factory=list)
     is_chain: bool = False
     requires_llm_confirm: bool = False
-    method: str = "rule"  # rule / llm / fallback
+    method: str = "rule"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,19 +81,17 @@ class IntentResult:
 
 
 # endregion
-# ============================================
 
 
-# ============================================
 # region IntentParser 核心类
-# ============================================
 class IntentParser:
     """
     意图解析器：规则优先 + LLM 兜底
 
-    支持两种配置结构：
-    - v1: routing + skills + chains
-    - v2: intent + query/summary/reminder/chitchat + chain
+    功能:
+        - 优先使用关键词规则匹配
+        - 规则匹配置信度低时调用 LLM
+        - 支持 v1/v2 两种配置结构
     """
 
     def __init__(
@@ -88,6 +99,13 @@ class IntentParser:
         skills_config: dict[str, Any],
         llm_client: Any = None,
     ) -> None:
+        """
+        初始化意图解析器
+
+        参数:
+            skills_config: 技能配置字典
+            llm_client: LLM 客户端实例 (可选)
+        """
         self._config = skills_config or {}
         self._llm = llm_client
 
@@ -108,7 +126,16 @@ class IntentParser:
         self._llm_timeout = float(intent_cfg.get("llm_timeout", 10))
 
     async def parse(self, query: str, llm_context: dict[str, str] | None = None) -> IntentResult:
-        """解析用户输入，返回意图识别结果"""
+        """
+        解析用户输入，返回意图识别结果
+
+        参数:
+            query: 用户输入文本
+            llm_context: LLM 上下文信息 (可选)
+
+        返回:
+            意图识别结果
+        """
 
         is_chain = self._detect_chain(query)
         date_score = match_date_query(query)
@@ -201,11 +228,12 @@ class IntentParser:
         )
 
     def _normalize_skills_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """标准化技能配置格式 (v1/v2 兼容)"""
         if "skills" in config:
             return config.get("skills", {})
 
         skills: dict[str, Any] = {}
-        for key in ("query", "summary", "reminder", "chitchat"):
+        for key in ("query", "create", "summary", "reminder", "chitchat"):
             cfg = config.get(key)
             if not isinstance(cfg, dict):
                 continue
@@ -217,6 +245,15 @@ class IntentParser:
         return skills
 
     def _rule_match(self, query: str) -> list[SkillMatch]:
+        """
+        基于规则匹配技能
+
+        参数:
+            query: 用户输入
+
+        返回:
+            匹配的技能列表（按分数降序）
+        """
         matches: list[SkillMatch] = []
         query_lower = query.lower()
 
@@ -252,8 +289,12 @@ class IntentParser:
             hit_bonus = min((hit_count - 1) * 0.1, 0.3)
             time_bonus = 0.1 if time_hits else 0.0
             score = min(base_score + hit_bonus + time_bonus, 1.0)
+            
+            # 特定技能加成（动作词优先于名词）
             if skill_key == "reminder" and "提醒" in query:
                 score = min(score + 0.15, 1.0)
+            if skill_key == "create" and any(kw in query for kw in ["新增", "新建", "创建", "添加", "录入"]):
+                score = min(score + 0.2, 1.0)  # create 动作词优先级更高
 
             reason = f"命中关键词: {', '.join(hit_keywords[:3])}"
             if len(hit_keywords) > 3:
@@ -262,11 +303,13 @@ class IntentParser:
                 reason += f"，时间: {', '.join(time_hits[:2])}"
 
             matches.append(SkillMatch(name=skill_name, score=score, reason=reason))
+            logger.info(f"Skill check: {skill_key} -> score={score}, hits={hit_count}, boost={time_bonus}, reason={reason}")
 
         matches.sort(key=lambda x: x.score, reverse=True)
         return matches
 
     def _detect_chain(self, query: str) -> bool:
+        """检测是否触发链式执行"""
         chain_cfg = self._config.get("chain", {})
         triggers = chain_cfg.get("triggers", [])
         for trigger in triggers:
@@ -282,6 +325,7 @@ class IntentParser:
         return False
 
     def _get_skill_name(self, skill_key: str) -> str:
+        """获取技能标准名称"""
         if skill_key in self._skills:
             skill_cfg = self._skills.get(skill_key, {})
             return skill_cfg.get("name", skill_key)
@@ -293,6 +337,17 @@ class IntentParser:
         hints: list[SkillMatch] | None = None,
         llm_context: dict[str, str] | None = None,
     ) -> IntentResult | None:
+        """
+        使用 LLM 进行意图分类
+
+        参数:
+            query: 用户输入
+            hints: 规则匹配的参考结果
+            llm_context: 上下文信息
+
+        返回:
+            LLM 分类结果
+        """
         if not self._llm:
             return None
 
@@ -361,6 +416,7 @@ class IntentParser:
             return None
 
     def _build_llm_system_prompt(self, llm_context: dict[str, str] | None) -> str:
+        """构建 LLM 系统提示词，注入 Soul 和 Memory"""
         base_prompt = "你是一个意图分类器。"
         if not llm_context:
             return base_prompt
@@ -388,13 +444,18 @@ class IntentParser:
 
 
 # endregion
-# ============================================
 
 
-# ============================================
 # region 配置加载辅助
-# ============================================
 def load_skills_config(config_path: str = "config/skills.yaml") -> dict[str, Any]:
+    """
+    加载技能配置文件
+
+    参数:
+        config_path: 配置文件路径
+    返回:
+        配置字典
+    """
     import yaml
     from pathlib import Path
 
@@ -408,6 +469,7 @@ def load_skills_config(config_path: str = "config/skills.yaml") -> dict[str, Any
 
 
 def _default_skills_config() -> dict[str, Any]:
+    """生成默认配置"""
     return {
         "intent": {
             "thresholds": {
@@ -432,6 +494,9 @@ def _default_skills_config() -> dict[str, Any]:
             "whitelist": ["你好", "早上好", "下午好", "谢谢", "帮助", "你能做什么"],
             "sensitive_reject": ["能赢吗", "判多久", "法律建议"],
         },
+        "create": {
+            "keywords": ["新增", "新建", "创建", "添加", "录入", "登记"],
+        },
         "chain": {
             "triggers": [
                 {"pattern": r"(查|找).*(总结|汇总)", "skills": ["QuerySkill", "SummarySkill"]},
@@ -443,4 +508,3 @@ def _default_skills_config() -> dict[str, Any]:
 
 
 # endregion
-# ============================================

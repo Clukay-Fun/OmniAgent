@@ -1,5 +1,10 @@
 """
-Feishu webhook handler.
+描述: Feishu Webhook 事件处理器
+主要功能:
+    - 接收并解密飞书回调事件
+    - 处理 URL 验证请求 (Challenge)
+    - 消息去重与过滤
+    - 异步分发消息至 Agent 核心
 """
 
 from __future__ import annotations
@@ -38,13 +43,29 @@ agent_core = AgentOrchestrator(
 logger = logging.getLogger(__name__)
 
 
+# region 辅助类与函数
 class EventDeduplicator:
+    """
+    事件去重器
+
+    功能:
+        - 基于 LRU 缓存防止重复处理同一 Event ID
+        - 自动清理过期记录
+    """
     def __init__(self, ttl_seconds: int, max_size: int) -> None:
+        """
+        初始化去重器
+
+        参数:
+            ttl_seconds: 记录保留时间
+            max_size: 最大缓存条目数
+        """
         self._ttl = ttl_seconds
         self._max_size = max_size
         self._items: dict[str, float] = {}
 
     def is_duplicate(self, key: str) -> bool:
+        """检查并标记 Key 是否已存在"""
         now = time.time()
         self._items = {
             key: ts for key, ts in self._items.items() if now - ts <= self._ttl
@@ -64,6 +85,13 @@ deduplicator = EventDeduplicator(
 
 
 def _decrypt_event(encrypt_text: str, encrypt_key: str) -> dict[str, Any]:
+    """
+    解密飞书回调数据
+
+    参数:
+        encrypt_text: 加密密文
+        encrypt_key: 解密密钥 (AES Key)
+    """
     raw = base64.b64decode(encrypt_text)
     key = encrypt_key.encode("utf-8")
     if len(key) != 32:
@@ -77,27 +105,44 @@ def _decrypt_event(encrypt_text: str, encrypt_key: str) -> dict[str, Any]:
 
 
 def _is_private_chat(message: dict[str, Any]) -> bool:
+    """判断是否为私聊消息"""
     return message.get("chat_type") == "p2p"
 
 
 def _get_text_content(message: dict[str, Any]) -> str:
+    """提取纯文本消息内容"""
     content = message.get("content")
     if not content:
         return ""
     try:
         payload = json.loads(content)
         return payload.get("text") or ""
-    except json.JSONDecodeError:
+except json.JSONDecodeError:
         return ""
+# endregion
+
+
+# region Webhook 路由处理
 
 
 @router.get("/feishu/webhook")
 async def feishu_webhook_get() -> dict[str, str]:
+    """健康检查接口"""
     return {"status": "ok"}
 
 
 @router.post("/feishu/webhook")
 async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, str]:
+    """
+    接收飞书事件回调
+
+    流程:
+        1. 处理 URL 验证 (Challenge)
+        2. 解密事件内容
+        3. 校验 Token
+        4. 去重与过滤
+        5. 异步投递处理任务
+    """
     payload = await request.json()
 
     if payload.get("type") == "url_verification":
@@ -139,7 +184,18 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
     return {"status": "ok"}
 
 
+# endregion
+
+
+# region 消息处理逻辑
 async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> None:
+    """
+    异步处理消息
+
+    参数:
+        message: 消息体
+        sender: 发送者信息
+    """
     text = _get_text_content(message)
     if not text:
         return
@@ -169,10 +225,6 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
     except Exception:
         error_text = settings.reply.templates.error.format(message="处理出错")
-        await send_message(
-            settings,
-            chat_id,
-            "text",
-            {"text": error_text},
             reply_message_id=message_id,
         )
+# endregion

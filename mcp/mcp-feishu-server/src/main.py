@@ -1,5 +1,9 @@
 """
-MCP Feishu Server entrypoint.
+描述: MCP Server 主入口
+主要功能:
+    - FastAPI 应用初始化
+    - 路由注册 (MCP Protocol & HTTP)
+    - 日志与配置加载
 """
 
 from __future__ import annotations
@@ -13,9 +17,13 @@ import src.tools  # noqa: F401
 from src.utils.logger import setup_logging
 
 
+# region 初始化
 load_dotenv()
 settings = get_settings()
 setup_logging(settings.logging)
+# endregion
 
+# region FastAPI 应用
 app = FastAPI(title="MCP Feishu Server", version="0.1.0")
 app.include_router(http_router)
+# endregion

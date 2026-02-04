@@ -1,4 +1,10 @@
-"""Memory manager for shared and user memories."""
+"""
+描述: 记忆管理器 (Memory Manager)
+主要功能:
+    - 管理用户长期记忆 (User Memory) 和共享记忆 (Shared Memory)
+    - 维护每日对话日志 (Daily Logs)
+    - 提供记忆快照和向量检索支持
+"""
 
 from __future__ import annotations
 
@@ -14,12 +20,22 @@ from src.utils.workspace import ensure_workspace, get_workspace_root
 
 @dataclass
 class MemorySnapshot:
+    """记忆快照数据结构"""
     shared_memory: str
     user_memory: str
     recent_logs: str
 
 
+# region 核心记忆管理器
 class MemoryManager:
+    """
+    记忆管理器
+
+    功能:
+        - 统一管理基于文件系统的记忆存储
+        - 集成向量检索 (Vector Memory)
+        - 处理记忆的写入、读取和清理
+    """
     def __init__(
         self,
         workspace_root: Path | None = None,
@@ -28,6 +44,16 @@ class MemoryManager:
         max_context_tokens: int = 2000,
         vector_memory: typing.Any | None = None,
     ) -> None:
+        """
+        初始化记忆管理器
+
+        参数:
+            workspace_root: 工作区根路径
+            retention_days: 日志保留天数
+            lock_timeout: 文件锁超时时间
+            max_context_tokens: 最大上下文 Token 限制
+            vector_memory: 向量记忆实例
+        """
         self._workspace_root = Path(workspace_root) if workspace_root else get_workspace_root()
         ensure_workspace(self._workspace_root)
         self._retention_days = retention_days
@@ -36,14 +62,26 @@ class MemoryManager:
         self._vector_memory = vector_memory
 
     def load_shared_memory(self) -> str:
+        """读取共享记忆"""
         path = self._workspace_root / "MEMORY.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def load_user_memory(self, user_id: str) -> str:
+        """读取用户专属记忆"""
         path = self._user_dir(user_id) / "memory.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def load_recent_logs(self, user_id: str, days: int = 2) -> str:
+        """
+        读取最近 N 天的对话日志
+
+        参数:
+            user_id: 用户 ID
+            days: 回溯天数
+
+        返回:
+            合并并截断后的日志文本
+        """
         daily_dir = self._daily_dir(user_id)
         if not daily_dir.exists():
             return ""
@@ -65,6 +103,15 @@ class MemoryManager:
         vectorize: bool = False,
         metadata: dict[str, typing.Any] | None = None,
     ) -> None:
+        """
+        追加每日日志
+
+        参数:
+            user_id: 用户 ID
+            content: 日志内容
+            vectorize: 是否同时写入向量库
+            metadata: 向量元数据 (可选)
+        """
         daily_dir = self._daily_dir(user_id)
         daily_dir.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +135,13 @@ class MemoryManager:
             )
 
     def remember_user(self, user_id: str, content: str) -> None:
+        """
+        写入用户长期记忆
+
+        参数:
+            user_id: 用户 ID
+            content: 记忆内容
+        """
         user_dir = self._user_dir(user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
         path = user_dir / "memory.md"
@@ -107,6 +161,7 @@ class MemoryManager:
             self._run_vector_task(self._vector_memory.add_memory(user_id, content, metadata))
 
     def snapshot(self, user_id: str, days: int = 2) -> MemorySnapshot:
+        """获取当前上下文快照 (共享 + 用户 + 最近日志)"""
         return MemorySnapshot(
             shared_memory=self.load_shared_memory(),
             user_memory=self.load_user_memory(user_id),
@@ -114,6 +169,11 @@ class MemoryManager:
         )
 
     async def search_memory(self, user_id: str, query: str, top_k: int = 5) -> str:
+        """
+        搜索相关记忆
+
+        优先使用向量检索，失败则退化为关键词匹配
+        """
         if not query:
             return ""
 
@@ -158,6 +218,7 @@ class MemoryManager:
         }
 
     def cleanup_logs(self) -> int:
+        """清理过期日志"""
         cutoff = datetime.now().date() - timedelta(days=self._retention_days)
         removed = 0
         users_root = self._workspace_root / "users"
@@ -204,3 +265,4 @@ class MemoryManager:
         if len(text) <= max_tokens:
             return text
         return text[-max_tokens:]
+# endregion

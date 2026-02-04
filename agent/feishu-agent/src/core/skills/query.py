@@ -1,7 +1,9 @@
 """
-QuerySkill - 案件查询技能
-
-职责：调用 MCP 多维表格/文档搜索工具，返回查询结果
+描述: 案件查询技能
+主要功能:
+    - 多维表格案件查询
+    - 飞书文档内容搜索
+    - 格式化查询结果并构建消息卡片
 """
 
 from __future__ import annotations
@@ -15,17 +17,15 @@ from src.core.types import SkillContext, SkillResult
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region QuerySkill
-# ============================================
+# region 案件查询技能
 class QuerySkill(BaseSkill):
     """
     案件查询技能
-    
-    功能：
-    - 解析查询条件（关键词、时间范围）
-    - 调用 MCP feishu.v1.bitable.search 或 feishu.v1.doc.search
-    - 格式化返回结果
+
+    功能:
+        - 识别查询意图（表格/文档）
+        - 提取关键词和时间范围
+        - 调用对应 MCP 工具获取数据
     """
     
     name: str = "QuerySkill"
@@ -37,22 +37,24 @@ class QuerySkill(BaseSkill):
         settings: Any = None,
     ) -> None:
         """
-        Args:
+        初始化查询技能
+
+        参数:
             mcp_client: MCP 客户端实例
-            settings: 配置（可选）
+            settings: 配置信息
         """
         self._mcp = mcp_client
         self._settings = settings
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
-        执行案件查询
-        
-        Args:
-            context: 执行上下文
-            
-        Returns:
-            SkillResult: 查询结果
+        执行查询逻辑
+
+        参数:
+            context: 技能上下文
+
+        返回:
+            查询结果（文本或卡片）
         """
         query = context.query
         extra = context.extra
@@ -89,14 +91,14 @@ class QuerySkill(BaseSkill):
             )
 
     def _select_tool(self, query: str) -> str:
-        """选择查询工具"""
+        """根据关键词选择查询工具 (表格/文档)"""
         doc_keywords = ["文档", "资料", "文件", "合同"]
         if any(kw in query for kw in doc_keywords):
             return "feishu.v1.doc.search"
         return "feishu.v1.bitable.search"
 
     def _build_params(self, query: str, extra: dict[str, Any]) -> dict[str, Any]:
-        """构建查询参数"""
+        """构建 MCP 工具调用参数"""
         params: dict[str, Any] = {}
         
         # 提取关键词
@@ -114,9 +116,16 @@ class QuerySkill(BaseSkill):
 
     def _extract_keyword(self, query: str) -> str:
         """
-        提取关键词（去除常见无效词）
-        
-        如果过滤后没有有效关键词，返回空字符串（MCP 会查询全部）
+        提取关键词
+
+        逻辑:
+            - 去除常见无效词（如动作词、通用词）
+            - 如果过滤后无有效关键词，返回空（查询全部）
+
+        参数:
+            query: 原始查询文本
+        返回:
+            处理后的关键词
         """
         keyword = query
         
@@ -146,7 +155,7 @@ class QuerySkill(BaseSkill):
         return keyword
 
     def _empty_result(self, message: str) -> SkillResult:
-        """空结果"""
+        """构造空结果响应"""
         return SkillResult(
             success=True,
             skill_name=self.name,
@@ -223,4 +232,3 @@ class QuerySkill(BaseSkill):
             "elements": elements,
         }
 # endregion
-# ============================================

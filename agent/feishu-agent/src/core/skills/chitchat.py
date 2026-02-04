@@ -1,7 +1,9 @@
 """
-ChitchatSkill - 自由对话技能
-
-职责：处理问候、帮助请求，以及使用 LLM 进行自由对话
+描述: 自由对话技能
+主要功能:
+    - 处理日常问候和感谢
+    - 提供功能帮助引导
+    - 使用 LLM 进行开放式对话
 """
 
 from __future__ import annotations
@@ -15,17 +17,15 @@ from src.core.types import SkillContext, SkillResult
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region ChitchatSkill
-# ============================================
+# region 自由对话技能
 class ChitchatSkill(BaseSkill):
     """
     自由对话技能
-    
-    策略：
-    - 问候：友好响应
-    - 帮助请求：返回功能引导
-    - 其他：使用 LLM 自由对话
+
+    策略:
+        - 问候：返回预设友好响应
+        - 帮助：返回功能使用指南
+        - 其他：调用 LLM 进行自由回答
     """
     
     name: str = "ChitchatSkill"
@@ -81,9 +81,11 @@ class ChitchatSkill(BaseSkill):
         llm_client: Any | None = None,
     ) -> None:
         """
-        Args:
-            skills_config: skills.yaml 配置
-            llm_client: LLM 客户端（用于自由对话）
+        初始化自由对话技能
+
+        参数:
+            skills_config: 技能配置
+            llm_client: LLM 客户端实例
         """
         self._config = skills_config or {}
         self._llm_client = llm_client
@@ -99,12 +101,12 @@ class ChitchatSkill(BaseSkill):
     async def execute(self, context: SkillContext) -> SkillResult:
         """
         执行对话响应
-        
-        Args:
-            context: 执行上下文
-            
-        Returns:
-            SkillResult: 响应结果
+
+        参数:
+            context: 技能上下文
+
+        返回:
+            对话响应结果
         """
         query = context.query.strip()
         
@@ -211,7 +213,7 @@ class ChitchatSkill(BaseSkill):
         )
 
     def _create_result(self, response_type: str, message: str) -> SkillResult:
-        """创建模板响应结果"""
+        """构造模板响应结果"""
         return SkillResult(
             success=True,
             skill_name=self.name,
@@ -220,4 +222,3 @@ class ChitchatSkill(BaseSkill):
             reply_text=self.RESPONSES.get(response_type, ""),
         )
 # endregion
-# ============================================

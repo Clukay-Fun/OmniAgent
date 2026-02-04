@@ -1,7 +1,9 @@
 """
-Agent orchestrator - 核心编排层
-
-职责：整合 IntentParser + SkillRouter，统一处理用户消息
+描述: Agent 核心编排层
+主要功能:
+    - 整合意图识别 (IntentParser) 与 技能路由 (SkillRouter)
+    - 统一处理用户消息生命周期
+    - 管理长期记忆与上下文
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from typing import Any
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, load_skills_config
 from src.core.router import SkillRouter, SkillContext, ContextManager
-from src.core.skills import QuerySkill, SummarySkill, ReminderSkill, ChitchatSkill
+from src.core.skills import QuerySkill, SummarySkill, ReminderSkill, ChitchatSkill, CreateSkill
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
 from src.db.postgres import PostgresClient
@@ -28,18 +30,16 @@ from src.skills_market import load_market_skills
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region AgentOrchestrator
-# ============================================
+# region 核心编排器
 class AgentOrchestrator:
     """
     Agent 编排器
-    
-    职责：
-    1. 接收用户消息
-    2. 调用 IntentParser 解析意图
-    3. 通过 SkillRouter 路由到对应技能
-    4. 返回格式化结果
+
+    核心流程:
+        1. 接收用户消息
+        2. 调用 IntentParser 解析意图
+        3. 通过 SkillRouter 路由到对应技能
+        4. 返回格式化结果
     """
     
     _DATE_PATTERN = re.compile(
@@ -55,11 +55,13 @@ class AgentOrchestrator:
         skills_config_path: str = "config/skills.yaml",
     ) -> None:
         """
-        Args:
-            settings: 应用配置
+        初始化编排器
+
+        参数:
+            settings: 应用配置对象
             session_manager: 会话管理器
-            mcp_client: MCP 客户端
-            llm_client: LLM 客户端
+            mcp_client: MCP 客户端实例
+            llm_client: LLM 客户端实例
             skills_config_path: 技能配置文件路径
         """
         self._settings = settings
@@ -116,9 +118,10 @@ class AgentOrchestrator:
         self._register_skills()
 
     def _register_skills(self) -> None:
-        """注册所有技能"""
+        """注册并初始化所有技能"""
         skills = [
             QuerySkill(mcp_client=self._mcp, settings=self._settings),
+            CreateSkill(mcp_client=self._mcp, settings=self._settings),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
             ReminderSkill(db_client=self._db, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config, llm_client=self._llm),
@@ -241,13 +244,15 @@ class AgentOrchestrator:
     ) -> dict[str, Any]:
         """
         处理用户消息
-        
-        Args:
+
+        参数:
             user_id: 用户 ID
             text: 用户输入文本
-            
-        Returns:
-            回复数据（type, text, card 等）
+            chat_id: 群组 ID (可选)
+            chat_type: 会话类型 (可选)
+
+        返回:
+            回复内容（type, text, card 等）
         """
         import time
         from src.utils.logger import set_request_context, clear_request_context, generate_request_id
@@ -360,13 +365,15 @@ class AgentOrchestrator:
         llm_context: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
-        构建额外上下文数据（时间范围等）
-        
-        Args:
-            text: 用户输入
-            
-        Returns:
-            extra 字典
+        构建额外上下文数据（如 Soul、记忆、时间范围）
+
+        参数:
+            text: 用户输入文本
+            user_id: 用户 ID
+            llm_context: 预构建的 LLM 上下文 (可选)
+
+        返回:
+            包含上下文信息的字典
         """
         extra: dict[str, Any] = {}
         
@@ -397,7 +404,7 @@ class AgentOrchestrator:
         result_data: dict[str, Any],
         extra: dict[str, Any],
     ) -> None:
-        """写入对话日志与用户记忆"""
+        """写入对话日志与用户记忆（长期记忆 + 自动事件）"""
         try:
             self._memory_manager.append_daily_log(user_id, f"用户: {user_text}")
             self._memory_manager.append_daily_log(user_id, f"助手({skill_name}): {reply_text}")
@@ -616,8 +623,8 @@ class AgentOrchestrator:
     def reload_config(self, config_path: str = "config/skills.yaml") -> None:
         """
         热更新配置
-        
-        Args:
+
+        参数:
             config_path: 配置文件路径
         """
         logger.info(f"Reloading skills config from {config_path}")
@@ -644,13 +651,9 @@ class AgentOrchestrator:
         self._register_skills()
         logger.info("Skills config reloaded successfully")
 # endregion
-# ============================================
 
 
-# ============================================
 # region 向后兼容：AgentCore 别名
-# ============================================
 # 保持向后兼容，允许现有代码继续使用 AgentCore
 AgentCore = AgentOrchestrator
 # endregion
-# ============================================

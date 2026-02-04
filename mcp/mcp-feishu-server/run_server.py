@@ -1,7 +1,9 @@
 """
-使用 waitress 启动 MCP Server（Windows 兼容方案）
-
-用法：python run_server.py
+描述: MCP Server 启动脚本 (兼容性模式)
+主要功能:
+    - 配置 asyncio 策略 (Windows)
+    - 使用 waitress 启动 WSGI 服务
+    - 监听 8081 端口
 """
 import asyncio
 import os

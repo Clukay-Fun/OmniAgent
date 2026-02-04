@@ -1,5 +1,9 @@
 """
-MCP Feishu Server configuration loader.
+描述: MCP Server 全局配置加载器
+主要功能:
+    - 统一管理 MCP Server 配置
+    - 支持 YAML 文件加载与环境变量覆盖
+    - 提供 Bitable 与 Doc 等业务配置模型
 """
 
 from __future__ import annotations
@@ -17,7 +21,9 @@ from pydantic import BaseModel, Field
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
+# region 基础配置模型
 class ServerSettings(BaseModel):
+    """服务监听配置"""
     host: str = "0.0.0.0"
     port: int = 8081
     workers: int = 1
@@ -35,6 +41,7 @@ class RequestSettings(BaseModel):
 
 
 class FeishuSettings(BaseModel):
+    """飞书开放平台配置"""
     app_id: str = ""
     app_secret: str = ""
     api_base: str = "https://open.feishu.cn/open-apis"
@@ -49,6 +56,7 @@ class BitableSearchSettings(BaseModel):
 
 
 class BitableSettings(BaseModel):
+    """多维表格 (Bitable) 业务配置"""
     domain: str = "your-company"
     default_app_token: str = ""
     default_table_id: str = ""
@@ -64,6 +72,7 @@ class DocSearchSettings(BaseModel):
 
 
 class DocSettings(BaseModel):
+    """云文档 (Doc) 业务配置"""
     search: DocSearchSettings = Field(default_factory=DocSearchSettings)
 
 
@@ -84,6 +93,7 @@ class LoggingOutputSettings(BaseModel):
 
 
 class LoggingSettings(BaseModel):
+    """日志系统配置"""
     level: str = "INFO"
     format: str = "json"
     output: LoggingOutputSettings = Field(default_factory=LoggingOutputSettings)
@@ -95,6 +105,7 @@ class SecuritySettings(BaseModel):
 
 
 class Settings(BaseModel):
+    """MCP Server 配置聚合根"""
     server: ServerSettings = Field(default_factory=ServerSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     bitable: BitableSettings = Field(default_factory=BitableSettings)
@@ -102,6 +113,10 @@ class Settings(BaseModel):
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+# endregion
+
+
+# region 配置加载逻辑
 
 
 def _expand_env(value: Any) -> Any:
@@ -161,4 +176,6 @@ def load_settings(config_path: str | None = None) -> Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """获取单例配置对象"""
     return load_settings()
+# endregion

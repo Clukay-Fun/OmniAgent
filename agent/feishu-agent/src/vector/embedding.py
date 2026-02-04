@@ -1,5 +1,9 @@
 """
-Embedding client for vector memory.
+描述: 文本 Embedding 客户端
+主要功能:
+    - 文本向量化 (Text Embedding)
+    - 支持 SiliconFlow API 调用
+    - 自动批处理 (Batch Processing)
 """
 
 from __future__ import annotations
@@ -12,8 +16,22 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+# region Embedding 客户端
 class EmbeddingClient:
+    """
+    Embedding 客户端
+
+    功能:
+        - 封装第三方 Embedding API
+        - 提供文本到向量的转换能力
+    """
     def __init__(self, config: dict[str, Any]) -> None:
+        """
+        初始化客户端
+
+        参数:
+            config: 配置字典 (包含 provider, api_key, model 等)
+        """
         self._provider = config.get("provider", "")
         self._api_base = config.get("api_base", "")
         self._api_key = config.get("api_key", "")
@@ -23,9 +41,19 @@ class EmbeddingClient:
 
     @property
     def batch_size(self) -> int:
+        """获取批处理大小"""
         return self._batch_size
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """
+        批量生成文本向量
+
+        参数:
+            texts: 文本列表
+
+        返回:
+            向量列表 (与输入文本一一对应)
+        """
         if not texts:
             return []
         if self._provider != "siliconflow":
@@ -54,3 +82,4 @@ class EmbeddingClient:
                 embeddings.extend(batch_embeddings)
 
         return embeddings
+# endregion

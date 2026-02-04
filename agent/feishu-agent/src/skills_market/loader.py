@@ -1,4 +1,11 @@
-"""Local skills market loader."""
+"""
+描述: 技能市场加载器 (Skills Market)
+主要功能:
+    - 扫描本地技能市场目录 (src/skills_market)
+    - 解析技能清单 (manifest.yaml/json)
+    - 动态加载并实例化技能类
+    - 处理依赖注入
+"""
 
 from __future__ import annotations
 
@@ -17,20 +24,35 @@ from src.core.skills.base import BaseSkill
 logger = logging.getLogger(__name__)
 
 
+# region 数据模型
 @dataclass
 class SkillManifest:
+    """技能清单数据模型"""
     name: str
     description: str
     keywords: list[str]
     entrypoint: str
     version: str
+# endregion
 
 
+# region 加载逻辑
 def load_market_skills(
     market_config: dict[str, Any],
     config_path: str,
     dependencies: dict[str, Any],
 ) -> tuple[list[BaseSkill], dict[str, dict[str, Any]]]:
+    """
+    加载所有市场技能
+
+    参数:
+        market_config: 市场配置相关的字典
+        config_path: 主配置文件路径 (用于解析相对路径)
+        dependencies: 依赖注入容器 (如 db_client, llm_client)
+
+    返回:
+        (实例列表, 技能定义字典)
+    """
     if not market_config.get("enabled", False):
         return [], {}
 
@@ -76,7 +98,11 @@ def load_market_skills(
     return skills, skill_defs
 
 
+    return skills, skill_defs
+
+
 def _resolve_market_dir(market_config: dict[str, Any], config_path: str) -> Path | None:
+    """解析市场目录绝对路径"""
     local_dir = market_config.get("local_dir") or "src/skills_market"
     if not local_dir:
         return None
@@ -92,7 +118,11 @@ def _resolve_market_dir(market_config: dict[str, Any], config_path: str) -> Path
     return (base_dir / path).resolve()
 
 
+    return (base_dir / path).resolve()
+
+
 def _find_manifests(market_dir: Path) -> list[Path]:
+    """递归查找 manifest 文件 (.yaml/.yml/.json)"""
     manifests = []
     for path in market_dir.rglob("manifest.*"):
         if path.suffix.lower() not in {".yaml", ".yml", ".json"}:
@@ -101,7 +131,11 @@ def _find_manifests(market_dir: Path) -> list[Path]:
     return sorted(manifests)
 
 
+    return sorted(manifests)
+
+
 def _load_manifest(path: Path) -> SkillManifest | None:
+    """解析单个清单文件"""
     try:
         raw = path.read_text(encoding="utf-8")
     except Exception as exc:
@@ -143,7 +177,14 @@ def _load_manifest(path: Path) -> SkillManifest | None:
     )
 
 
+    )
+
+
 def _load_entrypoint(entrypoint: str) -> type[BaseSkill] | None:
+    """
+    动态加载技能入口类
+    格式: "module.path:ClassName"
+    """
     module_path, _, attr = entrypoint.partition(":")
     if not module_path or not attr:
         logger.warning("Invalid entrypoint: %s", entrypoint)
@@ -170,7 +211,18 @@ def _load_entrypoint(entrypoint: str) -> type[BaseSkill] | None:
     return None
 
 
+    return None
+
+
 def _instantiate_skill(skill_cls: type[BaseSkill], dependencies: dict[str, Any]) -> BaseSkill | None:
+    """
+    实例化技能并自动注入依赖
+    
+    逻辑:
+        1. 检查构造函数签名
+        2. 匹配依赖项 (依赖名需与参数名一致)
+        3. 实例化
+    """
     try:
         signature = inspect.signature(skill_cls)
     except (TypeError, ValueError):
@@ -198,10 +250,15 @@ def _instantiate_skill(skill_cls: type[BaseSkill], dependencies: dict[str, Any])
         return None
 
 
+        return None
+
+
 def _apply_manifest(skill: BaseSkill, manifest: SkillManifest) -> None:
+    """将清单元数据应用到技能实例"""
     if manifest.name:
         skill.name = manifest.name
     if manifest.description:
         skill.description = manifest.description
     if manifest.keywords:
         skill.keywords = manifest.keywords
+# endregion

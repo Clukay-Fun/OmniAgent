@@ -102,6 +102,8 @@ tools:
   enabled:
     - "feishu.v1.bitable.search"
     - "feishu.v1.bitable.record.get"
+    - "feishu.v1.bitable.record.create"    # 新增
+    - "feishu.v1.bitable.record.update"    # 新增
     - "feishu.v1.doc.search"
     # Phase 2
     # - "feishu.v1.file.upload"

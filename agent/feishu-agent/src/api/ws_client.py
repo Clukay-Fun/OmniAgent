@@ -1,10 +1,9 @@
 """
-飞书 WebSocket 长连接客户端
-
-使用 lark-oapi SDK 建立长连接接收事件，无需 ngrok 或公网 IP。
-
-使用方式：
-    python -m src.api.ws_client
+描述: 飞书 WebSocket 长连接客户端
+主要功能:
+    - 使用 lark-oapi SDK 建立长连接接收事件
+    - 无需公网 IP 或 内网穿透 (适合开发与内网部署)
+    - 异步分发消息至 Agent 核心
 """
 
 from __future__ import annotations
@@ -59,9 +58,10 @@ agent_core = AgentOrchestrator(
 # ============================================
 
 
-# ============================================
-# region 消息处理
-# ============================================
+# endregion
+
+
+# region 消息处理逻辑
 async def handle_message_async(
     user_id: str,
     chat_id: str,
@@ -71,7 +71,7 @@ async def handle_message_async(
     """
     异步处理消息并发送回复
     
-    Args:
+    参数:
         user_id: 用户 ID
         chat_id: 会话 ID
         text: 消息文本
@@ -101,7 +101,7 @@ async def send_reply(chat_id: str, text: str, reply_message_id: str | None = Non
     """
     发送回复消息
     
-    Args:
+    参数:
         chat_id: 会话 ID
         text: 回复文本
         reply_message_id: 原消息 ID（可选，用于引用回复）
@@ -116,17 +116,16 @@ async def send_reply(chat_id: str, text: str, reply_message_id: str | None = Non
         reply_message_id=reply_message_id,
     )
 # endregion
-# ============================================
 
 
-# ============================================
-# region 事件处理器
-# ============================================
+# region 事件分发器
 def create_event_handler() -> lark.EventDispatcherHandler:
     """
     创建事件分发处理器
     
-    注册 im.message.receive_v1 事件的处理函数
+    功能:
+        - 注册 im.message.receive_v1 事件监听
+        - 配置解密 Key 与校验 Token
     """
     handler = lark.EventDispatcherHandler.builder(
         encrypt_key=settings.feishu.encrypt_key or "",
@@ -140,8 +139,8 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
     """
     处理接收到的消息事件
     
-    Args:
-        data: 消息事件数据
+    参数:
+        data: 飞书事件数据对象
     """
     try:
         event = data.event
@@ -216,19 +215,18 @@ def _extract_text(content: str) -> str:
         return payload.get("text", "")
     except json.JSONDecodeError:
         return ""
+    except json.JSONDecodeError:
+        return ""
 # endregion
-# ============================================
 
 
-# ============================================
 # region WebSocket 客户端
-# ============================================
 def create_ws_client() -> lark.ws.Client:
     """
     创建 WebSocket 长连接客户端
     
-    Returns:
-        lark.ws.Client: 长连接客户端实例
+    返回:
+        lark.ws.Client: 客户端实例
     """
     event_handler = create_event_handler()
     
@@ -245,8 +243,6 @@ def create_ws_client() -> lark.ws.Client:
 def start_ws_client() -> None:
     """
     启动 WebSocket 长连接客户端（阻塞运行）
-    
-    用于直接运行：python -m src.api.ws_client
     """
     logger.info("Starting WebSocket client...")
     logger.info(f"App ID: {settings.feishu.app_id[:8]}...")
@@ -261,13 +257,9 @@ def start_ws_client() -> None:
         logger.error(f"WebSocket client error: {e}", exc_info=True)
         raise
 # endregion
-# ============================================
 
 
-# ============================================
-# region 入口
-# ============================================
+# region 程序入口
 if __name__ == "__main__":
     start_ws_client()
 # endregion
-# ============================================

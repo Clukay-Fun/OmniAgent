@@ -1,8 +1,9 @@
 """
-ReminderSkill - 提醒技能
-
-职责：创建和管理待办提醒
-Phase 1：仅存取（Postgres），缺时间默认今天 18:00 并告知
+描述: 提醒管理技能
+主要功能:
+    - 待办事项创建 (基于 Postgres)
+    - 提醒列表查询与状态管理
+    - 自然语言时间提取
 """
 
 from __future__ import annotations
@@ -17,19 +18,15 @@ from src.core.types import SkillContext, SkillResult
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# region ReminderSkill
-# ============================================
+# region 提醒技能实现
 class ReminderSkill(BaseSkill):
     """
-    提醒技能
-    
-    功能：
-    - 解析用户提醒请求
-    - 提取时间和内容
-    - 缺时间时默认今天 18:00，并告知用户
-    - Phase 1：存储到 Postgres
-    - Phase 2：定时推送（待实现）
+    提醒管理技能核心类
+
+    功能:
+        - 创建新提醒 (支持自动推断时间)
+        - 查询、完成、删除提醒
+        - 多轮对话意图提取
     """
     
     name: str = "ReminderSkill"
@@ -61,9 +58,11 @@ class ReminderSkill(BaseSkill):
         skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
-        Args:
-            db_client: 数据库客户端（用于存储提醒）
-            skills_config: skills.yaml 配置
+        初始化技能
+
+        参数:
+            db_client: 数据库客户端
+            skills_config: 技能配置字典
         """
         self._db = db_client
         self._config = skills_config or {}
@@ -77,13 +76,13 @@ class ReminderSkill(BaseSkill):
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
-        执行提醒创建
-        
-        Args:
-            context: 执行上下文
-            
-        Returns:
-            SkillResult: 创建结果
+        执行技能逻辑
+
+        参数:
+            context: 上下文对象 (包含 query, user_id 等)
+
+        返回:
+            SkillResult: 执行结果
         """
         query = context.query
         user_id = context.user_id
@@ -168,7 +167,7 @@ class ReminderSkill(BaseSkill):
             )
 
     def _extract_content(self, query: str) -> str | None:
-        """提取提醒内容"""
+        """从 Query 中提取提醒内容的核心部分 (去除无关词)"""
         # 移除常见的提醒关键词
         content = query
         prefixes = [
@@ -195,6 +194,7 @@ class ReminderSkill(BaseSkill):
         return content if content else None
 
     def _extract_priority(self, query: str) -> str:
+        """根据关键词判断优先级 (high/low/medium)"""
         reminder_cfg = self._config.get("reminder", {})
         if not reminder_cfg:
             reminder_cfg = self._config.get("skills", {}).get("reminder", {})
@@ -210,12 +210,12 @@ class ReminderSkill(BaseSkill):
 
     def _extract_time(self, query: str) -> datetime | None:
         """
-        提取提醒时间
-        
-        支持的格式：
-        - 今天、明天、后天
-        - 下午3点、晚上8点
-        - 具体时间如 14:30
+        从 Query 中提取提醒时间
+
+        支持格式:
+            - 相对时间: "10分钟后", "2小时后"
+            - 自然语言: "明天下午3点", "后天早上"
+            - 绝对时间: "14:30"
         """
         import re
         
@@ -272,7 +272,7 @@ class ReminderSkill(BaseSkill):
         return None
 
     def _get_default_time(self) -> datetime:
-        """获取默认提醒时间（今天 18:00）"""
+        """获取兜底默认时间 (配置值或 18:00)"""
         now = datetime.now()
         hour, minute = map(int, self._default_time.split(":"))
         default = datetime.combine(now.date(), time(hour, minute))
@@ -284,9 +284,11 @@ class ReminderSkill(BaseSkill):
         return default
 
     def _is_list_request(self, query: str) -> bool:
+        """判断是否为列表查询请求"""
         return any(trigger in query for trigger in self.LIST_TRIGGERS)
 
     def _extract_update_action(self, query: str) -> str | None:
+        """提取更新动作 (done/delete/cancelled)"""
         if any(trigger in query for trigger in self.DELETE_TRIGGERS):
             return "delete"
         if any(trigger in query for trigger in self.CANCEL_TRIGGERS):
@@ -296,6 +298,7 @@ class ReminderSkill(BaseSkill):
         return None
 
     def _extract_reminder_id(self, query: str) -> int | None:
+        """提取提醒 ID (数字)"""
         import re
 
         match = re.search(r"(\d+)", query)
@@ -307,6 +310,7 @@ class ReminderSkill(BaseSkill):
             return None
 
     async def _list_reminders(self, user_id: str) -> SkillResult:
+        """执行列出提醒逻辑"""
         if not self._db:
             return SkillResult(
                 success=False,
@@ -351,6 +355,7 @@ class ReminderSkill(BaseSkill):
         )
 
     async def _update_reminder(self, user_id: str, query: str, action: str) -> SkillResult:
+        """执行更新提醒状态逻辑"""
         if not self._db:
             return SkillResult(
                 success=False,
@@ -409,16 +414,16 @@ class ReminderSkill(BaseSkill):
         priority: str,
     ) -> int:
         """
-        存储提醒到数据库
-        
-        Args:
+        持久化提醒记录
+
+        参数:
             user_id: 用户 ID
             content: 提醒内容
-            remind_time: 提醒时间
+            remind_time: 触发时间
             priority: 优先级
-        
-        Returns:
-            reminder_id: 提醒 ID
+
+        返回:
+            int: 提醒 ID
         """
         if self._db:
             return await self._db.create_reminder(
@@ -448,4 +453,3 @@ class ReminderSkill(BaseSkill):
         )
         return reminder_id
 # endregion
-# ============================================

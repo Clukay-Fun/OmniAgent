@@ -1,10 +1,9 @@
 """
-Logging setup utilities with structured logging support.
-
-功能：
-- JSON 格式结构化日志
-- 自动添加请求 ID、用户 ID 等上下文
-- 性能指标记录
+描述: 结构化日志工具库
+主要功能:
+    - JSON 格式结构化输出 (Structured Logging)
+    - 自动追踪请求上下文 (Request ID, User ID)
+    - 超时与性能指标自动记录
 """
 
 from __future__ import annotations
@@ -20,36 +19,21 @@ from functools import wraps
 from src.config import LoggingSettings
 
 
-# ============================================
-# region 上下文变量
-# ============================================
-# 请求上下文（线程安全）
+# region 上下文变量 (Context Vars)
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 user_id_var: ContextVar[str] = ContextVar("user_id", default="")
 skill_name_var: ContextVar[str] = ContextVar("skill_name", default="")
 # endregion
-# ============================================
 
 
-# ============================================
-# region 结构化日志 Formatter
-# ============================================
+# region 日志 Formatter
 class StructuredJsonFormatter(logging.Formatter):
     """
-    结构化 JSON 日志格式化器
-    
-    输出格式：
-    {
-        "timestamp": "2026-01-29T16:00:00",
-        "level": "INFO",
-        "logger": "src.core.orchestrator",
-        "message": "Intent parsed",
-        "request_id": "abc123",
-        "user_id": "user_xxx",
-        "skill": "QuerySkill",
-        "duration_ms": 150,
-        ...extra fields
-    }
+    JSON 结构化日志格式化器
+
+    功能:
+        - 将日志记录转换为符合 ELK/Loki 标准的 JSON 格式
+        - 自动注入当前上下文变量
     """
     
     def format(self, record: logging.LogRecord) -> str:
@@ -117,18 +101,22 @@ class SimpleFormatter(logging.Formatter):
         
         return base
 # endregion
-# ============================================
 
 
-# ============================================
-# region 日志上下文管理
-# ============================================
+# region 上下文管理
 def set_request_context(
     request_id: str | None = None,
     user_id: str | None = None,
     skill_name: str | None = None,
 ) -> None:
-    """设置请求上下文"""
+    """
+    设置当前请求的上下文信息
+
+    参数:
+        request_id: 请求唯一标识
+        user_id: 用户标识
+        skill_name: 当前执行的 Skill 名称
+    """
     if request_id:
         request_id_var.set(request_id)
     if user_id:
@@ -148,20 +136,19 @@ def generate_request_id() -> str:
     """生成请求 ID"""
     return str(uuid.uuid4())[:12]
 # endregion
-# ============================================
 
 
-# ============================================
-# region 性能日志装饰器
-# ============================================
+# region 性能监控
 def log_duration(logger_name: str = __name__):
     """
-    记录函数执行时间的装饰器
+    执行耗时记录装饰器
+
+    参数:
+        logger_name: 用于输出日志的 Logger 名称
     
-    用法：
-        @log_duration()
-        async def my_function():
-            ...
+    效果:
+        - 自动计算异步/同步函数的执行耗时
+        - 输出包含 duration_ms 的 debug/error 日志
     """
     def decorator(func: Callable):
         @wraps(func)
@@ -211,18 +198,20 @@ def log_duration(logger_name: str = __name__):
     
     return decorator
 # endregion
-# ============================================
 
 
-# ============================================
-# region 日志初始化
-# ============================================
+# region 初始化配置
 def setup_logging(settings: LoggingSettings) -> None:
     """
-    初始化日志系统
+    初始化全局日志配置
+
+    参数:
+        settings: 日志配置对象
     
-    Args:
-        settings: 日志配置
+    动作:
+        - 配置 Root Logger 级别
+        - 设置 StreamHandler 及 Formatter (JSON/Text)
+        - 调整第三方库日志级别以减少噪音
     """
     level = getattr(logging, settings.level.upper(), logging.INFO)
     
@@ -243,4 +232,3 @@ def setup_logging(settings: LoggingSettings) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 # endregion
-# ============================================

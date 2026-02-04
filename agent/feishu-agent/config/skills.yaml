@@ -24,6 +24,15 @@ query:
     - 本周
     - 下周
 
+create:
+  keywords:
+    - 新增
+    - 新建
+    - 创建
+    - 添加
+    - 录入
+    - 登记
+
 summary:
   keywords:
     - 总结
