@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.core.skills.base import BaseSkill
@@ -35,6 +36,8 @@ class QuerySkill(BaseSkill):
         self,
         mcp_client: Any,
         settings: Any = None,
+        llm_client: Any = None,
+        skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
         初始化查询技能
@@ -45,6 +48,32 @@ class QuerySkill(BaseSkill):
         """
         self._mcp = mcp_client
         self._settings = settings
+        self._llm = llm_client
+        self._skills_config = skills_config or {}
+
+        self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
+        self._alias_lookup = self._build_alias_lookup(self._table_aliases)
+        self._table_recognition = self._skills_config.get("table_recognition", {}) or {}
+        self._confidence_threshold = float(
+            self._table_recognition.get("confidence_threshold", 0.65)
+        )
+        self._auto_confirm_threshold = float(
+            self._table_recognition.get("auto_confirm_threshold", 0.85)
+        )
+        self._max_candidates = int(self._table_recognition.get("max_candidates", 3))
+
+        # 结果格式化字段配置（支持自定义）
+        query_cfg = self._skills_config.get("query", {})
+        if not query_cfg:
+            query_cfg = self._skills_config.get("skills", {}).get("query", {})
+        self._display_fields = query_cfg.get("display_fields", {
+            "title_left": "委托人及联系方式",
+            "title_right": "对方当事人",
+            "title_suffix": "案由",
+            "case_no": "案号",
+            "court": "审理法院",
+            "stage": "程序阶段",
+        })
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -56,33 +85,68 @@ class QuerySkill(BaseSkill):
         返回:
             查询结果（文本或卡片）
         """
-        query = context.query
-        extra = context.extra
+        query = context.query.strip()
+        extra = context.extra or {}
 
-        # 判断查询类型（文档 or 多维表格）
-        tool_name = self._select_tool(query)
-        
-        # 构建查询参数
-        params = self._build_params(query, extra)
-        
-        try:
-            # 调用 MCP 工具
-            result = await self._mcp.call_tool(tool_name, params)
-            
-            # 检查结果
-            if tool_name == "feishu.v1.doc.search":
+        if self._is_refresh_command(query):
+            return await self._refresh_tables()
+
+        target = self._select_target(query)
+        if target == "doc":
+            params = self._build_doc_params(query)
+            try:
+                result = await self._mcp.call_tool("feishu.v1.doc.search", params)
                 documents = result.get("documents", [])
                 if not documents:
                     return self._empty_result("未找到相关文档")
                 return self._format_doc_result(documents)
-            else:
-                records = result.get("records", [])
-                if not records:
-                    return self._empty_result("未找到相关案件记录")
-                return self._format_case_result(records)
-                
+            except Exception as e:
+                logger.error("QuerySkill execution error: %s", e)
+                return SkillResult(
+                    success=False,
+                    skill_name=self.name,
+                    message=str(e),
+                    reply_text="查询失败，请稍后重试。",
+                )
+
+        pending = self._get_pending_table(context)
+        if pending:
+            resolved = self._resolve_pending_response(query, pending)
+            if resolved:
+                query = pending.get("query") or query
+                extra = dict(extra)
+                extra["table_name"] = resolved["table_name"]
+                extra["table_id"] = resolved.get("table_id")
+
+        table_result = await self._resolve_table(query, extra)
+        if table_result.get("status") == "need_confirm":
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"pending_table": table_result.get("pending_table")},
+                message="需要确认表名",
+                reply_text=table_result.get("reply_text", ""),
+            )
+        if table_result.get("status") != "resolved":
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message=table_result.get("message", "无法识别表"),
+                reply_text=table_result.get("reply_text", "无法识别要查询的表，请明确表名。"),
+            )
+
+        tool_name, params = self._build_bitable_params(query, extra, table_result)
+        notice = table_result.get("notice")
+
+        try:
+            result = await self._mcp.call_tool(tool_name, params)
+            records = result.get("records", [])
+            schema = result.get("schema")
+            if not records:
+                return self._empty_result("未找到相关案件记录")
+            return self._format_case_result(records, notice=notice, schema=schema)
         except Exception as e:
-            logger.error(f"QuerySkill execution error: {e}")
+            logger.error("QuerySkill execution error: %s", e)
             return SkillResult(
                 success=False,
                 skill_name=self.name,
@@ -90,29 +154,284 @@ class QuerySkill(BaseSkill):
                 reply_text="查询失败，请稍后重试。",
             )
 
-    def _select_tool(self, query: str) -> str:
-        """根据关键词选择查询工具 (表格/文档)"""
+    def _select_target(self, query: str) -> str:
+        """判断查询类型（表格/文档）"""
         doc_keywords = ["文档", "资料", "文件", "合同"]
         if any(kw in query for kw in doc_keywords):
-            return "feishu.v1.doc.search"
-        return "feishu.v1.bitable.search"
+            return "doc"
+        return "bitable"
 
-    def _build_params(self, query: str, extra: dict[str, Any]) -> dict[str, Any]:
-        """构建 MCP 工具调用参数"""
+    def _build_doc_params(self, query: str) -> dict[str, Any]:
         params: dict[str, Any] = {}
-        
-        # 提取关键词
         keyword = self._extract_keyword(query)
         if keyword:
             params["keyword"] = keyword
-            
-        # 时间范围（从 extra 获取）
-        if extra.get("date_from"):
-            params["date_from"] = extra["date_from"]
-        if extra.get("date_to"):
-            params["date_to"] = extra["date_to"]
-            
         return params
+
+    def _build_alias_lookup(self, table_aliases: dict[str, Any]) -> dict[str, str]:
+        lookup: dict[str, str] = {}
+        for table_name, aliases in (table_aliases or {}).items():
+            alias_list = [table_name]
+            if isinstance(aliases, list):
+                alias_list.extend([str(item) for item in aliases if item])
+            for alias in alias_list:
+                alias = str(alias).strip()
+                if not alias:
+                    continue
+                lookup[alias] = table_name
+        return lookup
+
+    def _is_refresh_command(self, query: str) -> bool:
+        cmd = query.strip().lower()
+        return cmd in {"/refresh", "刷新", "刷新表结构", "刷新表"}
+
+    async def _refresh_tables(self) -> SkillResult:
+        try:
+            result = await self._mcp.call_tool(
+                "feishu.v1.bitable.list_tables",
+                {"refresh": True},
+            )
+            tables = result.get("tables", [])
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"tables": tables, "total": result.get("total", len(tables))},
+                message="已刷新表结构缓存",
+                reply_text=f"已刷新表结构缓存（{len(tables)} 张表）。",
+            )
+        except Exception as exc:
+            logger.error("Refresh tables error: %s", exc)
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message=str(exc),
+                reply_text="刷新表结构失败，请稍后重试。",
+            )
+
+    def _get_pending_table(self, context: SkillContext) -> dict[str, Any] | None:
+        if context.last_skill != self.name:
+            return None
+        last_result = context.last_result or {}
+        pending = last_result.get("pending_table")
+        if isinstance(pending, dict):
+            return pending
+        return None
+
+    def _resolve_pending_response(
+        self,
+        query: str,
+        pending: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        candidates = pending.get("candidates") or []
+        if not isinstance(candidates, list):
+            return None
+        normalized = query.strip()
+        confirm_words = {"是", "确认", "对", "好的", "好", "ok", "yes"}
+        if normalized in confirm_words and len(candidates) == 1:
+            return candidates[0]
+        for candidate in candidates:
+            name = candidate.get("table_name")
+            if name and name == normalized:
+                return candidate
+        return None
+
+    async def _resolve_table(self, query: str, extra: dict[str, Any]) -> dict[str, Any]:
+        try:
+            tables_result = await self._mcp.call_tool("feishu.v1.bitable.list_tables", {})
+        except Exception as exc:
+            logger.error("List tables failed: %s", exc)
+            return {"status": "error", "message": str(exc)}
+
+        tables = tables_result.get("tables", [])
+        if not tables:
+            return {
+                "status": "error",
+                "message": "未配置多维表格",
+                "reply_text": "当前未配置多维表格，无法查询。",
+            }
+
+        table_lookup = {item["table_name"]: item.get("table_id") for item in tables}
+        table_names = list(table_lookup.keys())
+
+        alias_match = self._match_alias(query)
+        if alias_match and alias_match in table_lookup:
+            logger.info("Table resolved by alias", extra={"table": alias_match, "method": "alias"})
+            return {
+                "status": "resolved",
+                "table_name": alias_match,
+                "table_id": table_lookup.get(alias_match),
+                "confidence": 1.0,
+                "method": "alias",
+            }
+
+        direct_match = self._match_table_name(query, table_names)
+        if direct_match:
+            logger.info("Table resolved by name", extra={"table": direct_match, "method": "direct"})
+            return {
+                "status": "resolved",
+                "table_name": direct_match,
+                "table_id": table_lookup.get(direct_match),
+                "confidence": 1.0,
+                "method": "direct",
+            }
+
+        llm_result = await self._llm_pick_table(query, table_names)
+        candidates = self._normalize_candidates(llm_result.get("candidates"), table_names)
+        if llm_result.get("table_name"):
+            candidates = [llm_result["table_name"]] + [c for c in candidates if c != llm_result["table_name"]]
+        candidates = candidates[: self._max_candidates]
+
+        confidence = float(llm_result.get("confidence") or 0)
+        selected = llm_result.get("table_name")
+        if selected and selected not in table_lookup:
+            selected = None
+
+        logger.info(
+            "Table resolved by llm",
+            extra={
+                "table": selected,
+                "confidence": confidence,
+                "candidates": candidates,
+            },
+        )
+
+        if selected and confidence >= self._auto_confirm_threshold:
+            return {
+                "status": "resolved",
+                "table_name": selected,
+                "table_id": table_lookup.get(selected),
+                "confidence": confidence,
+                "method": "llm_high",
+            }
+        if selected and confidence >= self._confidence_threshold:
+            return {
+                "status": "resolved",
+                "table_name": selected,
+                "table_id": table_lookup.get(selected),
+                "confidence": confidence,
+                "method": "llm_medium",
+                "notice": f"已为您定位到 {selected} 表。",
+            }
+
+        reply_text = self._build_confirmation_reply(candidates, table_names)
+        pending_table = {
+            "query": query,
+            "candidates": [
+                {"table_name": name, "table_id": table_lookup.get(name)} for name in candidates
+            ],
+        }
+        return {
+            "status": "need_confirm",
+            "reply_text": reply_text,
+            "pending_table": pending_table,
+        }
+
+    def _match_alias(self, query: str) -> str | None:
+        query_lower = query.lower()
+        matched = []
+        for alias, table in self._alias_lookup.items():
+            if alias in query or alias.lower() in query_lower:
+                matched.append((len(alias), table))
+        if not matched:
+            return None
+        matched.sort(reverse=True)
+        return matched[0][1]
+
+    def _match_table_name(self, query: str, table_names: list[str]) -> str | None:
+        matched = [name for name in table_names if name and name in query]
+        if not matched:
+            return None
+        matched.sort(key=len, reverse=True)
+        return matched[0]
+
+    async def _llm_pick_table(self, query: str, table_names: list[str]) -> dict[str, Any]:
+        if not self._llm or not table_names:
+            return {}
+        system = "你是表名识别助手。"
+        prompt = (
+            "请根据用户问题从表名列表中选择最可能的表，并返回 JSON："
+            "{\"table_name\": \"...\", \"confidence\": 0.0-1.0, \"reason\": \"...\", "
+            "\"candidates\": [\"...\", \"...\"]}。只返回 JSON。\n\n"
+            f"表名列表：{', '.join(table_names)}\n"
+            f"用户问题：{query}"
+        )
+        try:
+            return await self._llm.chat_json(prompt, system=system)
+        except Exception as exc:
+            logger.warning("LLM table match failed: %s", exc)
+            return {}
+
+    def _normalize_candidates(self, candidates: Any, table_names: list[str]) -> list[str]:
+        result: list[str] = []
+        if isinstance(candidates, list):
+            for item in candidates:
+                if isinstance(item, str) and item in table_names:
+                    result.append(item)
+        return result
+
+    def _build_confirmation_reply(self, candidates: list[str], all_tables: list[str]) -> str:
+        templates = (self._table_recognition.get("templates") or {})
+        single_tpl = templates.get("single_candidate", "请确认表名：{table_name}")
+        multi_tpl = templates.get("multi_candidate", "请确认表名：\n{candidate_list}")
+        no_match_tpl = templates.get("no_match", "可用表：{all_tables}")
+
+        if len(candidates) == 1:
+            return single_tpl.format(table_name=candidates[0])
+        if 1 < len(candidates) <= self._max_candidates:
+            candidate_list = "\n".join([f"- {name}" for name in candidates])
+            return multi_tpl.format(candidate_list=candidate_list)
+        return no_match_tpl.format(all_tables="、".join(all_tables))
+
+    def _build_bitable_params(
+        self,
+        query: str,
+        extra: dict[str, Any],
+        table_result: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        params: dict[str, Any] = {}
+        table_id = table_result.get("table_id")
+        if table_id:
+            params["table_id"] = table_id
+
+        date_from = extra.get("date_from")
+        date_to = extra.get("date_to")
+        if date_from or date_to:
+            params.update({
+                "field": self._guess_date_field(query),
+                "date_from": date_from,
+                "date_to": date_to,
+            })
+            return "feishu.v1.bitable.search_date_range", params
+
+        exact_field = self._extract_exact_field(query)
+        if exact_field:
+            params.update(exact_field)
+            return "feishu.v1.bitable.search_exact", params
+
+        keyword = self._extract_keyword(query)
+        if keyword:
+            params["keyword"] = keyword
+            return "feishu.v1.bitable.search_keyword", params
+
+        params["keyword"] = query
+        return "feishu.v1.bitable.search_keyword", params
+
+    def _guess_date_field(self, query: str) -> str:
+        if "开庭" in query or "庭审" in query:
+            return "开庭日"
+        if "截止" in query:
+            return "截止日"
+        return "开庭日"
+
+    def _extract_exact_field(self, query: str) -> dict[str, str] | None:
+        pattern = re.compile(r"(?:案号|编号)[是为:：\s]*([A-Za-z0-9\-（）()_\u4e00-\u9fa5]+)")
+        match = pattern.search(query)
+        if not match:
+            return None
+        value = match.group(1).strip()
+        if not value:
+            return None
+        return {"field": "案号", "value": value}
 
     def _extract_keyword(self, query: str) -> str:
         """
@@ -164,32 +483,41 @@ class QuerySkill(BaseSkill):
             reply_text=f"{message}，请尝试调整查询条件。",
         )
 
-    def _format_case_result(self, records: list[dict[str, Any]]) -> SkillResult:
+    def _format_case_result(
+        self,
+        records: list[dict[str, Any]],
+        notice: str | None = None,
+        schema: list[dict[str, Any]] | None = None,
+    ) -> SkillResult:
         """格式化案件查询结果"""
         count = len(records)
         title = f"📌 案件查询结果（共 {count} 条）"
         
         items = []
+        df = self._display_fields  # 使用配置的字段名
         for i, record in enumerate(records, start=1):
             fields = record.get("fields_text") or record.get("fields", {})
             item = (
-                f"{i}️⃣ {fields.get('委托人及联系方式', '')} vs {fields.get('对方当事人', '')}｜{fields.get('案由', '')}\n"
-                f"   • 案号：{fields.get('案号', '')}\n"
-                f"   • 法院：{fields.get('审理法院', '')}\n"
-                f"   • 程序：{fields.get('程序阶段', '')}\n"
+                f"{i}️⃣ {fields.get(df.get('title_left', ''), '')} vs {fields.get(df.get('title_right', ''), '')}｜{fields.get(df.get('title_suffix', ''), '')}\n"
+                f"   • 案号：{fields.get(df.get('case_no', '案号'), '')}\n"
+                f"   • 法院：{fields.get(df.get('court', '审理法院'), '')}\n"
+                f"   • 程序：{fields.get(df.get('stage', '程序阶段'), '')}\n"
                 f"   • 🔗 查看详情：{record.get('record_url', '')}"
             )
             items.append(item)
         
-        reply_text = "\n\n".join([title] + items)
+        parts = [title]
+        if notice:
+            parts = [notice, "", title]
+        reply_text = "\n\n".join(parts + items)
         
         # 构建卡片
-        card = self._build_card(title, items)
+        card = self._build_card(title, items, notice=notice)
         
         return SkillResult(
             success=True,
             skill_name=self.name,
-            data={"records": records, "total": count},
+            data={"records": records, "total": count, "schema": schema or []},
             message=f"查询到 {count} 条记录",
             reply_type="card",
             reply_text=reply_text,
@@ -221,9 +549,12 @@ class QuerySkill(BaseSkill):
             reply_text=reply_text,
         )
 
-    def _build_card(self, title: str, items: list[str]) -> dict[str, Any]:
+    def _build_card(self, title: str, items: list[str], notice: str | None = None) -> dict[str, Any]:
         """构建飞书消息卡片"""
-        elements = [{"tag": "markdown", "content": item} for item in items]
+        elements = []
+        if notice:
+            elements.append({"tag": "markdown", "content": notice})
+        elements.extend({"tag": "markdown", "content": item} for item in items)
         return {
             "config": {"wide_screen_mode": True},
             "header": {

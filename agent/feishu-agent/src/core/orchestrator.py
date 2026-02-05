@@ -8,10 +8,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any
+
+from src.utils.logger import set_request_context, clear_request_context, generate_request_id
+from src.utils.metrics import record_request, record_intent_parse, set_active_sessions
 
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, load_skills_config
@@ -120,7 +125,12 @@ class AgentOrchestrator:
     def _register_skills(self) -> None:
         """注册并初始化所有技能"""
         skills = [
-            QuerySkill(mcp_client=self._mcp, settings=self._settings),
+            QuerySkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                llm_client=self._llm,
+                skills_config=self._skills_config,
+            ),
             CreateSkill(mcp_client=self._mcp, settings=self._settings),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
             ReminderSkill(db_client=self._db, skills_config=self._skills_config),
@@ -155,7 +165,7 @@ class AgentOrchestrator:
             persist_path=chroma_cfg.get("persist_path", "./workspace/chroma"),
             collection_prefix=chroma_cfg.get("collection_prefix", "memory_vectors_"),
         )
-        if not store.is_available():
+        if not store.is_available:
             logger.warning("Chroma not available, vector memory disabled")
             return None
 
@@ -254,9 +264,7 @@ class AgentOrchestrator:
         返回:
             回复内容（type, text, card 等）
         """
-        import time
-        from src.utils.logger import set_request_context, clear_request_context, generate_request_id
-        from src.utils.metrics import record_request, record_intent_parse, set_active_sessions
+
         
         # 设置请求上下文（用于结构化日志）
         request_id = generate_request_id()
@@ -330,6 +338,20 @@ class AgentOrchestrator:
                 context.extra,
             )
             
+        except asyncio.TimeoutError:
+            status = "timeout"
+            logger.warning("Message handling timeout")
+            reply = {
+                "type": "text",
+                "text": self._settings.reply.templates.error.format(message="请求超时，请稍后重试"),
+            }
+        except ConnectionError as e:
+            status = "connection_error"
+            logger.error(f"Connection error: {e}")
+            reply = {
+                "type": "text",
+                "text": self._settings.reply.templates.error.format(message="服务连接异常，请稍后重试"),
+            }
         except Exception as e:
             status = "error"
             logger.error(f"Message handling error: {e}", exc_info=True)

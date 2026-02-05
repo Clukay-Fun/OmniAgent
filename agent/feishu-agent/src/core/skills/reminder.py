@@ -221,14 +221,22 @@ class ReminderSkill(BaseSkill):
         
         now = datetime.now()
 
+        # 相对时间上限：24小时内
+        MAX_RELATIVE_MINUTES = 24 * 60  # 1440 分钟
+        MAX_RELATIVE_HOURS = 24
+
         relative_match = re.search(r"(\d{1,3})\s*分钟后", query)
         if relative_match:
             minutes = int(relative_match.group(1))
+            if minutes > MAX_RELATIVE_MINUTES:
+                minutes = MAX_RELATIVE_MINUTES
             return now + timedelta(minutes=minutes)
 
         hour_match = re.search(r"(\d{1,2})\s*小时后", query)
         if hour_match:
             hours = int(hour_match.group(1))
+            if hours > MAX_RELATIVE_HOURS:
+                hours = MAX_RELATIVE_HOURS
             return now + timedelta(hours=hours)
         
         # 日期偏移

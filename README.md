@@ -32,6 +32,13 @@ OmniAgent 是一个可扩展的 Agent 平台，核心理念是：
 
 ---
 
+## 双组织凭证架构
+
+- MCP Feishu Server（组织A）：持有 data 凭证，负责多维表格/文档访问
+- Feishu Agent（组织B）：持有 bot 凭证，负责 Webhook 验签与消息发送
+- 典型流程：用户 -> 组织B Webhook -> Agent -> MCP -> 组织A 数据 -> Agent -> 组织B 回复
+- 关键环境变量：`FEISHU_DATA_*`（MCP）与 `FEISHU_BOT_*`（Agent）
+
 ## 系统架构
 
 ```
@@ -96,8 +103,8 @@ OmniAgent/
 │
 ├── monitoring/                     # 监控配置
 ├── docs/                           # 文档
-├── DEV_PLAN.md                     # 开发计划
-├── TASK.md                         # 任务追踪
+├── docs/DEV_PLAN.md                # 开发计划
+├── docs/TASK.md                    # 任务追踪
 └── docker-compose.yml              # Docker 编排
 ```
 
@@ -145,54 +152,6 @@ OmniAgent/
    ┌───────────────┐
    │ 返回飞书      │
    └───────────────┘
-```
-
----
-
-## 目录结构
-
-```
-OmniAgent/
-├── agent/feishu-agent/
-│   ├── src/
-│   │   ├── api/
-│   │   ├── core/
-│   │   │   ├── orchestrator.py
-│   │   │   ├── soul/
-│   │   │   │   └── soul.py
-│   │   │   ├── memory/
-│   │   │   │   └── manager.py
-│   │   │   ├── intent/
-│   │   │   │   ├── parser.py
-│   │   │   │   └── rules.py
-│   │   │   ├── router/
-│   │   │   │   └── router.py
-│   │   │   └── skills/
-│   │   │       ├── base.py
-│   │   │       ├── query.py
-│   │   │       ├── create.py
-│   │   │       ├── summary.py
-│   │   │       ├── reminder.py
-│   │   │       └── chitchat.py
-│   │   ├── llm/
-│   │   ├── mcp/
-│   │   └── utils/
-│   ├── workspace/
-│   │   ├── SOUL.md
-│   │   ├── IDENTITY.md
-│   │   ├── MEMORY.md
-│   │   └── users/{open_id}/
-│   │       ├── memory.md
-│   │       └── daily/
-│   ├── config/
-│   │   ├── skills.yaml
-│   │   └── prompts.yaml
-│   └── tests/
-├── mcp/mcp-feishu-server/
-├── docs/
-├── DEV_PLAN.md
-├── TASK.md
-└── docker-compose.yml
 ```
 
 ---
@@ -293,7 +252,7 @@ summary:
 | Phase 5 | 集成与编排 | ✅ 完成 |
 | Phase 6 | 测试与监控 | ✅ 完成 |
 
-详细任务进度见 `TASK.md`。
+详细任务进度见 `docs/TASK.md`。
 
 ---
 

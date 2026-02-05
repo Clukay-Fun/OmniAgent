@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 from src.core.intent import IntentResult, SkillMatch
@@ -22,11 +23,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# 统一的技能名映射表（支持别名 -> 标准名 双向映射）
 _SKILL_NAME_MAP: dict[str, str] = {
+    # 小写别名 -> 标准名
     "query": "QuerySkill",
+    "create": "CreateSkill",
     "summary": "SummarySkill",
     "reminder": "ReminderSkill",
     "chitchat": "ChitchatSkill",
+    # 标准名 -> 标准名（方便统一查找）
+    "QuerySkill": "QuerySkill",
+    "CreateSkill": "CreateSkill",
+    "SummarySkill": "SummarySkill",
+    "ReminderSkill": "ReminderSkill",
+    "ChitchatSkill": "ChitchatSkill",
 }
 
 
@@ -44,16 +54,8 @@ class SkillRouter:
         - 统一异常捕获与指标记录
     """
 
-    SKILL_NAME_MAP: dict[str, str] = {
-        "chitchat": "ChitchatSkill",
-        "query": "QuerySkill",
-        "summary": "SummarySkill",
-        "reminder": "ReminderSkill",
-        "ChitchatSkill": "ChitchatSkill",
-        "QuerySkill": "QuerySkill",
-        "SummarySkill": "SummarySkill",
-        "ReminderSkill": "ReminderSkill",
-    }
+    # 使用模块级统一映射表
+    SKILL_NAME_MAP = _SKILL_NAME_MAP
 
     def __init__(
         self,
@@ -125,7 +127,6 @@ class SkillRouter:
             3. 执行并记录耗时/结果
             4. 处理超时与异常
         """
-        import time
         from src.utils.metrics import record_skill_execution
         from src.utils.exceptions import (
             LLMTimeoutError,
@@ -288,14 +289,11 @@ class ContextManager:
     def get(self, user_id: str) -> SkillContext | None:
         ctx = self._contexts.get(user_id)
         if ctx:
-            import time
 
             self._timestamps[user_id] = time.time()
         return ctx
 
     def set(self, user_id: str, context: SkillContext) -> None:
-        import time
-
         self._contexts[user_id] = context
         self._timestamps[user_id] = time.time()
 
@@ -305,7 +303,6 @@ class ContextManager:
         skill_name: str,
         result: dict[str, Any],
     ) -> None:
-        import time
 
         ctx = self._contexts.get(user_id)
         if ctx:
@@ -318,8 +315,6 @@ class ContextManager:
         self._timestamps.pop(user_id, None)
 
     def cleanup_expired(self) -> None:
-        import time
-
         now = time.time()
         expired_users = [
             user_id

@@ -18,12 +18,20 @@ from src.core.intent.rules import match_date_query
 logger = logging.getLogger(__name__)
 
 
+# 统一的技能名映射表（与 router.py 保持一致）
 _SKILL_NAME_MAP: dict[str, str] = {
+    # 小写别名 -> 标准名
     "query": "QuerySkill",
     "create": "CreateSkill",
     "summary": "SummarySkill",
     "reminder": "ReminderSkill",
     "chitchat": "ChitchatSkill",
+    # 标准名 -> 标准名
+    "QuerySkill": "QuerySkill",
+    "CreateSkill": "CreateSkill",
+    "SummarySkill": "SummarySkill",
+    "ReminderSkill": "ReminderSkill",
+    "ChitchatSkill": "ChitchatSkill",
 }
 
 
@@ -240,6 +248,8 @@ class IntentParser:
         for key in ("query", "create", "summary", "reminder", "chitchat"):
             cfg = config.get(key)
             if not isinstance(cfg, dict):
+                continue
+            if cfg.get("enabled") is False:
                 continue
             merged = dict(cfg)
             merged.setdefault("name", _SKILL_NAME_MAP.get(key, key))

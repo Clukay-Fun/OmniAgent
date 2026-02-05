@@ -152,8 +152,8 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     mapping = {
-        "FEISHU_APP_ID": ["feishu", "app_id"],
-        "FEISHU_APP_SECRET": ["feishu", "app_secret"],
+        "FEISHU_DATA_APP_ID": ["feishu", "app_id"],
+        "FEISHU_DATA_APP_SECRET": ["feishu", "app_secret"],
         "BITABLE_DOMAIN": ["bitable", "domain"],
         "BITABLE_APP_TOKEN": ["bitable", "default_app_token"],
         "BITABLE_TABLE_ID": ["bitable", "default_table_id"],

@@ -27,20 +27,59 @@ from src.utils.feishu_api import send_message
 
 
 router = APIRouter()
-settings = get_settings()
-session_manager = SessionManager(settings.session)
-mcp_client = MCPClient(settings)
-llm_client = create_llm_client(settings.llm)
-
-# 初始化 Agent 编排器（使用技能系统）
-agent_core = AgentOrchestrator(
-    settings=settings,
-    session_manager=session_manager,
-    mcp_client=mcp_client,
-    llm_client=llm_client,
-    skills_config_path="config/skills.yaml",
-)
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# region 延迟初始化（Lazy Initialization）
+# ============================================
+_settings: Any = None
+_session_manager: Any = None
+_mcp_client: Any = None
+_llm_client: Any = None
+_agent_core: AgentOrchestrator | None = None
+_deduplicator: "EventDeduplicator | None" = None
+
+
+def _get_settings() -> Any:
+    """延迟获取配置"""
+    global _settings
+    if _settings is None:
+        _settings = get_settings()
+    return _settings
+
+
+def _get_agent_core() -> AgentOrchestrator:
+    """延迟初始化 Agent 编排器"""
+    global _agent_core, _session_manager, _mcp_client, _llm_client
+    if _agent_core is None:
+        settings = _get_settings()
+        _session_manager = SessionManager(settings.session)
+        _mcp_client = MCPClient(settings)
+        _llm_client = create_llm_client(settings.llm)
+        _agent_core = AgentOrchestrator(
+            settings=settings,
+            session_manager=_session_manager,
+            mcp_client=_mcp_client,
+            llm_client=_llm_client,
+            skills_config_path="config/skills.yaml",
+        )
+        logger.info("AgentOrchestrator initialized")
+    return _agent_core
+
+
+def _get_deduplicator() -> "EventDeduplicator":
+    """延迟初始化去重器"""
+    global _deduplicator
+    if _deduplicator is None:
+        settings = _get_settings()
+        _deduplicator = EventDeduplicator(
+            settings.webhook.dedup.ttl_seconds,
+            settings.webhook.dedup.max_size,
+        )
+    return _deduplicator
+# endregion
+# ============================================
 
 
 # region 辅助类与函数
@@ -78,10 +117,7 @@ class EventDeduplicator:
         return False
 
 
-deduplicator = EventDeduplicator(
-    settings.webhook.dedup.ttl_seconds,
-    settings.webhook.dedup.max_size,
-)
+# 去重器已改为延迟初始化，见 _get_deduplicator()
 
 
 def _decrypt_event(encrypt_text: str, encrypt_key: str) -> dict[str, Any]:
@@ -148,6 +184,7 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge", "")}
 
+    settings = _get_settings()
     if payload.get("encrypt"):
         if not settings.feishu.encrypt_key:
             raise HTTPException(status_code=400, detail="encrypt_key is required")
@@ -167,6 +204,7 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
 
     message_id = message.get("message_id") or message.get("messageId")
     dedup_key = message_id or event_id
+    deduplicator = _get_deduplicator()
     if dedup_key and settings.webhook.dedup.enabled and deduplicator.is_duplicate(dedup_key):
         return {"status": "duplicate"}
 
@@ -211,6 +249,8 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
     if not chat_id:
         return
 
+    settings = _get_settings()
+    agent_core = _get_agent_core()
     try:
         reply = await agent_core.handle_message(user_id, text, chat_id=chat_id, chat_type=chat_type)
         if chat_id.startswith("test-"):

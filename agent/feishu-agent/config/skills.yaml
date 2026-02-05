@@ -82,3 +82,25 @@ chain:
 skills_market:
   enabled: true
   local_dir: src/skills_market
+
+table_aliases:
+  诉讼案件: ["案件", "诉讼", "案子"]
+  合同管理: ["合同", "协议"]
+  客户信息: ["客户", "委托人"]
+
+table_recognition:
+  confidence_threshold: 0.65
+  auto_confirm_threshold: 0.85
+  max_candidates: 3
+  templates:
+    single_candidate: |
+      我找到可能的表：**{table_name}**
+      是否就是它？回复「是」继续，或告诉我正确的表名。
+    multi_candidate: |
+      我找到几个可能的表：
+      {candidate_list}
+      请回复表名确认，或输入其他表名。
+    no_match: |
+      我不太确定您要查的是哪个表。
+      当前可用的表有：{all_tables}
+      请告诉我具体表名。
