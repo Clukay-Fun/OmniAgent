@@ -1,43 +1,228 @@
 # MCP Feishu Server
 
-飞书 MCP 工具层，封装多维表格与文档检索能力，供多个 Agent 复用。
+飞书 MCP 工具层服务，负责封装多维表格与文档检索能力，为上层 Agent 提供统一的 MCP 工具接口。
 
-## 功能
-- 飞书 Tenant Token 自动获取与刷新
-- MCP 工具：
-  - `feishu.v1.bitable.search`
-  - `feishu.v1.bitable.record.get`
-  - `feishu.v1.doc.search`
+---
 
-## 快速开始
+## 📋 功能概览
 
-1) 安装依赖
+- ✅ 飞书 Tenant Token 自动获取与刷新
+- ✅ 多维表格检索（关键词、精确匹配、日期范围、人员字段）
+- ✅ 多维表格单条记录获取
+- ✅ 多维表格记录创建、更新、删除
+- ✅ 飞书文档搜索
+- ✅ MCP 工具注册与统一调用入口
+
+---
+
+## 🏗️ 架构图
+
+```mermaid
+flowchart LR
+    Agent[Feishu Agent] --> MCP[MCP Feishu Server]
+    MCP --> Router[Tool Router]
+    Router --> Bitable[bitable 工具]
+    Router --> Doc[doc 工具]
+    MCP --> FeishuAPI[Feishu OpenAPI]
+    Bitable --> FeishuAPI
+    Doc --> FeishuAPI
+```
+
+## 📊 数据流图
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant M as MCP Server
+    participant T as Tool
+    participant F as Feishu OpenAPI
+
+    A->>M: POST /mcp/tools/{tool_name}
+    M->>T: 参数校验/映射
+    T->>F: 调用飞书 API
+    F-->>T: 返回数据
+    T-->>M: 标准化结果
+    M-->>A: MCP 响应
+```
+
+---
+
+## 🚀 快速开始
+
+### 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2) 准备配置
+### 2. 准备配置
 
 ```bash
 cp config.yaml.example config.yaml
 cp .env.example .env
 ```
 
-3) 启动服务
+### 3. 配置环境变量
 
-```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8081
+```env
+# 飞书应用凭证
+FEISHU_DATA_APP_ID=cli_xxx
+FEISHU_DATA_APP_SECRET=xxx
+
+# 多维表格配置
+BITABLE_DOMAIN=xxx           # 企业域名，如 xxx.feishu.cn 中的 xxx
+BITABLE_APP_TOKEN=xxx        # 表格 App Token
+BITABLE_TABLE_ID=xxx         # 默认表格 ID
+BITABLE_VIEW_ID=             # 视图 ID（可选，建议留空）
 ```
 
-## 接口
+### 4. 启动服务
 
-- `GET /health` 健康检查
-- `GET /mcp/tools` 工具列表
-- `POST /mcp/tools/{tool_name}` 工具调用
+```bash
+# 生产模式
+python run_server.py
 
-## 配置
+# 开发模式（热重载）
+python run_dev.py
+```
 
-配置文件：`config.yaml`
-- 支持环境变量覆盖
-- 多维表格字段映射见 `bitable.field_mapping`
+---
+
+## 🔧 MCP 工具列表
+
+| 工具名 | 功能 | 状态 |
+|--------|------|------|
+| `feishu.v1.bitable.list_tables` | 列出多维表格表列表 | ✅ |
+| `feishu.v1.bitable.search` | 通用搜索（keyword/date） | ✅ |
+| `feishu.v1.bitable.search_exact` | 精确字段匹配 | ✅ |
+| `feishu.v1.bitable.search_keyword` | 关键词搜索 | ✅ |
+| `feishu.v1.bitable.search_person` | 人员字段搜索（open_id） | ✅ |
+| `feishu.v1.bitable.search_date_range` | 日期范围搜索 | ✅ |
+| `feishu.v1.bitable.record.get` | 获取单条记录 | ✅ |
+| `feishu.v1.bitable.record.create` | 创建新记录 | ✅ |
+| `feishu.v1.bitable.record.update` | 更新已有记录 | ✅ |
+| `feishu.v1.bitable.record.delete` | 删除记录 | ✅ |
+| `feishu.v1.doc.search` | 文档搜索 | ✅ |
+
+---
+
+## 📡 API 接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/mcp/tools` | GET | 列出所有工具 |
+| `/mcp/tools/{tool_name}` | POST | 调用指定工具 |
+| `/bitable/fields` | GET | 查看表格字段（调试用）|
+
+### 示例请求
+
+```bash
+# 健康检查
+curl http://localhost:8081/health
+
+# 工具列表
+curl http://localhost:8081/mcp/tools
+
+# 表格字段
+curl http://localhost:8081/bitable/fields
+
+# 关键词搜索
+curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_keyword \
+  -H "Content-Type: application/json" \
+  -d '{"params": {"keyword": "张三"}}'
+
+# 人员字段搜索
+curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_person \
+  -H "Content-Type: application/json" \
+  -d '{"params": {"field": "主办律师", "open_id": "ou_xxx"}}'
+```
+
+---
+
+## 📁 核心模块
+
+### 入口与路由
+
+- **`src/main.py`** - FastAPI 入口，注册 `/health` 与 MCP 工具路由
+- **`src/server/http.py`** - MCP 工具列表与执行入口
+
+### 工具实现
+
+- **`src/tools/bitable.py`**
+  - `BitableListTablesTool` - 表格列表
+  - `BitableSearchTool` - 通用搜索
+  - `BitableSearchExactTool` - 精确匹配
+  - `BitableSearchKeywordTool` - 关键词搜索
+  - `BitableSearchPersonTool` - 人员字段搜索
+  - `BitableSearchDateRangeTool` - 日期范围搜索
+  - `BitableRecordGetTool` - 单条记录读取
+  - `BitableRecordCreateTool` - 创建新记录
+  - `BitableRecordUpdateTool` - 更新记录
+  - `BitableRecordDeleteTool` - 删除记录
+
+- **`src/tools/doc.py`** - 飞书文档搜索
+
+### 服务与配置
+
+- **`src/config.py`** - 环境变量与配置加载
+- **`config.yaml`** - 多维表格字段映射、搜索范围、超时等
+
+---
+
+## ⚙️ 配置文件说明
+
+### config.yaml
+
+```yaml
+bitable:
+  # 企业飞书域名
+  domain: ${BITABLE_DOMAIN}
+  
+  # 默认表格配置
+  default_app_token: ${BITABLE_APP_TOKEN}
+  default_table_id: ${BITABLE_TABLE_ID}
+  default_view_id: ${BITABLE_VIEW_ID:-}
+  
+  # 字段映射
+  field_mapping:
+    case_number: "案号"
+    client: "委托人及联系方式"
+    lawyer: "主办律师"
+    hearing_date: "开庭日"
+    # ...
+
+  # 搜索配置
+  search:
+    searchable_fields:
+      - "案号"
+      - "委托人及联系方式"
+      - "主办律师"
+    max_records: 100
+    default_limit: 20
+
+tools:
+  enabled:
+    - "feishu.v1.bitable.list_tables"
+    - "feishu.v1.bitable.search"
+    - "feishu.v1.bitable.search_keyword"
+    - "feishu.v1.bitable.search_person"
+    # ...
+```
+
+---
+
+## 🐛 常见问题
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| 403 Forbidden | 应用权限不足 | 配置 `bitable:app` 权限 |
+| WrongViewId | View ID 无效 | 清空 `BITABLE_VIEW_ID` |
+| InvalidFilter | 人员字段不支持文本搜索 | 使用 `search_person` 工具 |
+| FieldNameNotFound | 字段名不存在 | 检查 `field_mapping` |
+
+---
+
+## 📄 License
+
+MIT License
