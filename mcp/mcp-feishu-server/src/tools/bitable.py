@@ -700,6 +700,91 @@ class BitableSearchKeywordTool(BaseTool):
 
 
 @ToolRegistry.register
+class BitableSearchPersonTool(BaseTool):
+    """人员字段搜索工具
+    
+    功能:
+        - 根据用户 open_id 筛选人员字段
+        - 支持主办律师、协办律师等人员类型字段
+    """
+
+    name = "feishu.v1.bitable.search_person"
+    description = "Search bitable records by person field using open_id."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "app_token": {"type": "string", "description": "Bitable app_token"},
+            "table_id": {"type": "string", "description": "数据表 table_id"},
+            "view_id": {"type": "string", "description": "视图 view_id"},
+            "field": {"type": "string", "description": "人员字段名（如：主办律师）"},
+            "open_id": {"type": "string", "description": "用户 open_id"},
+            "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
+        },
+        "required": ["field", "open_id"],
+    }
+
+    async def run(self, params: dict[str, Any]) -> dict[str, Any]:
+        settings = self.context.settings
+        app_token = params.get("app_token") or settings.bitable.default_app_token
+        table_id = params.get("table_id") or settings.bitable.default_table_id
+        view_id = params.get("view_id") or settings.bitable.default_view_id
+        field = params.get("field")
+        open_id = params.get("open_id")
+
+        if not app_token or not table_id or not field or not open_id:
+            return {"records": [], "total": 0}
+
+        field_info = await _fetch_fields_info(self, app_token, table_id)
+        field_names = set(field_info.keys())
+        normalized_lookup = {
+            _normalize_field_name(name): name for name in field_names
+        }
+        resolved_field = normalized_lookup.get(_normalize_field_name(field))
+        if not resolved_field and field in field_names:
+            resolved_field = field
+        if not resolved_field:
+            raise ValueError(f"Field not found: {field}")
+
+        # 验证字段类型是否为人员字段 (type 11)
+        field_type = field_info.get(resolved_field)
+        if field_type != 11:
+            raise ValueError(f"Field '{field}' is not a person field (type={field_type})")
+
+        limit = int(params.get("limit") or 100)
+        limit = min(limit, settings.bitable.search.max_records)
+
+        return_fields = _resolve_return_fields(
+            field_names,
+            normalized_lookup,
+            settings,
+            extra_fields=[resolved_field],
+        )
+
+        # 人员字段筛选条件：使用 contains 操作符和 open_id
+        payload: dict[str, Any] = {
+            "page_size": limit,
+            "filter": {
+                "conjunction": "and",
+                "conditions": [
+                    {
+                        "field_name": resolved_field, 
+                        "operator": "contains", 
+                        "value": [open_id]
+                    },
+                ],
+            },
+        }
+        if view_id:
+            payload["view_id"] = view_id
+        if return_fields:
+            payload["field_names"] = return_fields
+
+        result = await _search_records(self, app_token, table_id, view_id, payload)
+        result["schema"] = _build_schema(field_info) if field_info else []
+        return result
+
+
+@ToolRegistry.register
 class BitableSearchDateRangeTool(BaseTool):
     """日期范围搜索工具"""
 

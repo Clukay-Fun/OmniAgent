@@ -100,11 +100,17 @@ doc:
 tools:
   # 启用的工具列表
   enabled:
-    - "feishu.v1.bitable.search"
-    - "feishu.v1.bitable.record.get"
-    - "feishu.v1.bitable.record.create"    # 新增
-    - "feishu.v1.bitable.record.update"    # 新增
-    - "feishu.v1.doc.search"
+    - "feishu.v1.bitable.list_tables"     # 列出表格
+    - "feishu.v1.bitable.search"          # 关键词搜索
+    - "feishu.v1.bitable.search_exact"    # 精确匹配
+    - "feishu.v1.bitable.search_keyword"  # 关键词搜索
+    - "feishu.v1.bitable.search_person"   # 人员字段搜索
+    - "feishu.v1.bitable.search_date_range"  # 日期范围搜索
+    - "feishu.v1.bitable.record.get"      # 获取记录
+    - "feishu.v1.bitable.record.create"   # 创建记录
+    - "feishu.v1.bitable.record.update"   # 更新记录
+    - "feishu.v1.bitable.record.delete"   # 删除记录
+    - "feishu.v1.doc.search"              # 文档搜索
     # Phase 2
     # - "feishu.v1.file.upload"
     # - "feishu.v1.file.download"

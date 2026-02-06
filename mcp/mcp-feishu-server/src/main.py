@@ -21,6 +21,12 @@ from src.utils.logger import setup_logging
 load_dotenv()
 settings = get_settings()
 setup_logging(settings.logging)
+print(f"=== MCP Server Config ===")
+print(f"App ID: {settings.feishu.app_id}")
+print(f"Bitable App Token: {settings.bitable.default_app_token}")
+print(f"Bitable Table ID: {settings.bitable.default_table_id}")
+print(f"Bitable View ID: {settings.bitable.default_view_id}")
+print(f"=========================")
 # endregion
 
 # region FastAPI 应用

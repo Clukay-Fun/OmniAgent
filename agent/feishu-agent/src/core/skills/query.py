@@ -327,15 +327,20 @@ class QuerySkill(BaseSkill):
         }
 
     def _match_alias(self, query: str) -> str | None:
+        logger.info(f"Matching alias for query: '{query}', alias_lookup: {self._alias_lookup}")
         query_lower = query.lower()
         matched = []
         for alias, table in self._alias_lookup.items():
             if alias in query or alias.lower() in query_lower:
                 matched.append((len(alias), table))
+                logger.info(f"Matched alias: '{alias}' -> '{table}'")
         if not matched:
+            logger.warning("No alias matched")
             return None
         matched.sort(reverse=True)
-        return matched[0][1]
+        result = matched[0][1]
+        logger.info(f"Selected table: '{result}'")
+        return result
 
     def _match_table_name(self, query: str, table_names: list[str]) -> str | None:
         matched = [name for name in table_names if name and name in query]
@@ -393,16 +398,30 @@ class QuerySkill(BaseSkill):
         if table_id:
             params["table_id"] = table_id
 
-        # 检查是否为"我的案件"查询
+        # 优先级1: 检查是否为"我的案件"查询
         user_profile = extra.get("user_profile")
-        if user_profile and ("我的" in query or "自己的" in query):
-            if user_profile.is_bound and user_profile.lawyer_name:
-                # 使用精确匹配查询主办律师
-                params.update({
-                    "field": "主办律师",
-                    "value": user_profile.lawyer_name,
-                })
-                return "feishu.v1.bitable.search_exact", params
+        if user_profile and user_profile.open_id and ("我的" in query or "自己的" in query):
+            # 使用人员字段搜索工具，通过 open_id 精确匹配主办律师
+            logger.info(f"Query 'my cases' for user: {user_profile.name} (open_id: {user_profile.open_id})")
+            params.update({
+                "field": "主办律师",
+                "open_id": user_profile.open_id,
+            })
+            return "feishu.v1.bitable.search_person", params
+
+        # 优先级2: 检查是否指定了律师（例如："查询张三的案件"、"律师李四的案件"）
+        # 注意：由于只有姓名，无法获取 open_id，使用关键词搜索
+        import re
+        lawyer_pattern = re.compile(r"(?:查询|律师)?([^的\s]+)(?:的案件|案件)")
+        match = lawyer_pattern.search(query)
+        if match:
+            lawyer_name = match.group(1).strip()
+            # 排除一些常见的非律师关键词
+            if lawyer_name not in ["所有", "全部", "今天", "明天", "本周", "本月", "我", "自己"]:
+                # 使用关键词搜索
+                logger.info(f"Query cases for lawyer: {lawyer_name}")
+                params["keyword"] = lawyer_name
+                return "feishu.v1.bitable.search_keyword", params
 
         date_from = extra.get("date_from")
         date_to = extra.get("date_to")

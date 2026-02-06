@@ -332,59 +332,21 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
     user_manager = _get_user_manager()
     
     try:
-        # 获取或创建用户档案
-        logger.info("Getting user profile...")
+        # 静默获取用户信息（仅用于"我的案件"识别）
         open_id = sender_id.get("open_id")
         user_profile = None
-        if open_id and settings.user.identity.auto_match:
+        if open_id:
             try:
                 user_profile = await user_manager.get_or_create_profile(
                     open_id=open_id,
                     chat_id=chat_id,
-                    auto_match=True,
+                    auto_match=False,  # 不自动匹配，只获取姓名
                 )
-                logger.info(
-                    f"User profile loaded: open_id={open_id}, "
-                    f"name={user_profile.name}, is_bound={user_profile.is_bound}"
-                )
+                logger.info(f"User identified: {user_profile.name}")
             except Exception as e:
-                logger.error(f"Failed to load user profile: {e}", exc_info=True)
+                logger.warning(f"Failed to get user profile: {e}")
         
-        # 检查是否为绑定命令
-        if user_profile and not user_profile.is_bound and text.startswith("绑定"):
-            logger.info("Processing bind command...")
-            # 提取律师姓名
-            lawyer_name = text.replace("绑定", "").strip()
-            if lawyer_name:
-                success, msg = await user_manager.bind_lawyer_name(open_id, lawyer_name)
-                await send_message(settings, chat_id, "text", {"text": msg}, reply_message_id=message_id)
-                return
-            else:
-                await send_message(
-                    settings,
-                    chat_id,
-                    "text",
-                    {"text": "请提供律师姓名，例如：绑定 张三"},
-                    reply_message_id=message_id,
-                )
-                return
-        
-        # 发送"正在思考"状态提示
-        logger.info("Sending status message...")
-        from src.utils.feishu_api import send_status_message, update_message
-        
-        status_message_id = ""
-        try:
-            status_message_id = await send_status_message(
-                settings=settings,
-                receive_id=chat_id,
-                status_text="💭 正在思考...",
-                reply_message_id=message_id,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send status message: {e}")
-        
-        # 处理正常消息
+        # 处理消息
         reply = await agent_core.handle_message(
             user_id,
             text,
@@ -393,22 +355,11 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
             user_profile=user_profile,  # 传递用户档案
         )
         
-        # 如果用户未绑定且配置要求提示，添加绑定提示
-        if (
-            user_profile
-            and not user_profile.is_bound
-            and settings.user.identity.prompt_bind_on_fail
-        ):
-            bind_hint = (
-                "\n\n💡 提示：您尚未绑定律师身份。"
-                "如需查看'我的案件'，请回复：绑定 您的姓名"
-            )
-            if reply.get("type") == "text":
-                reply["text"] = reply.get("text", "") + bind_hint
-        
         if chat_id.startswith("test-"):
             logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
             return
+        
+        # 发送回复消息
         if reply.get("type") == "card":
             msg_type = "interactive"
             content = reply.get("card") or {}
@@ -416,20 +367,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
             msg_type = "text"
             content = {"text": reply.get("text") or ""}
         
-        # 如果有状态消息，更新它；否则发送新消息
-        if status_message_id:
-            try:
-                await update_message(
-                    settings=settings,
-                    message_id=status_message_id,
-                    msg_type=msg_type,
-                    content=content,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to update message, sending new: {e}")
-                await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
-        else:
-            await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
+        await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
     
     except Exception as exc:
         logger.error("Error processing message: %s", exc, exc_info=True)
