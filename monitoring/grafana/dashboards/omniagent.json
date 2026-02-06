@@ -1,0 +1,80 @@
+{
+  "uid": "omniagent-overview",
+  "title": "OmniAgent Overview",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Requests (rate)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(feishu_agent_requests_total[5m])) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active Sessions",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "feishu_agent_active_sessions",
+          "legendFormat": "active"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Skill Executions (rate)",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(feishu_agent_skill_executions_total[5m])) by (skill_name, status)",
+          "legendFormat": "{{skill_name}} {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Skill Duration P95",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(feishu_agent_skill_execution_duration_seconds_bucket[5m])) by (le, skill_name))",
+          "legendFormat": "{{skill_name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Call Duration P95",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(feishu_agent_llm_call_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "{{operation}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "MCP Tool Calls (rate)",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(feishu_agent_mcp_tool_calls_total[5m])) by (tool_name, status)",
+          "legendFormat": "{{tool_name}} {{status}}"
+        }
+      ]
+    }
+  ]
+}

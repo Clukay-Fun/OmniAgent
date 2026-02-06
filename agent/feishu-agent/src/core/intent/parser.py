@@ -1,0 +1,524 @@
+"""
+描述: 意图解析器
+主要功能:
+    - 基于规则的意图识别
+    - LLM 兜底识别
+    - 输出 Top-3 匹配技能及置信度
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from src.core.intent.rules import match_date_query
+
+logger = logging.getLogger(__name__)
+
+
+# 统一的技能名映射表（与 router.py 保持一致）
+_SKILL_NAME_MAP: dict[str, str] = {
+    # 小写别名 -> 标准名
+    "query": "QuerySkill",
+    "create": "CreateSkill",
+    "summary": "SummarySkill",
+    "reminder": "ReminderSkill",
+    "chitchat": "ChitchatSkill",
+    # 标准名 -> 标准名
+    "QuerySkill": "QuerySkill",
+    "CreateSkill": "CreateSkill",
+    "SummarySkill": "SummarySkill",
+    "ReminderSkill": "ReminderSkill",
+    "ChitchatSkill": "ChitchatSkill",
+}
+
+
+# region 数据结构
+@dataclass
+class SkillMatch:
+    """
+    单个技能匹配结果
+
+    属性:
+        name: 技能名称
+        score: 匹配分数
+        reason: 匹配理由
+    """
+
+    name: str
+    score: float
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "score": round(self.score, 2),
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class IntentResult:
+    """
+    意图识别结果（固定 JSON 格式）
+
+    属性:
+        skills: 匹配的技能列表
+        is_chain: 是否为链式调用
+        requires_llm_confirm: 是否需要 LLM 确认
+        method: 识别方法 (rule / llm / fallback)
+    """
+
+    skills: list[SkillMatch] = field(default_factory=list)
+    is_chain: bool = False
+    requires_llm_confirm: bool = False
+    method: str = "rule"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skills": [s.to_dict() for s in self.skills],
+            "is_chain": self.is_chain,
+            "requires_llm_confirm": self.requires_llm_confirm,
+            "method": self.method,
+        }
+
+    @property
+    def top_skills(self) -> list[SkillMatch]:
+        return self.skills
+
+    def top_skill(self) -> SkillMatch | None:
+        return self.skills[0] if self.skills else None
+
+
+# endregion
+
+
+# region IntentParser 核心类
+class IntentParser:
+    """
+    意图解析器：规则优先 + LLM 兜底
+
+    功能:
+        - 优先使用关键词规则匹配
+        - 规则匹配置信度低时调用 LLM
+        - 支持 v1/v2 两种配置结构
+    """
+
+    def __init__(
+        self,
+        skills_config: dict[str, Any],
+        llm_client: Any = None,
+    ) -> None:
+        """
+        初始化意图解析器
+
+        参数:
+            skills_config: 技能配置字典
+            llm_client: LLM 客户端实例 (可选)
+        """
+        self._config = skills_config or {}
+        self._llm = llm_client
+
+        self._routing = self._config.get("routing", {})
+        intent_cfg = self._config.get("intent", {})
+        thresholds = intent_cfg.get("thresholds", {})
+
+        self._direct_threshold = float(
+            thresholds.get("direct_execute", self._routing.get("rule_threshold", 0.7))
+        )
+        self._llm_confirm_threshold = float(
+            thresholds.get("llm_confirm", self._routing.get("llm_confirm_threshold", 0.4))
+        )
+        self._fallback_skill = self._routing.get("fallback_skill", "chitchat")
+
+        self._skills = self._normalize_skills_config(self._config)
+        self._chains = self._config.get("chains", {})
+        self._llm_timeout = float(intent_cfg.get("llm_timeout", 10))
+
+    async def parse(self, query: str, llm_context: dict[str, str] | None = None) -> IntentResult:
+        """
+        解析用户输入，返回意图识别结果
+
+        参数:
+            query: 用户输入文本
+            llm_context: LLM 上下文信息 (可选)
+
+        返回:
+            意图识别结果
+        """
+
+        is_chain = self._detect_chain(query)
+        date_score = match_date_query(query)
+        if date_score >= 0.9:
+            match = SkillMatch(
+                name=self._get_skill_name("query"),
+                score=date_score,
+                reason="日期查询规则命中",
+            )
+            logger.info(
+                "Intent parsed by date rule",
+                extra={
+                    "query": query,
+                    "top_skill": match.name,
+                    "score": date_score,
+                    "method": "rule",
+                },
+            )
+            return IntentResult(
+                skills=[match],
+                is_chain=is_chain,
+                requires_llm_confirm=False,
+                method="rule",
+            )
+
+        rule_matches = self._rule_match(query)
+        top_score = rule_matches[0].score if rule_matches else 0.0
+
+        requires_llm_confirm = (
+            self._llm is not None
+            and top_score >= self._llm_confirm_threshold
+            and top_score < self._direct_threshold
+        )
+
+        if top_score >= self._direct_threshold:
+            logger.info(
+                "Intent parsed by rule",
+                extra={
+                    "query": query,
+                    "top_skill": rule_matches[0].name if rule_matches else "",
+                    "score": top_score,
+                    "method": "rule",
+                },
+            )
+            return IntentResult(
+                skills=rule_matches[:3],
+                is_chain=is_chain,
+                requires_llm_confirm=False,
+                method="rule",
+            )
+
+        if top_score >= self._llm_confirm_threshold:
+            if self._llm:
+                try:
+                    llm_result = await self._llm_classify(query, rule_matches[:3], llm_context)
+                    if llm_result:
+                        llm_result.method = "llm"
+                        llm_result.is_chain = llm_result.is_chain or is_chain
+                        llm_result.requires_llm_confirm = True
+                        return llm_result
+                except Exception as e:
+                    logger.warning(f"LLM classification failed: {e}, falling back to rule")
+
+            return IntentResult(
+                skills=rule_matches[:3],
+                is_chain=is_chain,
+                requires_llm_confirm=self._llm is not None,
+                method="rule",
+            )
+
+        if self._llm:
+            try:
+                llm_result = await self._llm_classify(query, None, llm_context)
+                if llm_result:
+                    llm_result.method = "llm"
+                    return llm_result
+            except Exception as e:
+                logger.warning(f"LLM classification failed: {e}")
+
+        fallback_match = SkillMatch(
+            name=self._get_skill_name(self._fallback_skill),
+            score=0.0,
+            reason="无法识别意图，使用兜底技能",
+        )
+        return IntentResult(
+            skills=[fallback_match],
+            is_chain=False,
+            requires_llm_confirm=False,
+            method="fallback",
+        )
+
+    def _normalize_skills_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """标准化技能配置格式 (v1/v2 兼容)"""
+        if "skills" in config:
+            return config.get("skills", {})
+
+        skills: dict[str, Any] = {}
+        for key in ("query", "create", "summary", "reminder", "chitchat"):
+            cfg = config.get(key)
+            if not isinstance(cfg, dict):
+                continue
+            if cfg.get("enabled") is False:
+                continue
+            merged = dict(cfg)
+            merged.setdefault("name", _SKILL_NAME_MAP.get(key, key))
+            if key == "chitchat" and "keywords" not in merged:
+                merged["keywords"] = merged.get("whitelist", [])
+            skills[key] = merged
+        return skills
+
+    def _rule_match(self, query: str) -> list[SkillMatch]:
+        """
+        基于规则匹配技能
+
+        参数:
+            query: 用户输入
+
+        返回:
+            匹配的技能列表（按分数降序）
+        """
+        matches: list[SkillMatch] = []
+        query_lower = query.lower()
+
+        for skill_key, skill_cfg in self._skills.items():
+            keywords = skill_cfg.get("keywords", [])
+            time_keywords = skill_cfg.get("time_keywords", [])
+            weights = skill_cfg.get("weights", {})
+            skill_name = skill_cfg.get("name", skill_key)
+
+            if not keywords:
+                continue
+
+            hit_count = 0
+            hit_keywords: list[str] = []
+            total_weight = 0.0
+
+            for kw in keywords:
+                weight = weights.get(kw, 1.0)
+                if kw in query or kw.lower() in query_lower:
+                    hit_count += 1
+                    hit_keywords.append(kw)
+                    total_weight += weight
+
+            time_hits = [kw for kw in time_keywords if kw in query or kw.lower() in query_lower]
+            if hit_count == 0:
+                continue
+
+            # 新评分算法：
+            # - 基础分：命中任意关键词给 0.6 分
+            # - 命中越多越好：每多命中一个加 0.1，上限 0.3
+            # - 时间关键词加成：0.1
+            base_score = 0.6
+            hit_bonus = min((hit_count - 1) * 0.1, 0.3)
+            time_bonus = 0.1 if time_hits else 0.0
+            score = min(base_score + hit_bonus + time_bonus, 1.0)
+            
+            # 特定技能加成（动作词优先于名词）
+            if skill_key == "reminder" and "提醒" in query:
+                score = min(score + 0.15, 1.0)
+            if skill_key == "create" and any(kw in query for kw in ["新增", "新建", "创建", "添加", "录入"]):
+                score = min(score + 0.2, 1.0)  # create 动作词优先级更高
+
+            reason = f"命中关键词: {', '.join(hit_keywords[:3])}"
+            if len(hit_keywords) > 3:
+                reason += f" 等{len(hit_keywords)}个"
+            if time_hits:
+                reason += f"，时间: {', '.join(time_hits[:2])}"
+
+            matches.append(SkillMatch(name=skill_name, score=score, reason=reason))
+            logger.info(f"Skill check: {skill_key} -> score={score}, hits={hit_count}, boost={time_bonus}, reason={reason}")
+
+        matches.sort(key=lambda x: x.score, reverse=True)
+        return matches
+
+    def _detect_chain(self, query: str) -> bool:
+        """检测是否触发链式执行"""
+        chain_cfg = self._config.get("chain", {})
+        triggers = chain_cfg.get("triggers", [])
+        for trigger in triggers:
+            pattern = trigger.get("pattern")
+            if pattern and re.search(pattern, query):
+                return True
+
+        for chain_key, chain_cfg in self._chains.items():
+            trigger_keywords = chain_cfg.get("trigger_keywords", [])
+            for trigger in trigger_keywords:
+                if trigger in query:
+                    return True
+        return False
+
+    def _get_skill_name(self, skill_key: str) -> str:
+        """获取技能标准名称"""
+        if skill_key in self._skills:
+            skill_cfg = self._skills.get(skill_key, {})
+            return skill_cfg.get("name", skill_key)
+        return _SKILL_NAME_MAP.get(skill_key, skill_key)
+
+    async def _llm_classify(
+        self,
+        query: str,
+        hints: list[SkillMatch] | None = None,
+        llm_context: dict[str, str] | None = None,
+    ) -> IntentResult | None:
+        """
+        使用 LLM 进行意图分类
+
+        参数:
+            query: 用户输入
+            hints: 规则匹配的参考结果
+            llm_context: 上下文信息
+
+        返回:
+            LLM 分类结果
+        """
+        if not self._llm:
+            return None
+
+        skill_list = "\n".join(
+            f"- {cfg.get('name', key)}: {cfg.get('description', '')}"
+            for key, cfg in self._skills.items()
+        )
+
+        hint_text = ""
+        if hints:
+            hint_text = "\n规则初步匹配结果（仅供参考）：\n" + "\n".join(
+                f"- {h.name}: {h.score:.2f} ({h.reason})" for h in hints
+            )
+
+        prompt = f"""你是一个意图分类器。根据用户输入，判断最匹配的技能。
+
+可用技能：
+{skill_list}
+
+用户输入：{query}
+{hint_text}
+
+请返回 JSON（不要输出其他内容）：
+{{
+  \"skills\": [
+    {{\"name\": \"技能名\", \"score\": 0.0-1.0, \"reason\": \"简短理由\"}}
+  ],
+  \"is_chain\": false
+}}
+
+注意：
+1. skills 数组最多包含 3 个最匹配的技能，按置信度降序排列
+2. score 表示匹配置信度（0.0-1.0）
+3. reason 用简短中文说明判断依据
+4. is_chain 表示是否需要链式执行多个技能"""
+
+        system_prompt = self._build_llm_system_prompt(llm_context)
+
+        try:
+            response = await self._llm.chat_json(
+                prompt,
+                system=system_prompt,
+                timeout=self._llm_timeout,
+            )
+            if not response:
+                return None
+
+            skills_data = response.get("skills", [])
+            skills: list[SkillMatch] = []
+            for s in skills_data[:3]:
+                skills.append(
+                    SkillMatch(
+                        name=s.get("name", ""),
+                        score=float(s.get("score", 0.0)),
+                        reason=s.get("reason", ""),
+                    )
+                )
+
+            return IntentResult(
+                skills=skills,
+                is_chain=response.get("is_chain", False),
+                method="llm",
+            )
+        except Exception as e:
+            logger.error(f"LLM classify error: {e}")
+            return None
+
+    def _build_llm_system_prompt(self, llm_context: dict[str, str] | None) -> str:
+        """构建 LLM 系统提示词，注入 Soul 和 Memory"""
+        base_prompt = "你是一个意图分类器。"
+        if not llm_context:
+            return base_prompt
+
+        parts = []
+        soul_prompt = llm_context.get("soul_prompt", "").strip()
+        if soul_prompt:
+            parts.append(soul_prompt)
+
+        memory_parts = []
+        user_memory = llm_context.get("user_memory", "").strip()
+        shared_memory = llm_context.get("shared_memory", "").strip()
+        recent_logs = llm_context.get("recent_logs", "").strip()
+        if user_memory:
+            memory_parts.append(f"用户记忆：\n{user_memory}")
+        if shared_memory:
+            memory_parts.append(f"团队共享记忆：\n{shared_memory}")
+        if recent_logs:
+            memory_parts.append(f"最近日志：\n{recent_logs}")
+        if memory_parts:
+            parts.append("参考记忆：\n" + "\n\n".join(memory_parts))
+
+        parts.append(base_prompt)
+        return "\n\n".join(parts)
+
+
+# endregion
+
+
+# region 配置加载辅助
+def load_skills_config(config_path: str = "config/skills.yaml") -> dict[str, Any]:
+    """
+    加载技能配置文件
+
+    参数:
+        config_path: 配置文件路径
+    返回:
+        配置字典
+    """
+    import yaml
+    from pathlib import Path
+
+    path = Path(config_path)
+    if not path.exists():
+        logger.warning(f"Skills config not found: {config_path}, using defaults")
+        return _default_skills_config()
+
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _default_skills_config() -> dict[str, Any]:
+    """生成默认配置"""
+    return {
+        "intent": {
+            "thresholds": {
+                "direct_execute": 0.7,
+                "llm_confirm": 0.4,
+            },
+            "llm_timeout": 10,
+        },
+        "query": {
+            "keywords": ["查", "找", "搜索", "案件", "案子", "开庭"],
+            "time_keywords": ["今天", "明天", "后天", "本周", "下周"],
+        },
+        "summary": {
+            "keywords": ["总结", "汇总", "概括", "整理"],
+            "default_fields": ["案号", "案由", "当事人", "开庭日", "主办律师"],
+        },
+        "reminder": {
+            "keywords": ["提醒", "记得", "别忘了"],
+            "default_time": "18:00",
+        },
+        "chitchat": {
+            "whitelist": ["你好", "早上好", "下午好", "谢谢", "帮助", "你能做什么"],
+            "sensitive_reject": ["能赢吗", "判多久", "法律建议"],
+        },
+        "create": {
+            "keywords": ["新增", "新建", "创建", "添加", "录入", "登记"],
+        },
+        "chain": {
+            "triggers": [
+                {"pattern": r"(查|找).*(总结|汇总)", "skills": ["QuerySkill", "SummarySkill"]},
+                {"pattern": r"(总结|汇总).*(今天|明天|案)", "skills": ["QuerySkill", "SummarySkill"]},
+            ],
+            "max_hops": 2,
+        },
+    }
+
+
+# endregion

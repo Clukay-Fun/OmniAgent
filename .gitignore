@@ -42,3 +42,9 @@ debug_*.py
 *.local
 uploads/
 temp/
+
+# Workspace (local runtime)
+agent/workspace/
+
+docs/
+scripts/

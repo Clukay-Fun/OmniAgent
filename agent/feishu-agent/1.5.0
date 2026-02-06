@@ -1,0 +1,21 @@
+Collecting lark-oapi
+  Downloading lark_oapi-1.5.3-py3-none-any.whl.metadata (3.7 kB)
+Requirement already satisfied: requests in e:\.program\omniagent\.venv\lib\site-packages (from lark-oapi) (2.32.5)
+Collecting requests-toolbelt (from lark-oapi)
+  Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl.metadata (14 kB)
+Requirement already satisfied: pycryptodome in e:\.program\omniagent\.venv\lib\site-packages (from lark-oapi) (3.23.0)
+Requirement already satisfied: websockets in e:\.program\omniagent\.venv\lib\site-packages (from lark-oapi) (16.0)
+Requirement already satisfied: httpx in e:\.program\omniagent\.venv\lib\site-packages (from lark-oapi) (0.28.1)
+Requirement already satisfied: anyio in e:\.program\omniagent\.venv\lib\site-packages (from httpx->lark-oapi) (4.12.1)
+Requirement already satisfied: certifi in e:\.program\omniagent\.venv\lib\site-packages (from httpx->lark-oapi) (2026.1.4)
+Requirement already satisfied: httpcore==1.* in e:\.program\omniagent\.venv\lib\site-packages (from httpx->lark-oapi) (1.0.9)
+Requirement already satisfied: idna in e:\.program\omniagent\.venv\lib\site-packages (from httpx->lark-oapi) (3.11)
+Requirement already satisfied: h11>=0.16 in e:\.program\omniagent\.venv\lib\site-packages (from httpcore==1.*->httpx->lark-oapi) (0.16.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in e:\.program\omniagent\.venv\lib\site-packages (from requests->lark-oapi) (3.4.4)
+Requirement already satisfied: urllib3<3,>=1.21.1 in e:\.program\omniagent\.venv\lib\site-packages (from requests->lark-oapi) (2.6.3)
+Downloading lark_oapi-1.5.3-py3-none-any.whl (7.0 MB)
+   ----------------------------- 7.0/7.0 MB 209.6 kB/s  0:00:38
+Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl (54 kB)
+Installing collected packages: requests-toolbelt, lark-oapi
+
+Successfully installed lark-oapi requests-toolbelt
