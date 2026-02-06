@@ -92,6 +92,27 @@
 
 ---
 
+### 测试 5.1：查询场景矩阵（重点）
+
+**目的**：一次性覆盖 QuerySkill 的主要场景，避免逐条修规则
+
+| 用户输入示例 | 预期场景 | 预期工具 | 关键说明 |
+|---|---|---|---|
+| `查所有案件` | 全量查询 | `feishu.v1.bitable.search` | 默认忽略 `BITABLE_VIEW_ID`，查全表 |
+| `查所有案件 按视图` | 视图内全量查询 | `feishu.v1.bitable.search` | 保留视图过滤 |
+| `我的案件` | 人员精确查询 | `feishu.v1.bitable.search_person` | 使用 `open_id` 匹配 `主办律师` |
+| `查张三的案件` | 指定人员查询 | `feishu.v1.bitable.search_keyword`（可扩展 person） | 没有 open_id 时按关键词兜底 |
+| `查案号 (2024)沪01民终123号` | 精确字段查询 | `feishu.v1.bitable.search_exact` | 字段：`案号` |
+| `查项目ID JFTD-20260204-001` | 精确字段查询 | `feishu.v1.bitable.search_exact` | 字段：`项目ID`，失败自动降级 |
+| `今天开庭的案件` | 日期范围查询 | `feishu.v1.bitable.search_date_range` | 自动解析 `date_from/date_to` |
+| `张三在中院的案件` | 组合查询 | `feishu.v1.bitable.search_advanced`（后续增强） | 多条件 AND/OR |
+
+**预期日志关键词**：
+- `Query scenario: all_cases / my_cases / exact_match / keyword / full_scan`
+- `Query tool selected: ...`
+
+---
+
 ### 测试 6：闲聊与边界
 
 **目的**：验证 ChitchatSkill

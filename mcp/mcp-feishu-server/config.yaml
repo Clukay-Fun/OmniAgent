@@ -21,8 +21,8 @@ server:
 # ------------------------------------------------------------
 feishu:
   # 应用凭证（必填，建议通过环境变量配置）
-  app_id: ${FEISHU_APP_ID}
-  app_secret: ${FEISHU_APP_SECRET}
+  app_id: ${FEISHU_DATA_APP_ID}
+  app_secret: ${FEISHU_DATA_APP_SECRET}
 
   # API 基础地址
   api_base: "https://open.feishu.cn/open-apis"
@@ -70,6 +70,7 @@ bitable:
   search:
     # 默认搜索字段（关键词匹配，仅支持文本类型字段）
     searchable_fields:
+      - "项目ID"
       - "案号"
       - "委托人及联系方式"
       - "对方当事人"

@@ -79,7 +79,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Feishu Agent（端口 8080）                        │
+│                     Feishu Agent（Docker:8080 / 本地开发:8088）        │
 │   持有：FEISHU_BOT_* 凭证                                           │
 │   职责：Webhook处理、消息发送、意图解析、技能执行                      │
 └───────────────────────────────────┬─────────────────────────────────┘
@@ -144,6 +144,8 @@ cp .env.example .env  # 配置飞书凭证
 python run_server.py
 ```
 
+本地开发模式：`python run_dev.py`（默认监听 `8081`）
+
 ### 2. 启动 Feishu Agent
 
 ```bash
@@ -153,9 +155,17 @@ cp .env.example .env  # 配置飞书凭证和 LLM
 python run_server.py
 ```
 
+本地开发模式：`python run_dev.py`（默认监听 `8088`）
+
 ### 3. 配置飞书 Webhook
 
-在飞书开放平台配置事件订阅地址：`http://your-server:8080/feishu/webhook`
+在飞书开放平台配置事件订阅地址：`https://<your-ngrok-domain>/feishu/webhook`
+
+说明：
+- 本地开发 + ngrok 时，ngrok 需要转发到 `8088`
+- Docker 编排时，Agent 默认对外端口是 `8080`
+- 组织A（数据应用）不需要配置事件订阅/回调
+- 组织B（机器人应用）需要配置 `im.message.receive_v1`
 
 ---
 
@@ -231,6 +241,10 @@ MCP_SERVER_BASE=http://localhost:8081
 ./monitoring/run_monitoring.ps1
 ```
 
+说明：
+- monitoring 为可选模块，不启动时几乎不占额外运行空间
+- 启动后会创建 `prometheus_data` 与 `grafana_data` 卷并持续增长（Prometheus 默认保留 15 天）
+
 ---
 
 ## 🔍 故障排查
@@ -243,6 +257,10 @@ MCP_SERVER_BASE=http://localhost:8081
 | WrongViewId | View ID 配置错误 | 清空或更新 `BITABLE_VIEW_ID` |
 | InvalidFilter | 字段类型不匹配 | 人员字段使用 `search_person` 工具 |
 | 无法识别表格 | 别名未配置 | 更新 `skills.yaml` 中的 `table_aliases` |
+
+双组织配置建议：
+- 组织A（testA）：只配置 `FEISHU_DATA_*`，不配置事件回调
+- 组织B（testB）：配置 `FEISHU_BOT_*` + 事件回调
 
 ### 常用命令
 

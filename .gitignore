@@ -46,5 +46,7 @@ temp/
 # Workspace (local runtime)
 agent/workspace/
 
-docs/
-scripts/
+# other
+docs
+scripts
+TEST.md

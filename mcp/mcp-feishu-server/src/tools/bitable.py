@@ -13,6 +13,7 @@ from typing import Any
 import ast
 import re
 
+from src.feishu.client import FeishuAPIError
 from src.tools.base import BaseTool
 from src.tools.registry import ToolRegistry
 from src.utils.cache import TTLCache
@@ -258,6 +259,15 @@ def _resolve_return_fields(
     return sorted(return_fields)
 
 
+def _resolve_view_id(params: dict[str, Any], settings: Any) -> str | None:
+    """解析视图参数，支持忽略默认视图"""
+    if bool(params.get("ignore_default_view")):
+        return params.get("view_id")
+    if "view_id" in params:
+        return params.get("view_id")
+    return settings.bitable.default_view_id
+
+
 def _parse_date_text(value: Any) -> date | None:
     """解析自然语言或格式化日期字符串"""
     if not value:
@@ -396,6 +406,11 @@ class BitableSearchTool(BaseTool):
                 "description": "返回数量限制",
                 "default": 20,
             },
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
         },
         "required": [],
     }
@@ -409,7 +424,7 @@ class BitableSearchTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
 
         if not app_token or not table_id:
             return {"records": [], "total": 0}
@@ -557,6 +572,11 @@ class BitableSearchExactTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "字段名"},
             "value": {"type": "string", "description": "字段值"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
@@ -568,7 +588,7 @@ class BitableSearchExactTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         value = params.get("value")
 
@@ -586,6 +606,9 @@ class BitableSearchExactTool(BaseTool):
         if not resolved_field:
             raise ValueError(f"Field not found: {field}")
 
+        field_type = field_info.get(resolved_field, -1)
+        operator = "contains" if field_type in {1, 13, 15} else "is"
+
         limit = int(params.get("limit") or 100)
         limit = min(limit, settings.bitable.search.max_records)
 
@@ -601,7 +624,7 @@ class BitableSearchExactTool(BaseTool):
             "filter": {
                 "conjunction": "and",
                 "conditions": [
-                    {"field_name": resolved_field, "operator": "is", "value": [value]},
+                    {"field_name": resolved_field, "operator": operator, "value": [value]},
                 ],
             },
         }
@@ -610,7 +633,70 @@ class BitableSearchExactTool(BaseTool):
         if field_names:
             payload["field_names"] = field_names
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        try:
+            result = await _search_records(self, app_token, table_id, view_id, payload)
+        except FeishuAPIError as exc:
+            if exc.code != 1254018:
+                raise
+
+            # InvalidFilter: 尝试替换操作符
+            operators_to_try: list[str] = []
+            if operator != "is":
+                operators_to_try.append("is")
+            if operator != "contains":
+                operators_to_try.append("contains")
+
+            result = None
+            last_error: FeishuAPIError | None = exc
+            for op in operators_to_try:
+                try:
+                    payload["filter"]["conditions"][0]["operator"] = op
+                    result = await _search_records(self, app_token, table_id, view_id, payload)
+                    last_error = None
+                    break
+                except FeishuAPIError as retry_exc:
+                    last_error = retry_exc
+                    if retry_exc.code != 1254018:
+                        raise
+
+            # 仍然 InvalidFilter：降级为无过滤查询 + 本地精确匹配
+            if result is None:
+                fallback_payload: dict[str, Any] = {
+                    "page_size": settings.bitable.search.max_records,
+                }
+                if view_id:
+                    fallback_payload["view_id"] = view_id
+                if field_names:
+                    fallback_payload["field_names"] = field_names
+
+                raw_result = await _search_records(self, app_token, table_id, view_id, fallback_payload)
+                target = str(value).strip()
+                normalized_field = _normalize_field_name(resolved_field)
+
+                matched_records: list[dict[str, Any]] = []
+                for record in raw_result.get("records", []):
+                    fields_text = record.get("fields_text") or {}
+                    field_value = fields_text.get(resolved_field)
+                    if field_value is None:
+                        field_value = fields_text.get(normalized_field)
+                    if field_value is None:
+                        continue
+                    if str(field_value).strip() == target:
+                        matched_records.append(record)
+
+                result = {
+                    "records": matched_records[:limit],
+                    "total": len(matched_records),
+                    "has_more": len(matched_records) > limit,
+                    "page_token": "",
+                }
+
+                # 保留调试线索
+                if last_error is not None:
+                    result["debug"] = {
+                        "fallback": "local_exact_match",
+                        "reason": str(last_error),
+                    }
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -627,6 +713,11 @@ class BitableSearchKeywordTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "keyword": {"type": "string", "description": "搜索关键词"},
             "fields": {
                 "type": "array",
@@ -642,7 +733,7 @@ class BitableSearchKeywordTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         keyword = params.get("keyword")
 
         if not app_token or not table_id or not keyword:
@@ -716,6 +807,11 @@ class BitableSearchPersonTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "人员字段名（如：主办律师）"},
             "open_id": {"type": "string", "description": "用户 open_id"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
@@ -727,7 +823,7 @@ class BitableSearchPersonTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         open_id = params.get("open_id")
 
@@ -796,6 +892,11 @@ class BitableSearchDateRangeTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "日期字段"},
             "date_from": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
             "date_to": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
@@ -808,7 +909,7 @@ class BitableSearchDateRangeTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         date_from = params.get("date_from")
         date_to = params.get("date_to")
@@ -871,6 +972,11 @@ class BitableSearchAdvancedTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "conditions": {
                 "type": "array",
                 "items": {
@@ -892,7 +998,7 @@ class BitableSearchAdvancedTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         conditions = params.get("conditions") or []
 
         if not app_token or not table_id or not conditions:

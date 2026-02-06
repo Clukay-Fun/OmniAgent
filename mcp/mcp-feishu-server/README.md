@@ -76,6 +76,10 @@ BITABLE_TABLE_ID=xxx         # 默认表格 ID
 BITABLE_VIEW_ID=             # 视图 ID（可选，建议留空）
 ```
 
+双组织说明：
+- MCP Server 仅使用组织A数据凭证（`FEISHU_DATA_*`）
+- 组织A应用不需要配置机器人能力、事件订阅或 Webhook 回调
+
 ### 4. 启动服务
 
 ```bash
@@ -85,6 +89,8 @@ python run_server.py
 # 开发模式（热重载）
 python run_dev.py
 ```
+
+默认端口：`8081`
 
 ---
 

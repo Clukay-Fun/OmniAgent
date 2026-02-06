@@ -66,6 +66,7 @@ class QuerySkill(BaseSkill):
         query_cfg = self._skills_config.get("query", {})
         if not query_cfg:
             query_cfg = self._skills_config.get("skills", {}).get("query", {})
+        self._query_cfg = query_cfg
         self._display_fields = query_cfg.get("display_fields", {
             "title_left": "委托人及联系方式",
             "title_right": "对方当事人",
@@ -74,6 +75,27 @@ class QuerySkill(BaseSkill):
             "court": "审理法院",
             "stage": "程序阶段",
         })
+        self._all_cases_keywords = query_cfg.get(
+            "all_cases_keywords",
+            [
+                "所有案件",
+                "全部案件",
+                "案件列表",
+                "列出案件",
+                "所有项目",
+                "全部项目",
+                "所有案子",
+                "全部案子",
+                "查全部",
+            ],
+        )
+        self._keep_view_keywords = query_cfg.get(
+            "keep_view_keywords",
+            ["按视图", "当前视图", "仅视图", "视图内", "只看视图"],
+        )
+        self._all_cases_ignore_default_view = bool(
+            query_cfg.get("all_cases_ignore_default_view", True)
+        )
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -139,6 +161,7 @@ class QuerySkill(BaseSkill):
         notice = table_result.get("notice")
 
         try:
+            logger.info("Query tool selected: %s, params: %s", tool_name, params)
             result = await self._mcp.call_tool(tool_name, params)
             records = result.get("records", [])
             schema = result.get("schema")
@@ -146,6 +169,28 @@ class QuerySkill(BaseSkill):
                 return self._empty_result("未找到相关案件记录")
             return self._format_case_result(records, notice=notice, schema=schema)
         except Exception as e:
+            if tool_name == "feishu.v1.bitable.search_exact" and (
+                "Field not found" in str(e) or "InvalidFilter" in str(e)
+            ):
+                try:
+                    fallback_params: dict[str, Any] = {}
+                    if params.get("table_id"):
+                        fallback_params["table_id"] = params.get("table_id")
+                    if params.get("view_id"):
+                        fallback_params["view_id"] = params.get("view_id")
+                    fallback_params["keyword"] = str(params.get("value") or "")
+                    logger.warning(
+                        "Exact field not found, fallback to keyword search: %s",
+                        fallback_params,
+                    )
+                    result = await self._mcp.call_tool("feishu.v1.bitable.search_keyword", fallback_params)
+                    records = result.get("records", [])
+                    schema = result.get("schema")
+                    if not records:
+                        return self._empty_result("未找到相关案件记录")
+                    return self._format_case_result(records, notice=notice, schema=schema)
+                except Exception:
+                    pass
             logger.error("QuerySkill execution error: %s", e)
             return SkillResult(
                 success=False,
@@ -398,6 +443,12 @@ class QuerySkill(BaseSkill):
         if table_id:
             params["table_id"] = table_id
 
+        if self._is_all_cases_query(query):
+            if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
+                params["ignore_default_view"] = True
+            logger.info("Query scenario: all_cases")
+            return "feishu.v1.bitable.search", params
+
         # 优先级1: 检查是否为"我的案件"查询
         user_profile = extra.get("user_profile")
         if user_profile and user_profile.open_id and ("我的" in query or "自己的" in query):
@@ -407,6 +458,7 @@ class QuerySkill(BaseSkill):
                 "field": "主办律师",
                 "open_id": user_profile.open_id,
             })
+            logger.info("Query scenario: my_cases")
             return "feishu.v1.bitable.search_person", params
 
         # 优先级2: 检查是否指定了律师（例如："查询张三的案件"、"律师李四的案件"）
@@ -421,6 +473,7 @@ class QuerySkill(BaseSkill):
                 # 使用关键词搜索
                 logger.info(f"Query cases for lawyer: {lawyer_name}")
                 params["keyword"] = lawyer_name
+                logger.info("Query scenario: person_cases")
                 return "feishu.v1.bitable.search_keyword", params
 
         date_from = extra.get("date_from")
@@ -436,15 +489,31 @@ class QuerySkill(BaseSkill):
         exact_field = self._extract_exact_field(query)
         if exact_field:
             params.update(exact_field)
+            logger.info("Query scenario: exact_match")
             return "feishu.v1.bitable.search_exact", params
 
         keyword = self._extract_keyword(query)
         if keyword:
             params["keyword"] = keyword
+            logger.info("Query scenario: keyword")
             return "feishu.v1.bitable.search_keyword", params
 
-        params["keyword"] = query
-        return "feishu.v1.bitable.search_keyword", params
+        if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
+            params["ignore_default_view"] = True
+        logger.info("Query scenario: full_scan")
+        return "feishu.v1.bitable.search", params
+
+    def _is_all_cases_query(self, query: str) -> bool:
+        normalized = query.replace(" ", "")
+        if any(token in normalized for token in self._all_cases_keywords):
+            return True
+        if ("所有" in normalized or "全部" in normalized) and ("案件" in normalized or "项目" in normalized):
+            return True
+        return False
+
+    def _should_keep_view_filter(self, query: str) -> bool:
+        normalized = query.replace(" ", "")
+        return any(token in normalized for token in self._keep_view_keywords)
 
     def _guess_date_field(self, query: str) -> str:
         if "开庭" in query or "庭审" in query:
@@ -454,14 +523,19 @@ class QuerySkill(BaseSkill):
         return "开庭日"
 
     def _extract_exact_field(self, query: str) -> dict[str, str] | None:
-        pattern = re.compile(r"(?:案号|编号)[是为:：\s]*([A-Za-z0-9\-（）()_\u4e00-\u9fa5]+)")
-        match = pattern.search(query)
-        if not match:
-            return None
-        value = match.group(1).strip()
-        if not value:
-            return None
-        return {"field": "案号", "value": value}
+        exact_patterns: list[tuple[str, str]] = [
+            (r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", "案号"),
+            (r"(?:项目ID|项目Id|项目id|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", "项目ID"),
+            (r"(?:编号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", "案号"),
+        ]
+        for pattern, field in exact_patterns:
+            match = re.search(pattern, query)
+            if not match:
+                continue
+            value = match.group(1).strip()
+            if value:
+                return {"field": field, "value": value}
+        return None
 
     def _extract_keyword(self, query: str) -> str:
         """
@@ -490,6 +564,7 @@ class QuerySkill(BaseSkill):
             "庭要开", "庭审", "信息", "详情", "的", "吗", "呢",
             "看看", "告诉我", "列出", "律师", "法官", "当事人",
             "委托人", "被告", "原告", "开庭", "案",
+            "所有", "全部", "列表", "全部案件", "所有案件", "全部项目", "所有项目",
         ]
         
         for word in action_words + general_words:

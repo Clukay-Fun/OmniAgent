@@ -9,14 +9,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import time
 import logging
-from typing import Any
+from typing import Any, cast
 
 from Crypto.Cipher import AES
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from src.core.orchestrator import AgentOrchestrator
 from src.core.session import SessionManager
@@ -164,18 +165,31 @@ class EventDeduplicator:
         self._max_size = max_size
         self._items: dict[str, float] = {}
 
-    def is_duplicate(self, key: str) -> bool:
-        """检查并标记 Key 是否已存在"""
+    def _cleanup(self) -> None:
+        """清理过期记录"""
         now = time.time()
         self._items = {
             key: ts for key, ts in self._items.items() if now - ts <= self._ttl
         }
+
+    def is_duplicate(self, key: str) -> bool:
+        """仅检查 Key 是否已存在（不写入）"""
+        self._cleanup()
+        return key in self._items
+
+    def mark(self, key: str) -> None:
+        """标记 Key 为已处理"""
+        self._cleanup()
         if key in self._items:
-            return True
+            self._items[key] = time.time()
+            return
         if len(self._items) >= self._max_size:
             self._items.pop(next(iter(self._items)))
-        self._items[key] = now
-        return False
+        self._items[key] = time.time()
+
+    def remove(self, key: str) -> None:
+        """移除 Key（处理失败时允许重试）"""
+        self._items.pop(key, None)
 
 
 # 去重器已改为延迟初始化，见 _get_deduplicator()
@@ -229,7 +243,7 @@ async def feishu_webhook_get() -> dict[str, str]:
 
 
 @router.post("/feishu/webhook")
-async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, str]:
+async def feishu_webhook(request: Request) -> dict[str, str]:
     """
     接收飞书事件回调
 
@@ -238,7 +252,7 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
         2. 解密事件内容
         3. 校验 Token
         4. 去重与过滤
-        5. 异步投递处理任务
+        5. 处理消息并回复
     """
     logger.info("=== Received Feishu webhook request ===")
     payload = await request.json()
@@ -290,7 +304,9 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
         return {"status": "ignored"}
 
     logger.info(f"Processing message: {message_id}")
-    background_tasks.add_task(_process_message, message, sender)
+    if dedup_key and settings.webhook.dedup.enabled:
+        deduplicator.mark(dedup_key)
+    asyncio.create_task(_process_message_with_dedup(message, sender, dedup_key))
     return {"status": "ok"}
 
 
@@ -298,7 +314,19 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
 
 
 # region 消息处理逻辑
-async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> None:
+async def _process_message_with_dedup(
+    message: dict[str, Any],
+    sender: dict[str, Any],
+    dedup_key: str | None,
+) -> None:
+    """执行消息处理并在失败时回滚去重标记"""
+    processed = await _process_message(message, sender)
+    settings = _get_settings()
+    if not processed and dedup_key and settings.webhook.dedup.enabled:
+        _get_deduplicator().remove(dedup_key)
+
+
+async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> bool:
     """
     异步处理消息
 
@@ -311,7 +339,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
     logger.info(f"Extracted text: {text}")
     if not text:
         logger.warning("No text content, returning")
-        return
+        return False
 
     chat_id = message.get("chat_id")
     chat_type = message.get("chat_type")
@@ -323,7 +351,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
 
     if not chat_id:
         logger.warning("No chat_id, returning")
-        return
+        return False
 
     logger.info(f"chat_id: {chat_id}, user_id: {user_id}, text: {text}")
     
@@ -357,24 +385,39 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         
         if chat_id.startswith("test-"):
             logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
-            return
+            return True
         
         # 发送回复消息
+        content: dict[str, object]
         if reply.get("type") == "card":
             msg_type = "interactive"
-            content = reply.get("card") or {}
+            card_payload = reply.get("card")
+            content = cast(dict[str, object], card_payload) if isinstance(card_payload, dict) else {}
         else:
             msg_type = "text"
-            content = {"text": reply.get("text") or ""}
-        
-        await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
-    
+            content = cast(dict[str, object], {"text": str(reply.get("text") or "")})
+
+        text_obj = content.get("text")
+        text_len = len(text_obj) if isinstance(text_obj, str) else 0
+
+        logger.info(
+            "Sending reply: msg_type=%s, text_len=%s, has_card=%s",
+            msg_type,
+            text_len,
+            bool(reply.get("card")),
+        )
+        sent = await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
+        logger.info("Reply sent, message_id: %s", sent.get("message_id", ""))
+        return True
+
     except Exception as exc:
         logger.error("Error processing message: %s", exc, exc_info=True)
         error_text = "抱歉，处理您的请求时遇到了问题，请稍后重试。"
         if not chat_id.startswith("test-"):
             try:
                 await send_message(settings, chat_id, "text", {"text": error_text}, reply_message_id=message_id)
+                return True
             except Exception:
-                pass
+                return False
+        return False
 # endregion

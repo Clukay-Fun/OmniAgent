@@ -23,6 +23,23 @@ query:
     - 后天
     - 本周
     - 下周
+  all_cases_ignore_default_view: true
+  all_cases_keywords:
+    - 所有案件
+    - 全部案件
+    - 案件列表
+    - 列出案件
+    - 所有项目
+    - 全部项目
+    - 所有案子
+    - 全部案子
+    - 查全部
+  keep_view_keywords:
+    - 按视图
+    - 当前视图
+    - 仅视图
+    - 视图内
+    - 只看视图
 
 create:
   keywords:

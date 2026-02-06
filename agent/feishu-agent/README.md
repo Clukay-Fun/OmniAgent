@@ -116,6 +116,14 @@ python run_server.py
 python run_dev.py
 ```
 
+默认端口：
+- `run_server.py` / `run_dev.py` 默认监听 `8088`
+- 如需通过 ngrok 接入飞书回调，请使用 `ngrok http 8088`
+
+双组织说明：
+- Agent 仅使用组织B机器人凭证（`FEISHU_BOT_*`）
+- 数据查询通过 MCP Server（组织A数据凭证）完成
+
 ---
 
 ## 🎯 技能系统
