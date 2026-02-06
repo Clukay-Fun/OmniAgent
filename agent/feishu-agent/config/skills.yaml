@@ -6,6 +6,11 @@ intent:
     llm_confirm: 0.3         # 需要 LLM 复核
   llm_timeout: 10            # LLM 超时秒数
 
+planner:
+  enabled: true
+  confidence_threshold: 0.65
+  scenarios_dir: config/scenarios
+
 query:
   keywords:
     - 查

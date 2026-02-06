@@ -1,0 +1,24 @@
+tests:
+  - id: R001
+    input: 提醒我明天开庭
+    expect:
+      intent: create_reminder
+      tool: reminder.create
+
+  - id: R002
+    input: 查看提醒
+    expect:
+      intent: list_reminders
+      tool: reminder.list
+
+  - id: R003
+    input: 取消提醒 12
+    expect:
+      intent: cancel_reminder
+      tool: reminder.cancel
+
+  - id: R004
+    input: 案号2024-001下周五开庭，帮我设置提醒
+    expect:
+      intent: create_reminder
+      tool: reminder.create

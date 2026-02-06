@@ -20,6 +20,30 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 # region 热重载逻辑
+def run_scenario_precheck() -> bool:
+    """可选的场景回归预检查。"""
+    enabled = os.getenv("AGENT_SCENARIO_CHECK", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return True
+
+    print("🧪 运行场景预检查: tests/scenarios/runner.py")
+    extra_args = os.getenv("AGENT_SCENARIO_CHECK_ARGS", "").strip()
+    command = [sys.executable, "tests/scenarios/runner.py"]
+    if extra_args:
+        command.extend(extra_args.split())
+
+    result = subprocess.run(
+        command,
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        check=False,
+    )
+    if result.returncode != 0:
+        print("❌ 场景预检查失败，已停止启动。")
+        return False
+    print("✅ 场景预检查通过。")
+    return True
+
+
 def run_with_reload():
     """
     启动热重载开发服务器
@@ -55,14 +79,15 @@ def run_with_reload():
             """处理文件修改事件 (带防抖)"""
             if event.is_directory:
                 return
-            if not event.src_path.endswith('.py') and not event.src_path.endswith('.yaml'):
+            src_path = str(event.src_path)
+            if not src_path.endswith('.py') and not src_path.endswith('.yaml'):
                 return
             # 防抖：500ms 内不重复重载
             now = time.time()
             if now - self.last_reload < 0.5:
                 return
             self.last_reload = now
-            print(f"\n📝 检测到文件变化: {event.src_path}")
+            print(f"\n📝 检测到文件变化: {src_path}")
             self.start_process()
 
     def start_server():
@@ -86,6 +111,9 @@ def run_with_reload():
     print("🚀 Feishu Agent 开发模式")
     print("📁 监控目录: src/, config/")
     print("⏹️  按 Ctrl+C 停止\n")
+
+    if not run_scenario_precheck():
+        return
     
     handler.start_process()
     observer.start()
@@ -113,6 +141,9 @@ def run_normal():
     """
     from dotenv import load_dotenv
     load_dotenv()
+
+    if not run_scenario_precheck():
+        return
     
     from a2wsgi import ASGIMiddleware
     from waitress import serve

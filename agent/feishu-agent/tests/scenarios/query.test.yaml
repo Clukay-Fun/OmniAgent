@@ -1,0 +1,95 @@
+tests:
+  - id: S001
+    input: 查所有案件
+    expect:
+      intent: query_all
+      tool: search
+      params:
+        ignore_default_view: true
+
+  - id: S002
+    input: 查所有案件 按视图
+    expect:
+      intent: query_view
+      tool: search
+
+  - id: S003
+    input: 我的案件
+    expect:
+      intent: query_my_cases
+      tool: search_person
+      params:
+        field: 主办律师
+
+  - id: S004
+    input: 查案号 (2024)沪01民终123号
+    expect:
+      intent: query_exact
+      tool: search_exact
+      params:
+        field: 案号
+
+  - id: S005
+    input: 查项目ID JFTD-20260204-001
+    expect:
+      intent: query_exact
+      tool: search_exact
+      params:
+        field: 项目ID
+
+  - id: S006
+    input: 本周开庭的案件
+    expect:
+      intent: query_date_range
+      tool: search_date_range
+      params:
+        field: 开庭日
+
+  - id: S007
+    input: 查张三在中院本周的案件
+    expect:
+      intent: query_advanced
+      tool: search_advanced
+
+  - id: S008
+    input: 查张三的案件
+    expect:
+      intent: query_person
+      tool: search_keyword
+      params:
+        keyword: 张三
+
+  - id: S009
+    input: 查进行中的案件
+    expect:
+      intent: query_exact
+      tool: search_exact
+      params:
+        field: 案件状态
+        value: 进行中
+
+  - id: S010
+    input: 我负责的案件
+    expect:
+      intent: query_my_cases
+      tool: search_person
+      params:
+        field: 主办律师
+
+  - id: S011
+    input: 查那个是什么表
+    expect:
+      intent: clarify_needed
+      tool: none
+
+  - id: S012
+    input: 查数据
+    expect:
+      intent: clarify_needed
+      tool: none
+
+  - id: S013
+    input: 帮我看看收费的情况
+    expect:
+      intent: query_all
+      tool: search

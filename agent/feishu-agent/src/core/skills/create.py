@@ -80,9 +80,14 @@ class CreateSkill(BaseSkill):
             技能执行结果
         """
         query = context.query
-        
-        # 解析字段
-        fields = self._parse_fields(query)
+        extra = context.extra or {}
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
+
+        # 优先使用 planner 参数，规则解析做补充
+        fields = self._extract_fields_from_planner(planner_plan)
+        parsed_fields = self._parse_fields(query)
+        for k, v in parsed_fields.items():
+            fields.setdefault(k, v)
         
         if not fields:
             return SkillResult(
@@ -171,5 +176,28 @@ class CreateSkill(BaseSkill):
             if actual_field and value:
                 fields[actual_field] = value
         
+        return fields
+
+    def _extract_fields_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
+        """从 planner 输出中提取 fields。"""
+        if not isinstance(planner_plan, dict):
+            return {}
+        if planner_plan.get("tool") != "record.create":
+            return {}
+
+        params = planner_plan.get("params")
+        if not isinstance(params, dict):
+            return {}
+
+        fields_raw = params.get("fields")
+        if not isinstance(fields_raw, dict):
+            return {}
+
+        fields: dict[str, Any] = {}
+        for key, value in fields_raw.items():
+            field_name = str(key).strip()
+            if not field_name:
+                continue
+            fields[field_name] = value
         return fields
 # endregion

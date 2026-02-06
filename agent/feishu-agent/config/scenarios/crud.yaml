@@ -1,0 +1,21 @@
+# CRUD 规划规则（用于 L1 Planner prompt 注入）
+
+rules:
+  - name: create_record
+    pattern: 新增/创建/添加 + 案件
+    intent: create_record
+    tool: record.create
+    params: {}
+
+  - name: update_record
+    pattern: 更新/修改/改成/改为
+    intent: update_record
+    tool: record.update
+    params: {}
+
+  - name: delete_record
+    pattern: 删除/移除 + 案件
+    intent: delete_record
+    tool: record.delete
+    params: {}
+    note: 必须走二次确认（确认删除）

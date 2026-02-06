@@ -59,32 +59,43 @@ class UpdateSkill(BaseSkill):
         """
         query = context.query.strip()
         extra = context.extra or {}
-        
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
+
+        planner_params = planner_plan.get("params") if isinstance(planner_plan, dict) else None
+        planner_record_id = None
+        if isinstance(planner_params, dict):
+            rid = planner_params.get("record_id")
+            planner_record_id = str(rid).strip() if rid else None
+
         # 从上下文获取待更新的记录
         last_result = context.last_result or {}
         records = last_result.get("records", [])
-        
+
         # 如果没有上下文记录，需要先搜索
-        if not records:
+        if not records and not planner_record_id:
             return SkillResult(
                 success=False,
                 skill_name=self.name,
                 message="需要先查询要更新的记录",
                 reply_text="请先查询要更新的案件，例如：查询案号XXX的案件",
             )
-        
+
         # 如果有多条记录，需要用户明确
-        if len(records) > 1:
+        if len(records) > 1 and not planner_record_id:
             return SkillResult(
                 success=False,
                 skill_name=self.name,
                 message="找到多条记录，无法确定更新目标",
                 reply_text=f"找到 {len(records)} 条记录，请明确要更新哪一条。",
             )
-        
+
         # 获取记录 ID
-        record = records[0]
-        record_id = record.get("record_id")
+        if planner_record_id:
+            record_id = planner_record_id
+            record = records[0] if records else {}
+        else:
+            record = records[0]
+            record_id = record.get("record_id")
         if not record_id:
             return SkillResult(
                 success=False,
@@ -92,10 +103,12 @@ class UpdateSkill(BaseSkill):
                 message="记录缺少 record_id",
                 reply_text="无法获取记录 ID，更新失败。",
             )
-        
+
         # 解析更新字段（简化版：从查询中提取）
-        # TODO: 可以使用 LLM 解析更复杂的更新意图
-        fields = self._parse_update_fields(query)
+        fields = self._extract_fields_from_planner(planner_plan)
+        parsed_fields = self._parse_update_fields(query)
+        for k, v in parsed_fields.items():
+            fields.setdefault(k, v)
         if not fields:
             return SkillResult(
                 success=False,
@@ -197,5 +210,28 @@ class UpdateSkill(BaseSkill):
             fields[field_name] = field_value
             return fields
         
+        return fields
+
+    def _extract_fields_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
+        """从 planner 输出提取更新字段。"""
+        if not isinstance(planner_plan, dict):
+            return {}
+        if planner_plan.get("tool") != "record.update":
+            return {}
+
+        params = planner_plan.get("params")
+        if not isinstance(params, dict):
+            return {}
+
+        fields_raw = params.get("fields")
+        if not isinstance(fields_raw, dict):
+            return {}
+
+        fields: dict[str, Any] = {}
+        for key, value in fields_raw.items():
+            field_name = str(key).strip()
+            if not field_name:
+                continue
+            fields[field_name] = value
         return fields
 # endregion

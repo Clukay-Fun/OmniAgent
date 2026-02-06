@@ -1,0 +1,40 @@
+tests:
+  - id: L001
+    input: 确认删除
+    setup:
+      pending_delete:
+        record_id: rec_test_1
+        record_summary: 案号2024-001
+    expect:
+      handled: false
+      force_skill: DeleteSkill
+
+  - id: L002
+    input: 算了
+    setup:
+      pending_delete:
+        record_id: rec_test_2
+        record_summary: 案号2024-002
+    expect:
+      handled: true
+      reply_contains: 取消删除
+
+  - id: L003
+    input: 下一页
+    setup:
+      pagination:
+        tool: feishu.v1.bitable.search
+        params:
+          table_id: tbl_test
+        page_token: page_2
+        current_page: 1
+        total: 20
+    expect:
+      handled: false
+      force_skill: QuerySkill
+
+  - id: L004
+    input: ???
+    expect:
+      handled: true
+      reply_contains: 请问有什么可以帮您

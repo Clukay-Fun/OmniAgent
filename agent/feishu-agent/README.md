@@ -124,6 +124,69 @@ python run_dev.py
 - Agent 仅使用组织B机器人凭证（`FEISHU_BOT_*`）
 - 数据查询通过 MCP Server（组织A数据凭证）完成
 
+### 5. 运行场景回归
+
+```bash
+python tests/scenarios/runner.py
+```
+
+包含 docs 投影校验（读取仓库根目录 `docs/scenarios.yaml`）：
+
+```bash
+python tests/scenarios/runner.py --docs-file ../../docs/scenarios.yaml
+```
+
+阈值门禁示例（适合 CI）：
+
+```bash
+python tests/scenarios/runner.py \
+  --min-planner-pass 20 \
+  --min-l0-pass 4 \
+  --min-docs-pass 40 \
+  --min-guard-pass 10 \
+  --min-behavior-pass 2 \
+  --max-docs-skip 25
+```
+
+Runner 当前包含：
+- Planner 回归（`tests/scenarios/*.test.yaml`）
+- L0 规则回归（`tests/scenarios/l0.test.yaml`）
+- Docs 场景投影校验（从 `../../docs/scenarios.yaml` 自动抽取可映射场景）
+- Error/Security 守卫校验（批量删除拦截、注入类输入、空输入等）
+- Skill 行为回归（当前包含 Reminder 的时间澄清/过去时间校验）
+
+开发启动前自动执行场景回归（可选）：
+
+```bash
+# Windows PowerShell
+$env:AGENT_SCENARIO_CHECK="1"
+python run_dev.py
+python run_server.py
+
+# Linux/macOS
+AGENT_SCENARIO_CHECK=1 python run_dev.py
+AGENT_SCENARIO_CHECK=1 python run_server.py
+```
+
+可选：通过 `AGENT_SCENARIO_CHECK_ARGS` 传入阈值参数：
+
+```bash
+# PowerShell
+$env:AGENT_SCENARIO_CHECK="1"
+$env:AGENT_SCENARIO_CHECK_ARGS="--min-planner-pass 20 --min-docs-pass 40 --max-docs-skip 25"
+python run_dev.py
+
+# Linux/macOS
+AGENT_SCENARIO_CHECK=1 \
+AGENT_SCENARIO_CHECK_ARGS="--min-planner-pass 20 --min-docs-pass 40 --max-docs-skip 25" \
+python run_dev.py
+```
+
+说明：
+- Planner 场景用例：`tests/scenarios/*.test.yaml`
+- L0 规则用例：`tests/scenarios/l0.test.yaml`
+- 场景规则配置：`config/scenarios/*.yaml`
+
 ---
 
 ## 🎯 技能系统
@@ -160,8 +223,11 @@ python run_dev.py
 ### 编排与意图
 
 - **`src/core/orchestrator.py`** - 主流程编排器
+- **`src/core/l0/engine.py`** - L0 硬规则层（确认/取消/分页/空输入）
+- **`src/core/planner/*`** - L1 规划层（单次 LLM + Schema 校验 + 降级）
 - **`src/core/intent/parser.py`** - 意图解析（规则优先 + LLM 兜底）
 - **`src/core/intent/rules.py`** - 日期类查询规则
+- **`src/core/state/*`** - 会话状态管理（Memory + TTL，可替换 Redis）
 
 ### 技能系统
 
@@ -203,6 +269,11 @@ intent:
     direct_execute: 0.5
     llm_confirm: 0.3
   llm_timeout: 10
+
+planner:
+  enabled: true
+  confidence_threshold: 0.65
+  scenarios_dir: config/scenarios
 
 query:
   keywords: [查, 找, 搜索, 案件, 开庭]

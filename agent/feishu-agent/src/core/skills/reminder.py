@@ -88,9 +88,26 @@ class ReminderSkill(BaseSkill):
         user_id = context.user_id
         chat_id = context.extra.get("chat_id") if context.extra else None
         chat_type = context.extra.get("chat_type") if context.extra else None
+        planner_plan = context.extra.get("planner_plan") if context.extra and isinstance(context.extra.get("planner_plan"), dict) else None
         if chat_type == "p2p":
             chat_id = None
-        
+
+        # Planner 路由优先
+        planner_intent = str(planner_plan.get("intent") or "") if isinstance(planner_plan, dict) else ""
+        planner_params = planner_plan.get("params") if isinstance(planner_plan, dict) and isinstance(planner_plan.get("params"), dict) else {}
+        if planner_intent == "list_reminders":
+            return await self._list_reminders(user_id)
+        if planner_intent == "cancel_reminder":
+            reminder_id = self._extract_planner_reminder_id(planner_params)
+            if reminder_id is None:
+                return SkillResult(
+                    success=False,
+                    skill_name=self.name,
+                    message="缺少提醒 ID",
+                    reply_text='请提供提醒编号，例如："取消提醒 12"。',
+                )
+            return await self._apply_reminder_action(user_id, reminder_id, "cancelled")
+
         # 处理列表/更新类请求
         if self._is_list_request(query):
             return await self._list_reminders(user_id)
@@ -102,6 +119,14 @@ class ReminderSkill(BaseSkill):
         # 解析提醒内容和时间（创建）
         content = self._extract_content(query)
         remind_time = self._extract_time(query)
+
+        if planner_intent == "create_reminder":
+            planner_content = str(planner_params.get("content") or "").strip()
+            if planner_content:
+                content = planner_content
+            planner_time = self._parse_planner_time(planner_params.get("remind_time"))
+            if planner_time is not None:
+                remind_time = planner_time
         
         if not content:
             return SkillResult(
@@ -114,10 +139,34 @@ class ReminderSkill(BaseSkill):
         # 处理缺失时间
         time_hint = ""
         if remind_time is None:
+            if self._needs_time_clarification(query):
+                return SkillResult(
+                    success=True,
+                    skill_name=self.name,
+                    data={"action": "clarify_time"},
+                    message="需要澄清提醒时间",
+                    reply_text="我需要一个更具体的提醒时间，例如：明天上午9点、下周五下午3点。",
+                )
+
             remind_time = self._get_default_time()
             time_hint = self._default_time_hint.format(time=self._default_time)
+
+        # 拒绝过去时间
+        now = datetime.now()
+        if remind_time <= now:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"action": "invalid_time", "remind_time": remind_time.strftime("%Y-%m-%d %H:%M")},
+                message="提醒时间已过",
+                reply_text="该时间已经过去，请提供一个未来时间（例如：今天18:00、明天上午9点）。",
+            )
         
         priority = self._extract_priority(query)
+        if isinstance(planner_params, dict):
+            planner_priority = str(planner_params.get("priority") or "").strip().lower()
+            if planner_priority in {"high", "medium", "low"}:
+                priority = planner_priority
         
         try:
             reminder_id = await self._save_reminder(
@@ -254,6 +303,36 @@ class ReminderSkill(BaseSkill):
             has_date_keyword = True
         
         target_date = now.date() + timedelta(days=date_offset)
+
+        # 周几解析：下周五 / 本周三 / 周一 / 星期天
+        week_day_match = re.search(r"(?:(本周|这周|下周))?(?:周|星期)([一二三四五六日天])", query)
+        if week_day_match:
+            prefix = week_day_match.group(1) or ""
+            day_cn = week_day_match.group(2)
+            week_map = {
+                "一": 0,
+                "二": 1,
+                "三": 2,
+                "四": 3,
+                "五": 4,
+                "六": 5,
+                "日": 6,
+                "天": 6,
+            }
+            target_weekday = week_map[day_cn]
+            today_weekday = now.weekday()
+
+            if prefix == "下周":
+                next_monday = now.date() + timedelta(days=(7 - today_weekday))
+                target_date = next_monday + timedelta(days=target_weekday)
+            elif prefix in {"本周", "这周"}:
+                this_monday = now.date() - timedelta(days=today_weekday)
+                target_date = this_monday + timedelta(days=target_weekday)
+            else:
+                days_ahead = (target_weekday - today_weekday) % 7
+                target_date = now.date() + timedelta(days=days_ahead)
+
+            has_date_keyword = True
         
         # 提取时间
         # 匹配 "下午3点" / "晚上8点" / "上午10点"
@@ -290,6 +369,24 @@ class ReminderSkill(BaseSkill):
             default += timedelta(days=1)
         
         return default
+
+    def _needs_time_clarification(self, query: str) -> bool:
+        """判断是否需要用户澄清提醒时间。"""
+        import re
+
+        normalized = query.replace(" ", "")
+        vague_tokens = ["下周", "本周", "这周", "近期", "最近", "以后", "回头", "有空", "抽空", "过几天"]
+        has_vague = any(token in normalized for token in vague_tokens)
+
+        # 明确时间信号：明天/后天/今天、周几、具体钟点、绝对日期
+        has_explicit = bool(
+            re.search(r"(今天|明天|后天)", query)
+            or re.search(r"(?:(本周|这周|下周))?(?:周|星期)[一二三四五六日天]", query)
+            or re.search(r"\d{1,2}[:点]\d{0,2}", query)
+            or re.search(r"\d{4}-\d{1,2}-\d{1,2}", query)
+            or re.search(r"\d{1,2}月\d{1,2}日?", query)
+        )
+        return has_vague and not has_explicit
 
     def _is_list_request(self, query: str) -> bool:
         """判断是否为列表查询请求"""
@@ -381,6 +478,18 @@ class ReminderSkill(BaseSkill):
                 reply_text='请提供提醒编号，例如："完成提醒 12" 或 "删除提醒 12"。',
             )
 
+        return await self._apply_reminder_action(user_id, reminder_id, action)
+
+    async def _apply_reminder_action(self, user_id: str, reminder_id: int, action: str) -> SkillResult:
+        """按指定动作更新提醒。"""
+        if not self._db:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="数据库未配置",
+                reply_text="当前未配置数据库，无法更新提醒。",
+            )
+
         try:
             if action == "delete":
                 updated = await self._db.delete_reminder(reminder_id, user_id=user_id)
@@ -412,6 +521,27 @@ class ReminderSkill(BaseSkill):
             message="提醒已更新",
             reply_text=f"已{verb}提醒 #{reminder_id}。",
         )
+
+    def _extract_planner_reminder_id(self, params: dict[str, Any]) -> int | None:
+        rid = params.get("reminder_id")
+        if isinstance(rid, int):
+            return rid
+        if isinstance(rid, str) and rid.strip().isdigit():
+            return int(rid.strip())
+        return None
+
+    def _parse_planner_time(self, value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text = value.strip().replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        return None
 
     async def _save_reminder(
         self,

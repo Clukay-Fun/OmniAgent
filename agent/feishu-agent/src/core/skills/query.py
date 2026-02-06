@@ -165,9 +165,49 @@ class QuerySkill(BaseSkill):
             result = await self._mcp.call_tool(tool_name, params)
             records = result.get("records", [])
             schema = result.get("schema")
+            has_more = bool(result.get("has_more", False))
+            page_token = result.get("page_token") or ""
+            total = result.get("total")
+            pagination_extra = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
+            current_page = int(pagination_extra.get("current_page") or 0) + 1 if pagination_extra else 1
+            query_meta = {
+                "tool": tool_name,
+                "params": {k: v for k, v in params.items() if k != "page_token"},
+            }
+
             if not records:
+                if pagination_extra:
+                    return SkillResult(
+                        success=True,
+                        skill_name=self.name,
+                        data={
+                            "records": [],
+                            "total": total or 0,
+                            "schema": schema or [],
+                            "pagination": {
+                                "has_more": False,
+                                "page_token": "",
+                                "current_page": current_page,
+                                "total": total or 0,
+                            },
+                            "query_meta": query_meta,
+                        },
+                        message="没有更多记录",
+                        reply_text="已经没有更多记录了。",
+                    )
                 return self._empty_result("未找到相关案件记录")
-            return self._format_case_result(records, notice=notice, schema=schema)
+            return self._format_case_result(
+                records,
+                notice=notice,
+                schema=schema,
+                pagination={
+                    "has_more": has_more,
+                    "page_token": page_token,
+                    "current_page": current_page,
+                    "total": total,
+                },
+                query_meta=query_meta,
+            )
         except Exception as e:
             if tool_name == "feishu.v1.bitable.search_exact" and (
                 "Field not found" in str(e) or "InvalidFilter" in str(e)
@@ -439,9 +479,66 @@ class QuerySkill(BaseSkill):
         table_result: dict[str, Any],
     ) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = {}
+
+        pagination = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
+        if isinstance(pagination, dict) and pagination.get("tool"):
+            base_params_raw = pagination.get("params")
+            if isinstance(base_params_raw, dict):
+                base_params: dict[str, Any] = {str(k): v for k, v in base_params_raw.items()}
+                params.update(base_params)
+            if pagination.get("page_token"):
+                params["page_token"] = pagination.get("page_token")
+            logger.info("Query scenario: pagination_next")
+            return str(pagination.get("tool")), params
+
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
+        if isinstance(planner_plan, dict):
+            mapped_tool = self._map_planner_tool(str(planner_plan.get("tool") or ""))
+            if mapped_tool:
+                plan_params_raw = planner_plan.get("params")
+                plan_params: dict[str, Any] = {}
+                if isinstance(plan_params_raw, dict):
+                    plan_params = {str(k): v for k, v in plan_params_raw.items()}
+                params.update(plan_params)
+
+                intent = str(planner_plan.get("intent") or "")
+                if mapped_tool == "feishu.v1.bitable.search" and intent == "query_all":
+                    params.setdefault("ignore_default_view", True)
+
+                if mapped_tool == "feishu.v1.bitable.search_date_range":
+                    if extra.get("date_from"):
+                        params.setdefault("date_from", extra.get("date_from"))
+                    if extra.get("date_to"):
+                        params.setdefault("date_to", extra.get("date_to"))
+
+                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
+                    user_profile = extra.get("user_profile")
+                    open_id = getattr(user_profile, "open_id", "") if user_profile else ""
+                    if open_id:
+                        params["open_id"] = open_id
+                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("field"):
+                    params["field"] = "主办律师"
+
+                logger.info("Query scenario: planner")
+
         table_id = table_result.get("table_id")
         if table_id:
             params["table_id"] = table_id
+
+        if isinstance(planner_plan, dict):
+            mapped_tool = self._map_planner_tool(str(planner_plan.get("tool") or ""))
+            if mapped_tool:
+                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
+                    mapped_tool = None
+                if mapped_tool == "feishu.v1.bitable.search_exact" and (not params.get("field") or not params.get("value")):
+                    mapped_tool = None
+                if mapped_tool == "feishu.v1.bitable.search_keyword" and not params.get("keyword"):
+                    mapped_tool = None
+                if mapped_tool == "feishu.v1.bitable.search_date_range" and (not params.get("date_from") or not params.get("date_to")):
+                    mapped_tool = None
+
+            if mapped_tool:
+                return mapped_tool, params
 
         if self._is_all_cases_query(query):
             if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
@@ -502,6 +599,21 @@ class QuerySkill(BaseSkill):
             params["ignore_default_view"] = True
         logger.info("Query scenario: full_scan")
         return "feishu.v1.bitable.search", params
+
+    def _map_planner_tool(self, tool: str) -> str | None:
+        mapping = {
+            "search": "feishu.v1.bitable.search",
+            "search_exact": "feishu.v1.bitable.search_exact",
+            "search_keyword": "feishu.v1.bitable.search_keyword",
+            "search_person": "feishu.v1.bitable.search_person",
+            "search_date_range": "feishu.v1.bitable.search_date_range",
+            "search_advanced": "feishu.v1.bitable.search_advanced",
+        }
+        if tool in mapping:
+            return mapping[tool]
+        if tool.startswith("feishu.v1.bitable."):
+            return tool
+        return None
 
     def _is_all_cases_query(self, query: str) -> bool:
         normalized = query.replace(" ", "")
@@ -593,10 +705,16 @@ class QuerySkill(BaseSkill):
         records: list[dict[str, Any]],
         notice: str | None = None,
         schema: list[dict[str, Any]] | None = None,
+        pagination: dict[str, Any] | None = None,
+        query_meta: dict[str, Any] | None = None,
     ) -> SkillResult:
         """格式化案件查询结果"""
         count = len(records)
-        title = f"📌 案件查询结果（共 {count} 条）"
+        total = None
+        if isinstance(pagination, dict):
+            total = pagination.get("total")
+        title_count = total if isinstance(total, int) and total >= count else count
+        title = f"📌 案件查询结果（共 {title_count} 条）"
         
         items = []
         df = self._display_fields  # 使用配置的字段名
@@ -614,6 +732,8 @@ class QuerySkill(BaseSkill):
         parts = [title]
         if notice:
             parts = [notice, "", title]
+        if pagination and pagination.get("has_more"):
+            parts.append("回复“下一页”查看更多。")
         reply_text = "\n\n".join(parts + items)
         
         # 构建卡片
@@ -622,7 +742,18 @@ class QuerySkill(BaseSkill):
         return SkillResult(
             success=True,
             skill_name=self.name,
-            data={"records": records, "total": count, "schema": schema or []},
+            data={
+                "records": records,
+                "total": title_count,
+                "schema": schema or [],
+                "pagination": pagination or {
+                    "has_more": False,
+                    "page_token": "",
+                    "current_page": 1,
+                    "total": title_count,
+                },
+                "query_meta": query_meta or {},
+            },
             message=f"查询到 {count} 条记录",
             reply_type="card",
             reply_text=reply_text,

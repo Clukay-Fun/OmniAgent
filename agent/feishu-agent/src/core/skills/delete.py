@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.core.skills.base import BaseSkill
@@ -52,7 +53,9 @@ class DeleteSkill(BaseSkill):
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
-        self._confirm_phrases = set(delete_cfg.get("confirm_phrases", [
+        self._confirm_phrases = {
+            str(x).strip().lower()
+            for x in delete_cfg.get("confirm_phrases", [
             "确认删除",
             "确认",
             "是的",
@@ -60,7 +63,9 @@ class DeleteSkill(BaseSkill):
             "删除",
             "ok",
             "yes",
-        ]))
+        ])
+            if str(x).strip()
+        }
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -74,6 +79,7 @@ class DeleteSkill(BaseSkill):
         """
         query = context.query.strip()
         extra = context.extra or {}
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         
         # 检查是否为确认回复
         if self._is_confirmation(query):
@@ -82,7 +88,29 @@ class DeleteSkill(BaseSkill):
         # 首次删除请求：需要确认
         last_result = context.last_result or {}
         records = last_result.get("records", [])
-        
+
+        # Planner 直接给 record_id 时，直接进入确认
+        planner_pending = self._extract_pending_from_planner(planner_plan)
+        if planner_pending:
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={
+                    "pending_delete": planner_pending,
+                    "records": records,
+                },
+                message="等待用户确认删除",
+                reply_text=(
+                    f"⚠️ 确认删除\n\n"
+                    f"您即将删除案件：{planner_pending.get('case_no', '未知案号')}\n\n"
+                    f"此操作不可撤销，请回复'确认删除'以继续。"
+                ),
+            )
+
+        # 如果没有上下文记录，尝试按案号/项目ID快速定位
+        if not records:
+            records = await self._search_records_by_query(query)
+
         # 如果没有上下文记录，需要先搜索
         if not records:
             return SkillResult(
@@ -212,6 +240,52 @@ class DeleteSkill(BaseSkill):
         返回:
             是否为确认
         """
-        normalized = query.strip().lower()
+        normalized = query.strip().lower().strip("，。！？!?,. ")
         return normalized in self._confirm_phrases
+
+    def _extract_pending_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any] | None:
+        """从 planner 输出提取待删除目标。"""
+        if not isinstance(planner_plan, dict):
+            return None
+        if planner_plan.get("tool") != "record.delete":
+            return None
+        params = planner_plan.get("params")
+        if not isinstance(params, dict):
+            return None
+
+        record_id = str(params.get("record_id") or "").strip()
+        case_no = str(params.get("case_no") or params.get("value") or "未知案号").strip()
+        if not record_id:
+            return None
+        return {
+            "record_id": record_id,
+            "case_no": case_no,
+        }
+
+    async def _search_records_by_query(self, query: str) -> list[dict[str, Any]]:
+        """根据查询文本尝试搜索待删除记录。"""
+        exact_case = re.search(r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+        exact_project = re.search(r"(?:项目ID|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+
+        tool_name = None
+        params: dict[str, Any] = {}
+        if exact_case:
+            tool_name = "feishu.v1.bitable.search_exact"
+            params = {"field": "案号", "value": exact_case.group(1).strip()}
+        elif exact_project:
+            tool_name = "feishu.v1.bitable.search_exact"
+            params = {"field": "项目ID", "value": exact_project.group(1).strip()}
+
+        if not tool_name:
+            return []
+
+        try:
+            result = await self._mcp.call_tool(tool_name, params)
+            records = result.get("records", [])
+            if isinstance(records, list):
+                return records
+            return []
+        except Exception as exc:
+            logger.warning("DeleteSkill pre-search failed: %s", exc)
+            return []
 # endregion
