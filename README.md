@@ -37,6 +37,7 @@ OmniAgent 是一个可扩展的 Agent 平台，核心理念是：
 - MCP Feishu Server（组织A）：持有 data 凭证，负责多维表格/文档访问
 - Feishu Agent（组织B）：持有 bot 凭证，负责 Webhook 验签与消息发送
 - 典型流程：用户 -> 组织B Webhook -> Agent -> MCP -> 组织A 数据 -> Agent -> 组织B 回复
+- 提醒流程：MCP 扫描开庭日，Agent 负责推送到组织B用户
 - 关键环境变量：`FEISHU_DATA_*`（MCP）与 `FEISHU_BOT_*`（Agent）
 
 ## 系统架构

@@ -21,7 +21,15 @@ from src.utils.metrics import record_request, record_intent_parse, set_active_se
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, load_skills_config
 from src.core.router import SkillRouter, SkillContext, ContextManager
-from src.core.skills import QuerySkill, SummarySkill, ReminderSkill, ChitchatSkill, CreateSkill
+from src.core.skills import (
+    QuerySkill,
+    SummarySkill,
+    ReminderSkill,
+    ChitchatSkill,
+    CreateSkill,
+    UpdateSkill,
+    DeleteSkill,
+)
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
 from src.db.postgres import PostgresClient
@@ -132,6 +140,12 @@ class AgentOrchestrator:
                 skills_config=self._skills_config,
             ),
             CreateSkill(mcp_client=self._mcp, settings=self._settings),
+            UpdateSkill(mcp_client=self._mcp, settings=self._settings),
+            DeleteSkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                skills_config=self._skills_config,
+            ),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
             ReminderSkill(db_client=self._db, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config, llm_client=self._llm),
@@ -251,6 +265,7 @@ class AgentOrchestrator:
         text: str,
         chat_id: str | None = None,
         chat_type: str | None = None,
+        user_profile: Any = None,
     ) -> dict[str, Any]:
         """
         处理用户消息
@@ -260,6 +275,7 @@ class AgentOrchestrator:
             text: 用户输入文本
             chat_id: 群组 ID (可选)
             chat_type: 会话类型 (可选)
+            user_profile: 用户档案 (可选)
 
         返回:
             回复内容（type, text, card 等）
@@ -304,6 +320,7 @@ class AgentOrchestrator:
             extra = await self._build_extra(text, user_id, llm_context)
             extra["chat_id"] = chat_id
             extra["chat_type"] = chat_type
+            extra["user_profile"] = user_profile  # 添加用户档案
             
             context = SkillContext(
                 query=text,

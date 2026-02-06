@@ -33,6 +33,29 @@ create:
     - 录入
     - 登记
 
+update:
+  keywords:
+    - 更新
+    - 修改
+    - 改
+    - 编辑
+    - 变更
+
+delete:
+  keywords:
+    - 删除
+    - 删掉
+    - 移除
+    - 去掉
+  confirm_phrases:
+    - 确认删除
+    - 确认
+    - 是的
+    - 是
+    - 删除
+    - ok
+    - yes
+
 summary:
   keywords:
     - 总结

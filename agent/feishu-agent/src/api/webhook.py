@@ -39,6 +39,7 @@ _mcp_client: Any = None
 _llm_client: Any = None
 _agent_core: AgentOrchestrator | None = None
 _deduplicator: "EventDeduplicator | None" = None
+_user_manager: Any = None  # 用户管理器
 
 
 def _get_settings() -> Any:
@@ -78,6 +79,66 @@ def _get_deduplicator() -> "EventDeduplicator":
             settings.webhook.dedup.max_size,
         )
     return _deduplicator
+
+
+def _get_user_manager():
+    """延迟初始化用户管理器"""
+    global _user_manager, _mcp_client
+    if _user_manager is None:
+        try:
+            logger.info("Initializing UserManager...")
+            from src.user.manager import UserManager
+            from src.user.matcher import UserMatcher
+            from src.user.cache import UserCache
+            
+            settings = _get_settings()
+            
+            # 确保 MCP 客户端已初始化
+            if _mcp_client is None:
+                _mcp_client = MCPClient(settings)
+            
+            # 创建匹配器
+            matcher = UserMatcher(
+                mcp_client=_mcp_client,
+                match_field=settings.user.identity.match_field,
+                min_confidence=settings.user.identity.min_confidence,
+            )
+            
+            # 创建缓存
+            cache = UserCache(
+                ttl_hours=settings.user.cache.ttl_hours,
+                max_size=settings.user.cache.max_size,
+            )
+            
+            # 创建用户管理器
+            _user_manager = UserManager(
+                settings=settings,
+                matcher=matcher,
+                cache=cache,
+            )
+            
+            logger.info("UserManager initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize UserManager: {e}", exc_info=True)
+            raise
+    
+    return _user_manager
+
+
+# 公开访问器（供 main.py 等外部模块使用）
+class _AgentCoreProxy:
+    """Agent Core 代理对象，延迟初始化"""
+    def __getattr__(self, name):
+        return getattr(_get_agent_core(), name)
+    
+    def reload_config(self, config_path: str):
+        """重新加载配置"""
+        core = _get_agent_core()
+        if hasattr(core, 'reload_config'):
+            core.reload_config(config_path)
+
+
+agent_core = _AgentCoreProxy()
 # endregion
 # ============================================
 
@@ -179,13 +240,17 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
         4. 去重与过滤
         5. 异步投递处理任务
     """
+    logger.info("=== Received Feishu webhook request ===")
     payload = await request.json()
+    logger.info(f"Payload type: {payload.get('type')}, event_type: {payload.get('header', {}).get('event_type')}")
 
     if payload.get("type") == "url_verification":
+        logger.info("URL verification request")
         return {"challenge": payload.get("challenge", "")}
 
     settings = _get_settings()
     if payload.get("encrypt"):
+        logger.info("Decrypting payload...")
         if not settings.feishu.encrypt_key:
             raise HTTPException(status_code=400, detail="encrypt_key is required")
         payload = _decrypt_event(payload["encrypt"], settings.feishu.encrypt_key)
@@ -194,9 +259,11 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
     if settings.feishu.verification_token:
         token = header.get("token") or payload.get("token")
         if token != settings.feishu.verification_token:
+            logger.warning("Verification token mismatch")
             raise HTTPException(status_code=401, detail="Verification failed")
 
     event_id = header.get("event_id") or payload.get("event_id")
+    logger.info(f"Event ID: {event_id}")
 
     event = payload.get("event") or {}
     message = event.get("message") or {}
@@ -206,18 +273,23 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks) ->
     dedup_key = message_id or event_id
     deduplicator = _get_deduplicator()
     if dedup_key and settings.webhook.dedup.enabled and deduplicator.is_duplicate(dedup_key):
+        logger.info(f"Duplicate message: {dedup_key}")
         return {"status": "duplicate"}
 
     if settings.webhook.filter.ignore_bot_message and sender.get("sender_type") == "bot":
+        logger.info("Ignored bot message")
         return {"status": "ignored"}
 
     if settings.webhook.filter.private_chat_only and not _is_private_chat(message):
+        logger.info("Ignored non-private chat message")
         return {"status": "ignored"}
 
     message_type = message.get("message_type")
     if message_type not in settings.webhook.filter.allowed_message_types:
+        logger.info(f"Ignored message type: {message_type}")
         return {"status": "ignored"}
 
+    logger.info(f"Processing message: {message_id}")
     background_tasks.add_task(_process_message, message, sender)
     return {"status": "ok"}
 
@@ -234,8 +306,11 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         message: 消息体
         sender: 发送者信息
     """
+    logger.info("=== Starting _process_message ===")
     text = _get_text_content(message)
+    logger.info(f"Extracted text: {text}")
     if not text:
+        logger.warning("No text content, returning")
         return
 
     chat_id = message.get("chat_id")
@@ -247,12 +322,90 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
         logger.info("Webhook sender open_id: %s", sender_id.get("open_id"))
 
     if not chat_id:
+        logger.warning("No chat_id, returning")
         return
 
+    logger.info(f"chat_id: {chat_id}, user_id: {user_id}, text: {text}")
+    
     settings = _get_settings()
     agent_core = _get_agent_core()
+    user_manager = _get_user_manager()
+    
     try:
-        reply = await agent_core.handle_message(user_id, text, chat_id=chat_id, chat_type=chat_type)
+        # 获取或创建用户档案
+        logger.info("Getting user profile...")
+        open_id = sender_id.get("open_id")
+        user_profile = None
+        if open_id and settings.user.identity.auto_match:
+            try:
+                user_profile = await user_manager.get_or_create_profile(
+                    open_id=open_id,
+                    chat_id=chat_id,
+                    auto_match=True,
+                )
+                logger.info(
+                    f"User profile loaded: open_id={open_id}, "
+                    f"name={user_profile.name}, is_bound={user_profile.is_bound}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to load user profile: {e}", exc_info=True)
+        
+        # 检查是否为绑定命令
+        if user_profile and not user_profile.is_bound and text.startswith("绑定"):
+            logger.info("Processing bind command...")
+            # 提取律师姓名
+            lawyer_name = text.replace("绑定", "").strip()
+            if lawyer_name:
+                success, msg = await user_manager.bind_lawyer_name(open_id, lawyer_name)
+                await send_message(settings, chat_id, "text", {"text": msg}, reply_message_id=message_id)
+                return
+            else:
+                await send_message(
+                    settings,
+                    chat_id,
+                    "text",
+                    {"text": "请提供律师姓名，例如：绑定 张三"},
+                    reply_message_id=message_id,
+                )
+                return
+        
+        # 发送"正在思考"状态提示
+        logger.info("Sending status message...")
+        from src.utils.feishu_api import send_status_message, update_message
+        
+        status_message_id = ""
+        try:
+            status_message_id = await send_status_message(
+                settings=settings,
+                receive_id=chat_id,
+                status_text="💭 正在思考...",
+                reply_message_id=message_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send status message: {e}")
+        
+        # 处理正常消息
+        reply = await agent_core.handle_message(
+            user_id,
+            text,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            user_profile=user_profile,  # 传递用户档案
+        )
+        
+        # 如果用户未绑定且配置要求提示，添加绑定提示
+        if (
+            user_profile
+            and not user_profile.is_bound
+            and settings.user.identity.prompt_bind_on_fail
+        ):
+            bind_hint = (
+                "\n\n💡 提示：您尚未绑定律师身份。"
+                "如需查看'我的案件'，请回复：绑定 您的姓名"
+            )
+            if reply.get("type") == "text":
+                reply["text"] = reply.get("text", "") + bind_hint
+        
         if chat_id.startswith("test-"):
             logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
             return
@@ -261,15 +414,29 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> N
             content = reply.get("card") or {}
         else:
             msg_type = "text"
-            content = {"text": reply.get("text", "")}
-        await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
-    except Exception:
-        error_text = settings.reply.templates.error.format(message="处理出错")
-        await send_message(
-            settings,
-            chat_id,
-            "text",
-            {"text": error_text},
-            reply_message_id=message_id,
-        )
+            content = {"text": reply.get("text") or ""}
+        
+        # 如果有状态消息，更新它；否则发送新消息
+        if status_message_id:
+            try:
+                await update_message(
+                    settings=settings,
+                    message_id=status_message_id,
+                    msg_type=msg_type,
+                    content=content,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update message, sending new: {e}")
+                await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
+        else:
+            await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
+    
+    except Exception as exc:
+        logger.error("Error processing message: %s", exc, exc_info=True)
+        error_text = "抱歉，处理您的请求时遇到了问题，请稍后重试。"
+        if not chat_id.startswith("test-"):
+            try:
+                await send_message(settings, chat_id, "text", {"text": error_text}, reply_message_id=message_id)
+            except Exception:
+                pass
 # endregion

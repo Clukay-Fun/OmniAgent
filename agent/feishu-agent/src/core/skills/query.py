@@ -393,6 +393,17 @@ class QuerySkill(BaseSkill):
         if table_id:
             params["table_id"] = table_id
 
+        # 检查是否为"我的案件"查询
+        user_profile = extra.get("user_profile")
+        if user_profile and ("我的" in query or "自己的" in query):
+            if user_profile.is_bound and user_profile.lawyer_name:
+                # 使用精确匹配查询主办律师
+                params.update({
+                    "field": "主办律师",
+                    "value": user_profile.lawyer_name,
+                })
+                return "feishu.v1.bitable.search_exact", params
+
         date_from = extra.get("date_from")
         date_to = extra.get("date_to")
         if date_from or date_to:

@@ -98,6 +98,54 @@ class ToolSettings(BaseModel):
     parallel_calls: bool = False
 
 
+class UserIdentitySettings(BaseModel):
+    """用户身份管理配置"""
+    auto_match: bool = True
+    """是否自动匹配身份"""
+    
+    match_field: str = "主办律师"
+    """匹配字段名"""
+    
+    min_confidence: float = 0.8
+    """最小匹配置信度"""
+    
+    prompt_bind_on_fail: bool = True
+    """匹配失败时是否提示绑定"""
+
+
+class UserCacheSettings(BaseModel):
+    """用户缓存配置"""
+    ttl_hours: int = 24
+    """缓存有效期（小时）"""
+    
+    max_size: int = 1000
+    """最大缓存条目数"""
+
+
+class UserSettings(BaseModel):
+    """用户管理配置"""
+    identity: UserIdentitySettings = Field(default_factory=UserIdentitySettings)
+    cache: UserCacheSettings = Field(default_factory=UserCacheSettings)
+
+
+class HearingReminderSettings(BaseModel):
+    """开庭日提醒配置"""
+    enabled: bool = True
+    """是否启用开庭日提醒"""
+    
+    reminder_chat_id: str = ""
+    """提醒接收者 chat_id"""
+    
+    reminder_offsets: list[int] = Field(default_factory=lambda: [7, 3, 1, 0])
+    """提醒提前天数列表（默认 7/3/1/0 天）"""
+    
+    scan_hour: int = 8
+    """每日扫描时间（小时）"""
+    
+    scan_minute: int = 0
+    """每日扫描时间（分钟）"""
+
+
 class AgentSettings(BaseModel):
     """Agent 核心行为配置"""
     name: str = "feishu-case-assistant"
@@ -213,6 +261,8 @@ class Settings(BaseModel):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    user: UserSettings = Field(default_factory=UserSettings)
+    hearing_reminder: HearingReminderSettings = Field(default_factory=HearingReminderSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)

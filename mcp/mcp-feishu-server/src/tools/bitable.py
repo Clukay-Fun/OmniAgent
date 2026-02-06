@@ -1073,4 +1073,54 @@ class BitableRecordUpdateTool(BaseTool):
             "record_url": record_url,
         }
 
+
+@ToolRegistry.register
+class BitableRecordDeleteTool(BaseTool):
+    """
+    删除记录工具
+    
+    功能:
+        - 删除指定的记录
+    """
+    
+    name = "feishu.v1.bitable.record.delete"
+    description = "Delete a bitable record by record_id."
+    
+    async def run(self, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        执行删除
+        
+        参数:
+            params: 参数字典
+                - record_id: 记录 ID
+                - app_token: 应用 Token (可选)
+                - table_id: 数据表 ID (可选)
+        
+        返回:
+            删除结果
+        """
+        record_id = params.get("record_id")
+        
+        if not record_id:
+            return {"success": False, "error": "No record_id provided"}
+        
+        settings = self.context.settings
+        app_token = params.get("app_token") or settings.bitable.default_app_token
+        table_id = params.get("table_id") or settings.bitable.default_table_id
+        
+        if not app_token or not table_id:
+            return {"success": False, "error": "Bitable not configured"}
+        
+        response = await self.context.client.request(
+            "DELETE",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+        )
+        
+        # 删除成功通常返回空数据
+        return {
+            "success": True,
+            "record_id": record_id,
+            "message": "Record deleted successfully",
+        }
+
 # endregion

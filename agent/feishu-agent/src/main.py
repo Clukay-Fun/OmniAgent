@@ -82,6 +82,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             lock_timeout_seconds=lock_timeout_seconds,
         )
         app.state.reminder_scheduler.start()
+    
+    # 启动开庭日提醒调度器
+    if settings.hearing_reminder.enabled and settings.hearing_reminder.reminder_chat_id:
+        from src.jobs.hearing_reminder import HearingReminderScheduler
+        from src.mcp.client import MCPClient
+        
+        mcp_client = MCPClient(settings)
+        app.state.hearing_reminder_scheduler = HearingReminderScheduler(
+            settings=settings,
+            mcp_client=mcp_client,
+            reminder_chat_id=settings.hearing_reminder.reminder_chat_id,
+            reminder_offsets=settings.hearing_reminder.reminder_offsets,
+            scan_hour=settings.hearing_reminder.scan_hour,
+            scan_minute=settings.hearing_reminder.scan_minute,
+        )
+        app.state.hearing_reminder_scheduler.start()
+        logger.info("Hearing reminder scheduler started")
+    
     logger.info("Feishu Agent started with hot-reload enabled")
     
     yield
@@ -91,6 +109,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler: ReminderScheduler | None = getattr(app.state, "reminder_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
+    hearing_scheduler = getattr(app.state, "hearing_reminder_scheduler", None)
+    if hearing_scheduler is not None:
+        await hearing_scheduler.stop()
     logger.info("Feishu Agent shutdown complete")
 # endregion
 

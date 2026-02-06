@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 import json
 import httpx
@@ -91,7 +92,7 @@ async def send_message(
     content: dict[str, object],
     reply_message_id: str | None = None,
     receive_id_type: str = "chat_id",
-) -> None:
+) -> dict[str, Any]:
     """
     发送飞书消息
     
@@ -102,6 +103,9 @@ async def send_message(
         content: 消息内容字典
         reply_message_id: 回复的消息 ID (可选)
         receive_id_type: 接收 ID 类型 (默认为 chat_id)
+        
+    返回:
+        响应数据（包含 message_id）
     """
     token = await get_token_manager(settings).get_token()
     url = f"{settings.feishu.api_base}/im/v1/messages"
@@ -125,4 +129,70 @@ async def send_message(
         data = response.json()
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to send message")
+        return data.get("data", {})
+
+
+async def send_status_message(
+    settings: Settings,
+    receive_id: str,
+    status_text: str,
+    reply_message_id: str | None = None,
+    receive_id_type: str = "chat_id",
+) -> str:
+    """
+    发送状态提示消息（如"正在思考..."）
+    
+    参数:
+        settings: 配置对象
+        receive_id: 接收者 ID
+        status_text: 状态文本
+        reply_message_id: 回复的消息 ID
+        receive_id_type: 接收 ID 类型
+        
+    返回:
+        发送的消息 ID
+    """
+    result = await send_message(
+        settings=settings,
+        receive_id=receive_id,
+        msg_type="text",
+        content={"text": status_text},
+        reply_message_id=reply_message_id,
+        receive_id_type=receive_id_type,
+    )
+    return result.get("message_id", "")
+
+
+async def update_message(
+    settings: Settings,
+    message_id: str,
+    msg_type: str,
+    content: dict[str, object],
+) -> None:
+    """
+    更新已发送的消息
+    
+    参数:
+        settings: 配置对象
+        message_id: 要更新的消息 ID
+        msg_type: 消息类型
+        content: 新的消息内容
+    """
+    token = await get_token_manager(settings).get_token()
+    url = f"{settings.feishu.api_base}/im/v1/messages/{message_id}"
+    payload = {
+        "msg_type": msg_type,
+        "content": json.dumps(content, ensure_ascii=False),
+    }
+
+    async with httpx.AsyncClient(timeout=settings.feishu.message.reply_timeout) as client:
+        response = await client.patch(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("code") != 0:
+            raise FeishuAPIError(data.get("msg") or "Failed to update message")
 # endregion
