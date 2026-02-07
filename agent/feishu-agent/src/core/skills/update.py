@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
 
@@ -36,6 +37,7 @@ class UpdateSkill(BaseSkill):
         self,
         mcp_client: Any,
         settings: Any = None,
+        skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
         初始化更新技能
@@ -46,6 +48,7 @@ class UpdateSkill(BaseSkill):
         """
         self._mcp = mcp_client
         self._settings = settings
+        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -60,6 +63,8 @@ class UpdateSkill(BaseSkill):
         query = context.query.strip()
         extra = context.extra or {}
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
+        last_result = context.last_result or {}
+        table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
 
         planner_params = planner_plan.get("params") if isinstance(planner_plan, dict) else None
         planner_record_id = None
@@ -68,7 +73,6 @@ class UpdateSkill(BaseSkill):
             planner_record_id = str(rid).strip() if rid else None
 
         # 从上下文获取待更新的记录
-        last_result = context.last_result or {}
         records = last_result.get("records", [])
 
         # 如果没有上下文记录，需要先搜索
@@ -96,6 +100,10 @@ class UpdateSkill(BaseSkill):
         else:
             record = records[0]
             record_id = record.get("record_id")
+
+        record_table_id = self._table_adapter.extract_table_id_from_record(record)
+        if record_table_id and not table_ctx.table_id:
+            table_ctx.table_id = record_table_id
         if not record_id:
             return SkillResult(
                 success=False,
@@ -116,15 +124,45 @@ class UpdateSkill(BaseSkill):
                 message="无法解析更新字段",
                 reply_text="请明确要更新的字段和值，例如：把开庭日改成2024-12-01",
             )
+
+        adapted_fields, unresolved, available = await self._table_adapter.adapt_fields_for_table(
+            fields,
+            table_ctx.table_id,
+        )
+        if unresolved:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={
+                    "record_id": record_id,
+                    "table_id": table_ctx.table_id,
+                    "table_name": table_ctx.table_name,
+                    "unresolved_fields": unresolved,
+                    "available_fields": available,
+                },
+                message="字段名与目标表不匹配",
+                reply_text=self._table_adapter.build_field_not_found_message(
+                    unresolved,
+                    available,
+                    table_ctx.table_name,
+                ),
+            )
+
+        if adapted_fields:
+            fields = adapted_fields
         
         # 调用 MCP 更新工具
         try:
+            params: dict[str, Any] = {
+                "record_id": record_id,
+                "fields": fields,
+            }
+            if table_ctx.table_id:
+                params["table_id"] = table_ctx.table_id
+
             result = await self._mcp.call_tool(
                 "feishu.v1.bitable.record.update",
-                {
-                    "record_id": record_id,
-                    "fields": fields,
-                }
+                params,
             )
             
             if not result.get("success"):
@@ -154,6 +192,8 @@ class UpdateSkill(BaseSkill):
                     "record_id": record_id,
                     "updated_fields": fields,
                     "record_url": record_url,
+                    "table_id": table_ctx.table_id,
+                    "table_name": table_ctx.table_name,
                 },
                 message="更新成功",
                 reply_text=reply_text,

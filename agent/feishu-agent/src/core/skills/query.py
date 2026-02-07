@@ -516,6 +516,11 @@ class QuerySkill(BaseSkill):
                     open_id = getattr(user_profile, "open_id", "") if user_profile else ""
                     if open_id:
                         params["open_id"] = open_id
+                    user_name = getattr(user_profile, "lawyer_name", "") if user_profile else ""
+                    if not user_name:
+                        user_name = getattr(user_profile, "name", "") if user_profile else ""
+                    if user_name and not params.get("user_name"):
+                        params["user_name"] = user_name
                 if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("field"):
                     params["field"] = "主办律师"
 
@@ -555,6 +560,10 @@ class QuerySkill(BaseSkill):
                 "field": "主办律师",
                 "open_id": user_profile.open_id,
             })
+            if getattr(user_profile, "lawyer_name", None):
+                params["user_name"] = user_profile.lawyer_name
+            elif getattr(user_profile, "name", None):
+                params["user_name"] = user_profile.name
             logger.info("Query scenario: my_cases")
             return "feishu.v1.bitable.search_person", params
 

@@ -88,6 +88,7 @@ class L0RuleEngine:
                         "pending_delete": {
                             "record_id": pending_delete.record_id,
                             "case_no": pending_delete.record_summary,
+                            "table_id": pending_delete.table_id,
                         }
                     },
                 )

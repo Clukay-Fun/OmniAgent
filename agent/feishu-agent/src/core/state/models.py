@@ -12,6 +12,7 @@ from typing import Any
 class PendingDeleteState:
     record_id: str
     record_summary: str
+    table_id: str | None
     created_at: float
     expires_at: float
 

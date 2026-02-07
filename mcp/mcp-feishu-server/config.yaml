@@ -54,15 +54,15 @@ bitable:
   field_mapping:
     # 显示名称 -> 实际字段名（已根据表格实际字段更新）
     case_number: "案号"
-    client: "委托人及联系方式"
+    client: "委托人"
     opponent: "对方当事人"
     cause: "案由"
     court: "审理法院"
-    stage: "程序阶段"
+    stage: "审理程序"
     hearing_date: "开庭日"
-    judge: "承办法官、助理及联系方式"    # 修正：实际字段名有顿号
+    judge: "承办法官"
     lawyer: "主办律师"
-    progress: "案件进展"
+    progress: "进展"
     todo: "待做事项"
     remark: "备注"
 
@@ -72,11 +72,16 @@ bitable:
     searchable_fields:
       - "项目ID"
       - "案号"
-      - "委托人及联系方式"
+      - "委托人"
+      - "联系人"
       - "对方当事人"
       - "主办律师"
+      - "协办律师"
       - "审理法院"
-      - "案件进展"
+      - "审理程序"
+      - "进展"
+      - "待做事项"
+      - "备注"
     # 单次查询最大记录数
     max_records: 100
     # 默认返回记录数

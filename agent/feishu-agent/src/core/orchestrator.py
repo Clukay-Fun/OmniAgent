@@ -176,8 +176,16 @@ class AgentOrchestrator:
                 llm_client=self._llm,
                 skills_config=self._skills_config,
             ),
-            CreateSkill(mcp_client=self._mcp, settings=self._settings),
-            UpdateSkill(mcp_client=self._mcp, settings=self._settings),
+            CreateSkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                skills_config=self._skills_config,
+            ),
+            UpdateSkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                skills_config=self._skills_config,
+            ),
             DeleteSkill(
                 mcp_client=self._mcp,
                 settings=self._settings,
@@ -748,7 +756,8 @@ class AgentOrchestrator:
                 if isinstance(pending, dict) and pending.get("record_id"):
                     record_id = str(pending.get("record_id"))
                     summary = str(pending.get("case_no") or pending.get("record_summary") or "")
-                    self._state_manager.set_pending_delete(user_id, record_id, summary)
+                    table_id = str(pending.get("table_id") or "").strip() or None
+                    self._state_manager.set_pending_delete(user_id, record_id, summary, table_id=table_id)
                 elif result.success:
                     self._state_manager.clear_pending_delete(user_id)
 

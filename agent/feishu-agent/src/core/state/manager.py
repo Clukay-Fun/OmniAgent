@@ -72,12 +72,19 @@ class ConversationStateManager:
     def clear_user(self, user_id: str) -> None:
         self._store.delete(user_id)
 
-    def set_pending_delete(self, user_id: str, record_id: str, record_summary: str) -> None:
+    def set_pending_delete(
+        self,
+        user_id: str,
+        record_id: str,
+        record_summary: str,
+        table_id: str | None = None,
+    ) -> None:
         now = time.time()
         state = self.get_state(user_id)
         state.pending_delete = PendingDeleteState(
             record_id=record_id,
             record_summary=record_summary,
+            table_id=table_id,
             created_at=now,
             expires_at=now + self._pending_delete_ttl,
         )

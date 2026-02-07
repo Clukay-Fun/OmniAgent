@@ -29,6 +29,13 @@ query:
     - 本周
     - 下周
   all_cases_ignore_default_view: true
+  display_fields:
+    title_left: "委托人"
+    title_right: "对方当事人"
+    title_suffix: "案由"
+    case_no: "案号"
+    court: "审理法院"
+    stage: "审理程序"
   all_cases_keywords:
     - 所有案件
     - 全部案件

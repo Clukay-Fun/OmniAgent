@@ -289,6 +289,105 @@ def _parse_date_text(value: Any) -> date | None:
     return None
 
 
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _extract_person_tokens(value: Any) -> tuple[set[str], set[str]]:
+    """从人员字段原始值中提取 id/name 候选。"""
+    ids: set[str] = set()
+    names: set[str] = set()
+
+    def _consume(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, dict):
+            for key in ("id", "open_id", "openId", "user_id", "userId", "union_id", "unionId"):
+                val = item.get(key)
+                if val:
+                    ids.add(str(val).strip())
+            for key in ("name", "en_name", "display_name", "displayName"):
+                val = item.get(key)
+                if val:
+                    names.add(str(val).strip())
+            return
+        if isinstance(item, str):
+            token = item.strip()
+            if not token:
+                return
+            if token.startswith("ou_") or token.startswith("on_"):
+                ids.add(token)
+            else:
+                names.add(token)
+
+    if isinstance(value, list):
+        for entry in value:
+            _consume(entry)
+    else:
+        _consume(value)
+
+    return ids, names
+
+
+def _record_matches_person(
+    record: dict[str, Any],
+    field_name: str,
+    open_id: str,
+    user_name: str | None = None,
+) -> bool:
+    raw_fields = record.get("fields") or {}
+    field_value = raw_fields.get(field_name)
+    ids, names = _extract_person_tokens(field_value)
+
+    if open_id and open_id in ids:
+        return True
+
+    expected_name = _normalize_text(user_name)
+    if expected_name and any(_normalize_text(name) == expected_name for name in names):
+        return True
+
+    fields_text = record.get("fields_text") or {}
+    text_value = fields_text.get(field_name)
+    if text_value is None:
+        text_value = fields_text.get(_normalize_field_name(field_name))
+    text_value_norm = _normalize_text(text_value)
+    if not text_value_norm:
+        return False
+
+    if expected_name and expected_name in text_value_norm:
+        return True
+    return False
+
+
+def _filter_records_by_date_range(
+    records: list[dict[str, Any]],
+    field_name: str,
+    date_from: str | None,
+    date_to: str | None,
+) -> list[dict[str, Any]]:
+    start_date = _parse_date_text(date_from)
+    end_date = _parse_date_text(date_to)
+
+    filtered: list[dict[str, Any]] = []
+    normalized_field = _normalize_field_name(field_name)
+    for record in records:
+        fields_text = record.get("fields_text") or {}
+        value = fields_text.get(field_name)
+        if value is None:
+            value = fields_text.get(normalized_field)
+
+        record_date = _parse_date_text(value)
+        if not record_date:
+            continue
+        if start_date and record_date < start_date:
+            continue
+        if end_date and record_date > end_date:
+            continue
+        filtered.append(record)
+
+    return filtered
+
+
 async def _search_records(
     tool: BaseTool,
     app_token: str,
@@ -814,6 +913,7 @@ class BitableSearchPersonTool(BaseTool):
             },
             "field": {"type": "string", "description": "人员字段名（如：主办律师）"},
             "open_id": {"type": "string", "description": "用户 open_id"},
+            "user_name": {"type": "string", "description": "用户姓名（用于兜底匹配）"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
         },
         "required": ["field", "open_id"],
@@ -826,6 +926,7 @@ class BitableSearchPersonTool(BaseTool):
         view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         open_id = params.get("open_id")
+        user_name = str(params.get("user_name") or "").strip() or None
 
         if not app_token or not table_id or not field or not open_id:
             return {"records": [], "total": 0}
@@ -838,6 +939,17 @@ class BitableSearchPersonTool(BaseTool):
         resolved_field = normalized_lookup.get(_normalize_field_name(field))
         if not resolved_field and field in field_names:
             resolved_field = field
+        if not resolved_field:
+            resolved_field = next(
+                (
+                    name
+                    for name, ftype in field_info.items()
+                    if ftype == 11 and ("主办" in name or "律师" in name)
+                ),
+                None,
+            )
+        if not resolved_field:
+            resolved_field = next((name for name, ftype in field_info.items() if ftype == 11), None)
         if not resolved_field:
             raise ValueError(f"Field not found: {field}")
 
@@ -856,26 +968,90 @@ class BitableSearchPersonTool(BaseTool):
             extra_fields=[resolved_field],
         )
 
-        # 人员字段筛选条件：使用 contains 操作符和 open_id
-        payload: dict[str, Any] = {
+        payload_base: dict[str, Any] = {
             "page_size": limit,
-            "filter": {
+        }
+        if view_id:
+            payload_base["view_id"] = view_id
+        if return_fields:
+            payload_base["field_names"] = return_fields
+
+        filter_variants = [
+            {
                 "conjunction": "and",
                 "conditions": [
                     {
-                        "field_name": resolved_field, 
-                        "operator": "contains", 
-                        "value": [open_id]
-                    },
+                        "field_name": resolved_field,
+                        "operator": "contains",
+                        "value": [open_id],
+                    }
                 ],
             },
-        }
-        if view_id:
-            payload["view_id"] = view_id
-        if return_fields:
-            payload["field_names"] = return_fields
+            {
+                "conjunction": "and",
+                "conditions": [
+                    {
+                        "field_name": resolved_field,
+                        "operator": "is",
+                        "value": [open_id],
+                    }
+                ],
+            },
+            {
+                "conjunction": "and",
+                "conditions": [
+                    {
+                        "field_name": resolved_field,
+                        "operator": "contains",
+                        "value": [{"id": open_id}],
+                    }
+                ],
+            },
+            {
+                "conjunction": "and",
+                "conditions": [
+                    {
+                        "field_name": resolved_field,
+                        "operator": "is",
+                        "value": [{"id": open_id}],
+                    }
+                ],
+            },
+        ]
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        result: dict[str, Any] | None = None
+        last_error: FeishuAPIError | None = None
+        for filter_payload in filter_variants:
+            try:
+                payload = dict(payload_base)
+                payload["filter"] = filter_payload
+                result = await _search_records(self, app_token, table_id, view_id, payload)
+                last_error = None
+                break
+            except FeishuAPIError as exc:
+                last_error = exc
+                if exc.code != 1254018:
+                    raise
+
+        if result is None:
+            # 过滤器不兼容时降级本地匹配
+            raw_result = await _search_records(self, app_token, table_id, view_id, payload_base)
+            matched_records: list[dict[str, Any]] = []
+            for record in raw_result.get("records", []):
+                if _record_matches_person(record, resolved_field, str(open_id), user_name=user_name):
+                    matched_records.append(record)
+
+            result = {
+                "records": matched_records[:limit],
+                "total": len(matched_records),
+                "has_more": len(matched_records) > limit,
+                "page_token": "",
+                "debug": {
+                    "fallback": "local_person_match",
+                    "reason": str(last_error) if last_error else "filter_not_supported",
+                },
+            }
+
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -942,20 +1118,46 @@ class BitableSearchDateRangeTool(BaseTool):
             extra_fields=[resolved_field],
         )
 
-        payload: dict[str, Any] = {
+        payload_base: dict[str, Any] = {
             "page_size": limit,
+        }
+        if view_id:
+            payload_base["view_id"] = view_id
+        if return_fields:
+            payload_base["field_names"] = return_fields
+
+        payload: dict[str, Any] = dict(payload_base)
+        payload.update({
             "filter": {
                 "conjunction": "and",
                 "conditions": _build_date_conditions(resolved_field, date_from, date_to),
             },
             "sort": [{"field_name": resolved_field, "desc": False}],
-        }
-        if view_id:
-            payload["view_id"] = view_id
-        if return_fields:
-            payload["field_names"] = return_fields
+        })
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        try:
+            result = await _search_records(self, app_token, table_id, view_id, payload)
+        except FeishuAPIError as exc:
+            if exc.code != 1254018:
+                raise
+            raw_result = await _search_records(self, app_token, table_id, view_id, payload_base)
+            matched_records = _filter_records_by_date_range(
+                raw_result.get("records", []),
+                resolved_field,
+                date_from,
+                date_to,
+            )
+            result = {
+                "records": matched_records[:limit],
+                "total": len(matched_records),
+                "has_more": len(matched_records) > limit,
+                "page_token": "",
+                "debug": {
+                    "fallback": "local_date_range_match",
+                    "reason": str(exc),
+                },
+            }
+
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
