@@ -14,6 +14,7 @@ from typing import Any
 
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
+from src.utils.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,24 @@ class QuerySkill(BaseSkill):
             "court": "审理法院",
             "stage": "程序阶段",
         })
+        self._keyword_fields = query_cfg.get(
+            "keyword_fields",
+            [
+                "委托人",
+                "对方当事人",
+                "案件分类",
+                "案件状态",
+                "案由",
+                "案号",
+                "项目ID",
+                "项目类型",
+                "审理法院",
+                "主办律师",
+                "协办律师",
+                "进展",
+                "备注",
+            ],
+        )
         self._all_cases_keywords = query_cfg.get(
             "all_cases_keywords",
             [
@@ -168,6 +187,14 @@ class QuerySkill(BaseSkill):
             has_more = bool(result.get("has_more", False))
             page_token = result.get("page_token") or ""
             total = result.get("total")
+
+            relevance_keyword = self._extract_entity_keyword(query)
+            if not relevance_keyword:
+                relevance_keyword = str(params.get("keyword") or "").strip()
+            if relevance_keyword and isinstance(records, list) and len(records) > 1:
+                records = self._apply_keyword_relevance(records, relevance_keyword)
+                total = len(records)
+
             pagination_extra = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
             current_page = int(pagination_extra.get("current_page") or 0) + 1 if pagination_extra else 1
             query_meta = {
@@ -321,11 +348,31 @@ class QuerySkill(BaseSkill):
         return None
 
     async def _resolve_table(self, query: str, extra: dict[str, Any]) -> dict[str, Any]:
+        explicit_table_id = str(extra.get("table_id") or "").strip()
+        explicit_table_name = str(extra.get("table_name") or "").strip()
+
         try:
             tables_result = await self._mcp.call_tool("feishu.v1.bitable.list_tables", {})
         except Exception as exc:
             logger.error("List tables failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            alias_match = self._match_alias(query)
+            if alias_match:
+                return {
+                    "status": "resolved",
+                    "table_name": alias_match,
+                    "table_id": None,
+                    "confidence": 0.6,
+                    "method": "alias_without_tables",
+                    "notice": "表结构服务暂时不可用，已按默认表执行查询。",
+                }
+            return {
+                "status": "resolved",
+                "table_name": None,
+                "table_id": None,
+                "confidence": 0.3,
+                "method": "default_without_tables",
+                "notice": "表结构服务暂时不可用，已按默认表执行查询。",
+            }
 
         tables = tables_result.get("tables", [])
         if not tables:
@@ -337,6 +384,39 @@ class QuerySkill(BaseSkill):
 
         table_lookup = {item["table_name"]: item.get("table_id") for item in tables}
         table_names = list(table_lookup.keys())
+
+        if explicit_table_id:
+            matched_name = next(
+                (name for name, tid in table_lookup.items() if tid == explicit_table_id),
+                explicit_table_name or None,
+            )
+            return {
+                "status": "resolved",
+                "table_name": matched_name,
+                "table_id": explicit_table_id,
+                "confidence": 1.0,
+                "method": "explicit_table_id",
+            }
+
+        if explicit_table_name and explicit_table_name in table_lookup:
+            return {
+                "status": "resolved",
+                "table_name": explicit_table_name,
+                "table_id": table_lookup.get(explicit_table_name),
+                "confidence": 1.0,
+                "method": "explicit_table_name",
+            }
+
+        if self._is_case_domain_query(query):
+            case_table = self._pick_case_default_table(table_names)
+            if case_table:
+                return {
+                    "status": "resolved",
+                    "table_name": case_table,
+                    "table_id": table_lookup.get(case_table),
+                    "confidence": 0.98,
+                    "method": "case_default",
+                }
 
         alias_match = self._match_alias(query)
         if alias_match and alias_match in table_lookup:
@@ -434,6 +514,21 @@ class QuerySkill(BaseSkill):
         matched.sort(key=len, reverse=True)
         return matched[0]
 
+    def _is_case_domain_query(self, query: str) -> bool:
+        normalized = query.replace(" ", "")
+        keywords = ["开庭", "庭审", "案件", "案子", "案号", "审理", "法院", "委托人", "对方当事人"]
+        return any(token in normalized for token in keywords)
+
+    def _pick_case_default_table(self, table_names: list[str]) -> str | None:
+        preferred = ["案件项目总库", "案件 项目总库", "【诉讼案件】", "诉讼案件"]
+        for name in preferred:
+            if name in table_names:
+                return name
+        for name in table_names:
+            if "案件" in name and ("库" in name or "台账" in name):
+                return name
+        return None
+
     async def _llm_pick_table(self, query: str, table_names: list[str]) -> dict[str, Any]:
         if not self._llm or not table_names:
             return {}
@@ -479,6 +574,7 @@ class QuerySkill(BaseSkill):
         table_result: dict[str, Any],
     ) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = {}
+        selected_tool: str | None = None
 
         pagination = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
         if isinstance(pagination, dict) and pagination.get("tool"):
@@ -510,19 +606,74 @@ class QuerySkill(BaseSkill):
                         params.setdefault("date_from", extra.get("date_from"))
                     if extra.get("date_to"):
                         params.setdefault("date_to", extra.get("date_to"))
+                    if extra.get("time_from"):
+                        params.setdefault("time_from", extra.get("time_from"))
+                    if extra.get("time_to"):
+                        params.setdefault("time_to", extra.get("time_to"))
+                    if not params.get("date_from") or not params.get("date_to"):
+                        parsed = parse_time_range(query)
+                        if parsed:
+                            params.setdefault("date_from", parsed.date_from)
+                            params.setdefault("date_to", parsed.date_to)
+                            if parsed.time_from:
+                                params.setdefault("time_from", parsed.time_from)
+                            if parsed.time_to:
+                                params.setdefault("time_to", parsed.time_to)
+
+                if mapped_tool == "feishu.v1.bitable.search":
+                    parsed = parse_time_range(query)
+                    if parsed and any(token in query for token in ["开庭", "庭审"]):
+                        mapped_tool = "feishu.v1.bitable.search_date_range"
+                        params["field"] = params.get("field") or "开庭日"
+                        params.setdefault("date_from", parsed.date_from)
+                        params.setdefault("date_to", parsed.date_to)
+                        if parsed.time_from:
+                            params.setdefault("time_from", parsed.time_from)
+                        if parsed.time_to:
+                            params.setdefault("time_to", parsed.time_to)
 
                 if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
                     user_profile = extra.get("user_profile")
                     open_id = getattr(user_profile, "open_id", "") if user_profile else ""
                     if open_id:
                         params["open_id"] = open_id
+                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("user_name"):
+                    user_profile = extra.get("user_profile")
                     user_name = getattr(user_profile, "lawyer_name", "") if user_profile else ""
                     if not user_name:
                         user_name = getattr(user_profile, "name", "") if user_profile else ""
-                    if user_name and not params.get("user_name"):
+                    if user_name:
                         params["user_name"] = user_name
                 if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("field"):
                     params["field"] = "主办律师"
+
+                if mapped_tool == "feishu.v1.bitable.search" and not any(
+                    params.get(k) for k in ("keyword", "date_from", "date_to", "filters")
+                ):
+                    exact = self._extract_exact_field(query)
+                    if exact:
+                        mapped_tool = "feishu.v1.bitable.search_exact"
+                        params.update(exact)
+                    else:
+                        entity_keyword = self._extract_entity_keyword(query)
+                        keyword = entity_keyword or self._extract_keyword(query)
+                        if keyword:
+                            mapped_tool = "feishu.v1.bitable.search_keyword"
+                            params["keyword"] = keyword
+                            params.setdefault("fields", self._build_keyword_fields())
+
+                if mapped_tool == "feishu.v1.bitable.search_keyword" and not params.get("fields"):
+                    params["fields"] = self._build_keyword_fields()
+
+                if mapped_tool in {
+                    "feishu.v1.bitable.search_keyword",
+                    "feishu.v1.bitable.search_exact",
+                    "feishu.v1.bitable.search_person",
+                    "feishu.v1.bitable.search_date_range",
+                }:
+                    self._maybe_ignore_default_view(params, query)
+
+                selected_tool = mapped_tool
 
                 logger.info("Query scenario: planner")
 
@@ -531,7 +682,7 @@ class QuerySkill(BaseSkill):
             params["table_id"] = table_id
 
         if isinstance(planner_plan, dict):
-            mapped_tool = self._map_planner_tool(str(planner_plan.get("tool") or ""))
+            mapped_tool = selected_tool or self._map_planner_tool(str(planner_plan.get("tool") or ""))
             if mapped_tool:
                 if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
                     mapped_tool = None
@@ -564,43 +715,55 @@ class QuerySkill(BaseSkill):
                 params["user_name"] = user_profile.lawyer_name
             elif getattr(user_profile, "name", None):
                 params["user_name"] = user_profile.name
+            self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: my_cases")
             return "feishu.v1.bitable.search_person", params
 
-        # 优先级2: 检查是否指定了律师（例如："查询张三的案件"、"律师李四的案件"）
-        # 注意：由于只有姓名，无法获取 open_id，使用关键词搜索
-        import re
-        lawyer_pattern = re.compile(r"(?:查询|律师)?([^的\s]+)(?:的案件|案件)")
-        match = lawyer_pattern.search(query)
-        if match:
-            lawyer_name = match.group(1).strip()
-            # 排除一些常见的非律师关键词
-            if lawyer_name not in ["所有", "全部", "今天", "明天", "本周", "本月", "我", "自己"]:
-                # 使用关键词搜索
-                logger.info(f"Query cases for lawyer: {lawyer_name}")
-                params["keyword"] = lawyer_name
-                logger.info("Query scenario: person_cases")
-                return "feishu.v1.bitable.search_keyword", params
+        # 优先级2: 提取“X的案件/项目”主体关键词
+        entity_keyword = self._extract_entity_keyword(query)
+        if entity_keyword:
+            logger.info("Query scenario: entity_cases (%s)", entity_keyword)
+            params["keyword"] = entity_keyword
+            params["fields"] = self._build_keyword_fields()
+            self._maybe_ignore_default_view(params, query)
+            return "feishu.v1.bitable.search_keyword", params
 
         date_from = extra.get("date_from")
         date_to = extra.get("date_to")
+        time_from = extra.get("time_from")
+        time_to = extra.get("time_to")
+        if not date_from or not date_to:
+            parsed = parse_time_range(query)
+            if parsed:
+                date_from = date_from or parsed.date_from
+                date_to = date_to or parsed.date_to
+                time_from = time_from or parsed.time_from
+                time_to = time_to or parsed.time_to
         if date_from or date_to:
             params.update({
                 "field": self._guess_date_field(query),
                 "date_from": date_from,
                 "date_to": date_to,
             })
+            if time_from:
+                params["time_from"] = time_from
+            if time_to:
+                params["time_to"] = time_to
+            self._maybe_ignore_default_view(params, query)
             return "feishu.v1.bitable.search_date_range", params
 
         exact_field = self._extract_exact_field(query)
         if exact_field:
             params.update(exact_field)
+            self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: exact_match")
             return "feishu.v1.bitable.search_exact", params
 
         keyword = self._extract_keyword(query)
         if keyword:
             params["keyword"] = keyword
+            params["fields"] = self._build_keyword_fields()
+            self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: keyword")
             return "feishu.v1.bitable.search_keyword", params
 
@@ -658,6 +821,77 @@ class QuerySkill(BaseSkill):
                 return {"field": field, "value": value}
         return None
 
+    def _extract_entity_keyword(self, query: str) -> str:
+        """提取“X的案件/案子/项目”中的主体关键词。"""
+        compact = re.sub(r"[，。,.!?？!：:；;]", " ", query)
+        pattern = re.compile(
+            r"(?:查找|查询|搜索|查一查|查|找|看看|看下|查看|帮我查|请查)?\s*([^\s]{2,50}?)(?:的)?(?:案件|案子|项目)"
+        )
+        match = pattern.search(compact)
+        if not match:
+            return ""
+
+        candidate = match.group(1).strip()
+        candidate = re.sub(r"^(查找|查询|搜索|查一查|查|找|看看|看下|查看)", "", candidate).strip()
+        candidate = re.sub(r"^(我的|我负责的|我负责|自己的|有关|关于)", "", candidate).strip()
+        if not candidate:
+            return ""
+        if candidate in {"我", "自己", "所有", "全部", "今天", "明天", "本周", "本月"}:
+            return ""
+        return candidate
+
+    def _apply_keyword_relevance(self, records: list[dict[str, Any]], keyword: str) -> list[dict[str, Any]]:
+        """对结果进行本地相关性过滤，避免全表噪声记录。"""
+        target = keyword.strip().lower()
+        if not target:
+            return records
+
+        high_priority_fields = {
+            self._display_fields.get("title_left", "委托人"),
+            self._display_fields.get("title_right", "对方当事人"),
+            self._display_fields.get("case_no", "案号"),
+            "委托人",
+            "对方当事人",
+            "案号",
+            "项目ID",
+        }
+
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for record in records:
+            fields = record.get("fields_text") or record.get("fields") or {}
+            score = 0
+            for field_name, value in fields.items():
+                text = str(value or "").strip().lower()
+                if not text or target not in text:
+                    continue
+                score += 3 if str(field_name) in high_priority_fields else 1
+            scored.append((score, record))
+
+        matched = [record for score, record in scored if score > 0]
+        if not matched:
+            return records
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [record for score, record in scored if score > 0]
+
+    def _build_keyword_fields(self) -> list[str]:
+        fields: list[str] = []
+        for key in ("title_left", "title_right", "title_suffix", "case_no", "court", "stage"):
+            value = str(self._display_fields.get(key, "")).strip()
+            if value and value not in fields:
+                fields.append(value)
+        for value in self._keyword_fields:
+            field = str(value).strip()
+            if field and field not in fields:
+                fields.append(field)
+        return fields
+
+    def _maybe_ignore_default_view(self, params: dict[str, Any], query: str) -> None:
+        if self._should_keep_view_filter(query):
+            return
+        if "view_id" in params:
+            return
+        params.setdefault("ignore_default_view", True)
+
     def _extract_keyword(self, query: str) -> str:
         """
         提取关键词
@@ -676,6 +910,7 @@ class QuerySkill(BaseSkill):
         # 查询动作词（需要去除）
         action_words = [
             "找一下", "查一下", "查询", "搜索", "帮我", "请帮我", 
+            "查", "找", "搜", "查看", "看下", "看一下",
             "一下", "你能", "能不能", "可以", "请",
         ]
         
@@ -729,11 +964,17 @@ class QuerySkill(BaseSkill):
         df = self._display_fields  # 使用配置的字段名
         for i, record in enumerate(records, start=1):
             fields = record.get("fields_text") or record.get("fields", {})
+            left = self._clean_text_value(fields.get(df.get("title_left", ""), ""))
+            right = self._clean_text_value(fields.get(df.get("title_right", ""), ""))
+            suffix = self._clean_text_value(fields.get(df.get("title_suffix", ""), ""))
+            case_no = self._clean_text_value(fields.get(df.get("case_no", "案号"), ""))
+            court = self._clean_text_value(fields.get(df.get("court", "审理法院"), ""))
+            stage = self._clean_text_value(fields.get(df.get("stage", "程序阶段"), ""))
             item = (
-                f"{i}️⃣ {fields.get(df.get('title_left', ''), '')} vs {fields.get(df.get('title_right', ''), '')}｜{fields.get(df.get('title_suffix', ''), '')}\n"
-                f"   • 案号：{fields.get(df.get('case_no', '案号'), '')}\n"
-                f"   • 法院：{fields.get(df.get('court', '审理法院'), '')}\n"
-                f"   • 程序：{fields.get(df.get('stage', '程序阶段'), '')}\n"
+                f"{i}️⃣ {left} vs {right}｜{suffix}\n"
+                f"   • 案号：{case_no}\n"
+                f"   • 法院：{court}\n"
+                f"   • 程序：{stage}\n"
                 f"   • 🔗 查看详情：{record.get('record_url', '')}"
             )
             items.append(item)
@@ -768,6 +1009,13 @@ class QuerySkill(BaseSkill):
             reply_text=reply_text,
             reply_card=card,
         )
+
+    def _clean_text_value(self, value: Any) -> str:
+        text = str(value or "")
+        text = text.replace("\r", " ").replace("\n", " ")
+        text = re.sub(r"\s*,\s*", "，", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip(" ，")
 
     def _format_doc_result(self, documents: list[dict[str, Any]]) -> SkillResult:
         """格式化文档查询结果"""

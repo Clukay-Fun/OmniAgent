@@ -74,6 +74,17 @@ class UserManager:
         # 1. 尝试从缓存获取
         cached = self._cache.get(open_id)
         if cached is not None:
+            if not cached.name:
+                user_info = await self._fetch_user_info(open_id)
+                if user_info.get("name"):
+                    cached.name = user_info.get("name")
+                if user_info.get("mobile"):
+                    cached.mobile = user_info.get("mobile")
+                if user_info.get("email"):
+                    cached.email = user_info.get("email")
+                if cached.name and not cached.lawyer_name:
+                    cached.lawyer_name = cached.name
+                self._cache.set(cached)
             logger.debug(f"User profile loaded from cache: {open_id}")
             return cached
         
@@ -148,7 +159,7 @@ class UserManager:
             url = f"{self._settings.feishu.api_base}/contact/v3/users/{open_id}"
             params = {"user_id_type": "open_id"}
             
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
                 response = await client.get(
                     url,
                     params=params,

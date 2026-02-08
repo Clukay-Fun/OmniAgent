@@ -58,6 +58,7 @@ class MCPClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
+                trust_env=False,
                 limits=httpx.Limits(
                     max_keepalive_connections=10,
                     max_connections=20,

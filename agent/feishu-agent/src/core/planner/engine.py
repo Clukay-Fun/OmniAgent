@@ -218,8 +218,9 @@ class PlannerEngine:
 
         # 日期范围查询（优先于“xx的案件”文本模式）
         has_date_keyword = any(token in normalized for token in [
-            "今天", "明天", "后天", "本周", "下周", "本月", "上周", "上个月", "下个月", "这周", "这月", "期间", "到", "至", "最近", "近期"
-        ]) or bool(re.search(r"\d{1,2}月\d{1,2}", text)) or bool(re.search(r"\d{4}-\d{1,2}-\d{1,2}", text))
+            "今天", "明天", "后天", "本周", "下周", "本月", "上周", "上个月", "下个月", "这周", "这月", "期间", "到", "至", "最近", "近期",
+            "明早", "今早", "上午", "下午", "中午", "晚上", "今晚", "明晚", "凌晨", "傍晚",
+        ]) or bool(re.search(r"\d{1,2}月\d{1,2}", text)) or bool(re.search(r"\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}", text)) or bool(re.search(r"(?<!\d)\d{1,2}[-/\.]\d{1,2}(?!\d)", text)) or bool(re.search(r"\d{1,2}[:：]\d{1,2}|\d{1,2}点(?:\d{1,2}分?|半)?", text))
         if has_date_keyword and any(token in normalized for token in ["开庭", "庭审"]):
             return PlannerOutput(
                 intent="query_date_range",

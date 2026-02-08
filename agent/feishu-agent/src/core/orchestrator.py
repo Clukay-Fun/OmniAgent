@@ -626,6 +626,10 @@ class AgentOrchestrator:
         if date_range:
             extra["date_from"] = date_range.get("date_from")
             extra["date_to"] = date_range.get("date_to")
+            if date_range.get("time_from"):
+                extra["time_from"] = date_range.get("time_from")
+            if date_range.get("time_to"):
+                extra["time_to"] = date_range.get("time_to")
         
         return extra
 
@@ -873,7 +877,12 @@ class AgentOrchestrator:
         # 优先使用规则解析
         parsed = parse_time_range(text)
         if parsed:
-            return {"date_from": parsed.date_from, "date_to": parsed.date_to}
+            result = {"date_from": parsed.date_from, "date_to": parsed.date_to}
+            if parsed.time_from:
+                result["time_from"] = parsed.time_from
+            if parsed.time_to:
+                result["time_to"] = parsed.time_to
+            return result
         
         # 检查是否有时间相关词
         if not self._has_time_hint(text):
@@ -896,10 +905,18 @@ class AgentOrchestrator:
 
     def _has_time_hint(self, text: str) -> bool:
         """检查是否包含时间相关词"""
-        keywords = ["今天", "明天", "本周", "这周", "下周", "本月", "这个月"]
+        keywords = [
+            "今天", "明天", "后天", "本周", "这周", "下周", "本月", "这个月",
+            "上午", "下午", "中午", "晚上", "今早", "明早", "今晚", "明晚", "凌晨", "傍晚",
+        ]
         if any(keyword in text for keyword in keywords):
             return True
-        return bool(re.search(r"\d{1,2}月\d{1,2}[日号]?|\d{4}-\d{1,2}-\d{1,2}", text))
+        return bool(
+            re.search(
+                r"\d{1,2}月\d{1,2}[日号]?|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|\d{1,2}[-/\.]\d{1,2}|\d{1,2}[:：]\d{1,2}|\d{1,2}点(?:\d{1,2}分?|半)?",
+                text,
+            )
+        )
 
     def reload_config(self, config_path: str = "config/skills.yaml") -> None:
         """
