@@ -192,7 +192,7 @@ class AgentOrchestrator:
                 skills_config=self._skills_config,
             ),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
-            ReminderSkill(db_client=self._db, skills_config=self._skills_config),
+            ReminderSkill(db_client=self._db, mcp_client=self._mcp, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config, llm_client=self._llm),
         ]
         if getattr(self, "_market_skills", None):

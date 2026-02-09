@@ -9,7 +9,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, time, timedelta
+import random
+import re
 from typing import Any
 
 from src.core.skills.base import BaseSkill
@@ -55,6 +58,7 @@ class ReminderSkill(BaseSkill):
     def __init__(
         self,
         db_client: Any = None,
+        mcp_client: Any = None,
         skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
@@ -65,6 +69,7 @@ class ReminderSkill(BaseSkill):
             skills_config: 技能配置字典
         """
         self._db = db_client
+        self._mcp = mcp_client
         self._config = skills_config or {}
         
         # 从配置加载默认值
@@ -73,6 +78,14 @@ class ReminderSkill(BaseSkill):
             reminder_cfg = self._config.get("skills", {}).get("reminder", {})
         self._default_time = reminder_cfg.get("default_time", self.DEFAULT_TIME)
         self._default_time_hint = reminder_cfg.get("default_time_hint", self.DEFAULT_TIME_HINT)
+
+        calendar_cfg = reminder_cfg.get("calendar") if isinstance(reminder_cfg.get("calendar"), dict) else {}
+        self._calendar_enabled = bool(calendar_cfg.get("enabled", False))
+        self._calendar_id = str(calendar_cfg.get("calendar_id") or "").strip()
+        self._calendar_timezone = str(calendar_cfg.get("timezone") or "Asia/Shanghai").strip()
+        self._calendar_duration_minutes = int(calendar_cfg.get("duration_minutes") or 30)
+        self._calendar_tool_create = str(calendar_cfg.get("tool_create") or "feishu.v1.calendar.event.create")
+        self._calendar_title_prefix = str(calendar_cfg.get("title_prefix") or "提醒：")
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -94,7 +107,11 @@ class ReminderSkill(BaseSkill):
 
         # Planner 路由优先
         planner_intent = str(planner_plan.get("intent") or "") if isinstance(planner_plan, dict) else ""
-        planner_params = planner_plan.get("params") if isinstance(planner_plan, dict) and isinstance(planner_plan.get("params"), dict) else {}
+        planner_params: dict[str, Any] = {}
+        if isinstance(planner_plan, dict):
+            raw_params: Any = planner_plan.get("params")
+            if isinstance(raw_params, dict):
+                planner_params = {str(k): v for k, v in raw_params.items()}
         if planner_intent == "list_reminders":
             return await self._list_reminders(user_id)
         if planner_intent == "cancel_reminder":
@@ -163,13 +180,65 @@ class ReminderSkill(BaseSkill):
             )
         
         priority = self._extract_priority(query)
-        if isinstance(planner_params, dict):
-            planner_priority = str(planner_params.get("priority") or "").strip().lower()
-            if planner_priority in {"high", "medium", "low"}:
-                priority = planner_priority
+        planner_priority = str(planner_params.get("priority") or "").strip().lower()
+        if planner_priority in {"high", "medium", "low"}:
+            priority = planner_priority
+
+        calendar_result: dict[str, Any] | None = None
+        calendar_error: str | None = None
+        if self._calendar_enabled:
+            try:
+                calendar_result = await self._create_calendar_event(
+                    query=query,
+                    content=content,
+                    remind_time=remind_time,
+                    priority=priority,
+                    planner_params=planner_params,
+                    context=context,
+                )
+            except Exception as exc:
+                calendar_error = str(exc)
+                logger.warning("Create team calendar event failed: %s", exc)
+
+        if calendar_result:
+            time_str = remind_time.strftime("%Y-%m-%d %H:%M")
+            recurrence_text = calendar_result.get("recurrence_text")
+            reply_lines = [
+                "✅ 提醒已创建到团队日历",
+                "",
+                f"📌 内容：{content}",
+                f"⏰ 时间：{time_str}",
+            ]
+            if recurrence_text:
+                reply_lines.append(f"🔁 重复：{recurrence_text}")
+            if calendar_result.get("event_url"):
+                reply_lines.append(f"🔗 日历事件：{calendar_result.get('event_url')}")
+            if time_hint:
+                reply_lines.append("")
+                reply_lines.append(f"💡 {time_hint}")
+
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={
+                    "action": "create",
+                    "provider": "calendar",
+                    "persisted": True,
+                    "calendar_id": calendar_result.get("calendar_id"),
+                    "event_id": calendar_result.get("event_id"),
+                    "event_url": calendar_result.get("event_url"),
+                    "content": content,
+                    "remind_time": time_str,
+                    "priority": priority,
+                    "chat_id": chat_id,
+                    "rrule": calendar_result.get("rrule", ""),
+                },
+                message="团队日历提醒创建成功",
+                reply_text="\n".join(reply_lines),
+            )
         
         try:
-            reminder_id = await self._save_reminder(
+            reminder_id, persisted = await self._save_reminder(
                 user_id=user_id,
                 chat_id=chat_id,
                 content=content,
@@ -188,6 +257,12 @@ class ReminderSkill(BaseSkill):
             if time_hint:
                 reply_lines.append("")
                 reply_lines.append(f"💡 {time_hint}")
+            if not persisted:
+                reply_lines.append("")
+                reply_lines.append("⚠️ 当前数据库不可用，已创建临时提醒（服务重启后可能丢失）。")
+            if calendar_error:
+                reply_lines.append("")
+                reply_lines.append("⚠️ 团队日历创建失败，已降级为本地提醒。")
             
             reply_text = "\n".join(reply_lines)
             
@@ -197,12 +272,14 @@ class ReminderSkill(BaseSkill):
                 data={
                     "action": "create",
                     "reminder_id": reminder_id,
+                    "persisted": persisted,
                     "content": content,
                     "remind_time": time_str,
                     "priority": priority,
                     "chat_id": chat_id,
+                    "calendar_error": calendar_error,
                 },
-                message="提醒创建成功",
+                message="提醒创建成功" if persisted else "提醒已临时创建",
                 reply_text=reply_text,
             )
             
@@ -217,18 +294,27 @@ class ReminderSkill(BaseSkill):
 
     def _extract_content(self, query: str) -> str | None:
         """从 Query 中提取提醒内容的核心部分 (去除无关词)"""
-        # 移除常见的提醒关键词
-        content = query
-        prefixes = [
-            "提醒我", "帮我提醒", "提醒一下", "记得", "别忘了",
-            "到时候", "待办", "备忘",
+        content = str(query or "").strip()
+
+        # 移除开头动作词
+        lead_patterns = [
+            r"^(请)?(帮我)?(新增|添加|创建|设置)?提醒(一下)?[：:,，\s]*",
+            r"^(请)?(帮我)?提醒我[：:,，\s]*",
+            r"^(请)?(帮我)?(新增|添加|创建)待办(事项)?[：:,，\s]*",
+            r"^(记得|别忘了)[：:,，\s]*",
         ]
-        for prefix in prefixes:
-            if content.startswith(prefix):
-                content = content[len(prefix):]
+        for pattern in lead_patterns:
+            new_content = re.sub(pattern, "", content)
+            if new_content != content:
+                content = new_content
                 break
-            if prefix in content:
-                content = content.replace(prefix, "")
+
+        # 移除常见干扰词
+        noise_tokens = ["提醒", "提醒一下", "到时候", "待办", "备忘", "新增", "创建", "设置"]
+        for token in noise_tokens:
+            if content == token:
+                content = ""
+                break
         
         # 移除时间表达式（简化处理）
         time_patterns = [
@@ -237,9 +323,11 @@ class ReminderSkill(BaseSkill):
         ]
         for pattern in time_patterns:
             content = content.replace(pattern, "")
-        
+
         # 清理
         content = content.strip("，。！？ ")
+        if content in {"新增提醒", "创建提醒", "设置提醒", "提醒"}:
+            return None
         return content if content else None
 
     def _extract_priority(self, query: str) -> str:
@@ -550,7 +638,7 @@ class ReminderSkill(BaseSkill):
         content: str,
         remind_time: datetime,
         priority: str,
-    ) -> int:
+    ) -> tuple[int, bool]:
         """
         持久化提醒记录
 
@@ -561,22 +649,28 @@ class ReminderSkill(BaseSkill):
             priority: 优先级
 
         返回:
-            int: 提醒 ID
+            tuple[int, bool]: (提醒 ID, 是否已持久化)
         """
         if self._db:
-            return await self._db.create_reminder(
-                user_id=user_id,
-                chat_id=chat_id,
-                content=content,
-                due_at=remind_time,
-                priority=priority,
-                status="pending",
-                source="manual",
-            )
+            try:
+                reminder_id = await self._db.create_reminder(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    content=content,
+                    due_at=remind_time,
+                    priority=priority,
+                    status="pending",
+                    source="manual",
+                )
+                return reminder_id, True
+            except Exception as exc:
+                if not self._is_db_unavailable_error(exc):
+                    raise
+                logger.warning("Reminder DB unavailable, fallback to mock storage: %s", exc)
+                # 降级为临时提醒，避免请求失败
+                self._db = None
 
         # Mock：生成临时 ID
-        import random
-
         reminder_id = random.randint(1000, 9999)
         logger.info(
             "Reminder saved (mock): %s - %s",
@@ -589,5 +683,118 @@ class ReminderSkill(BaseSkill):
                 "chat_id": chat_id,
             },
         )
-        return reminder_id
+        return reminder_id, False
+
+    def _is_db_unavailable_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        keywords = [
+            "password authentication failed",
+            "authentication failed",
+            "connection refused",
+            "could not connect",
+            "timeout",
+            "connection reset",
+            "temporary failure",
+            "too many connections",
+            "server closed the connection",
+        ]
+        return any(token in message for token in keywords)
+
+    async def _create_calendar_event(
+        self,
+        query: str,
+        content: str,
+        remind_time: datetime,
+        priority: str,
+        planner_params: dict[str, Any],
+        context: SkillContext,
+    ) -> dict[str, Any] | None:
+        if not self._mcp or not self._calendar_enabled:
+            return None
+
+        calendar_id = self._resolve_calendar_id(planner_params, context)
+        if not calendar_id:
+            return None
+
+        recurrence = self._extract_recurrence_rule(query, remind_time)
+        end_time = remind_time + timedelta(minutes=max(self._calendar_duration_minutes, 5))
+
+        title = f"{self._calendar_title_prefix}{content}" if self._calendar_title_prefix else content
+        description = f"来源：OmniAgent\n优先级：{priority}"
+
+        params: dict[str, Any] = {
+            "calendar_id": calendar_id,
+            "summary": title,
+            "description": description,
+            "start_at": remind_time.strftime("%Y-%m-%d %H:%M"),
+            "end_at": end_time.strftime("%Y-%m-%d %H:%M"),
+            "timezone": self._calendar_timezone,
+            "need_notification": True,
+        }
+        if recurrence.get("rrule"):
+            params["rrule"] = recurrence["rrule"]
+
+        result = await self._mcp.call_tool(self._calendar_tool_create, params)
+        return {
+            "calendar_id": result.get("calendar_id") or calendar_id,
+            "event_id": result.get("event_id") or "",
+            "event_url": result.get("event_url") or "",
+            "rrule": params.get("rrule", ""),
+            "recurrence_text": recurrence.get("text", ""),
+        }
+
+    def _resolve_calendar_id(self, planner_params: dict[str, Any], context: SkillContext) -> str:
+        extra = context.extra or {}
+        candidates = [
+            planner_params.get("calendar_id"),
+            extra.get("calendar_id"),
+            self._calendar_id,
+            os.getenv("FEISHU_CALENDAR_ID"),
+            os.getenv("FEISHU_TEAM_CALENDAR_ID"),
+        ]
+        for value in candidates:
+            calendar_id = str(value or "").strip()
+            if calendar_id:
+                return calendar_id
+        return ""
+
+    def _extract_recurrence_rule(self, query: str, remind_time: datetime) -> dict[str, str]:
+        normalized = query.replace(" ", "")
+
+        if any(token in normalized for token in ["每个工作日", "工作日", "周一到周五", "周一至周五"]):
+            return {
+                "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+                "text": "工作日",
+            }
+
+        if any(token in normalized for token in ["每天", "每日", "日常", "每一天"]):
+            return {
+                "rrule": "FREQ=DAILY",
+                "text": "每天",
+            }
+
+        week_match = re.search(r"每周([一二三四五六日天])", normalized)
+        if week_match:
+            day_map = {
+                "一": "MO",
+                "二": "TU",
+                "三": "WE",
+                "四": "TH",
+                "五": "FR",
+                "六": "SA",
+                "日": "SU",
+                "天": "SU",
+            }
+            byday = day_map.get(week_match.group(1), "")
+            if byday:
+                return {
+                    "rrule": f"FREQ=WEEKLY;BYDAY={byday}",
+                    "text": f"每周{week_match.group(1)}",
+                }
+
+        # 无明确重复词默认单次
+        return {
+            "rrule": "",
+            "text": "",
+        }
 # endregion

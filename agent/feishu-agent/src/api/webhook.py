@@ -412,12 +412,5 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
 
     except Exception as exc:
         logger.error("Error processing message: %s", exc, exc_info=True)
-        error_text = "抱歉，处理您的请求时遇到了问题，请稍后重试。"
-        if not chat_id.startswith("test-"):
-            try:
-                await send_message(settings, chat_id, "text", {"text": error_text}, reply_message_id=message_id)
-                return True
-            except Exception:
-                return False
         return False
 # endregion

@@ -121,6 +121,13 @@ reminder:
   default_time: "18:00"
   scan_interval_seconds: 60
   lock_timeout_seconds: 300
+  calendar:
+    enabled: true
+    calendar_id: ""
+    timezone: "Asia/Shanghai"
+    duration_minutes: 30
+    tool_create: "feishu.v1.calendar.event.create"
+    title_prefix: "提醒："
   priority_keywords:
     high: [紧急, 重要, 马上]
     low: [有空, 方便时]

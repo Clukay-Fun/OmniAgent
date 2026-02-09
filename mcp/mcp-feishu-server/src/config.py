@@ -76,6 +76,13 @@ class DocSettings(BaseModel):
     search: DocSearchSettings = Field(default_factory=DocSearchSettings)
 
 
+class CalendarSettings(BaseModel):
+    """飞书日历配置"""
+    default_calendar_id: str = ""
+    timezone: str = "Asia/Shanghai"
+    default_duration_minutes: int = 30
+
+
 class ToolsSettings(BaseModel):
     enabled: list[str] = Field(default_factory=list)
 
@@ -110,6 +117,7 @@ class Settings(BaseModel):
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     bitable: BitableSettings = Field(default_factory=BitableSettings)
     doc: DocSettings = Field(default_factory=DocSettings)
+    calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
@@ -159,6 +167,9 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "BITABLE_TABLE_ID": ["bitable", "default_table_id"],
         "BITABLE_VIEW_ID": ["bitable", "default_view_id"],
         "DOC_FOLDER_TOKEN": ["doc", "search", "default_folder_token"],
+        "FEISHU_CALENDAR_ID": ["calendar", "default_calendar_id"],
+        "FEISHU_CALENDAR_TIMEZONE": ["calendar", "timezone"],
+        "FEISHU_CALENDAR_DEFAULT_DURATION_MINUTES": ["calendar", "default_duration_minutes"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

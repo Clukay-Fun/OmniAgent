@@ -104,6 +104,15 @@ doc:
     default_limit: 10
 
 # ------------------------------------------------------------
+# 日历配置
+# ------------------------------------------------------------
+calendar:
+  # 公共/团队日历 ID（建议通过环境变量注入）
+  default_calendar_id: ${FEISHU_CALENDAR_ID:-}
+  timezone: ${FEISHU_CALENDAR_TIMEZONE:-Asia/Shanghai}
+  default_duration_minutes: ${FEISHU_CALENDAR_DEFAULT_DURATION_MINUTES:-30}
+
+# ------------------------------------------------------------
 # 工具配置
 # ------------------------------------------------------------
 tools:
@@ -120,6 +129,7 @@ tools:
     - "feishu.v1.bitable.record.update"   # 更新记录
     - "feishu.v1.bitable.record.delete"   # 删除记录
     - "feishu.v1.doc.search"              # 文档搜索
+    - "feishu.v1.calendar.event.create"   # 创建日历事件
     # Phase 2
     # - "feishu.v1.file.upload"
     # - "feishu.v1.file.download"

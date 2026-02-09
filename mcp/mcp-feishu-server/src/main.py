@@ -26,6 +26,7 @@ print(f"App ID: {settings.feishu.app_id}")
 print(f"Bitable App Token: {settings.bitable.default_app_token}")
 print(f"Bitable Table ID: {settings.bitable.default_table_id}")
 print(f"Bitable View ID: {settings.bitable.default_view_id}")
+print(f"Calendar ID: {settings.calendar.default_calendar_id}")
 print(f"=========================")
 # endregion
 
