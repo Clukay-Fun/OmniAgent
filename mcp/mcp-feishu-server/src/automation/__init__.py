@@ -4,6 +4,9 @@ from src.automation.service import AutomationService, AutomationValidationError
 from src.automation.snapshot import SnapshotStore
 from src.automation.store import IdempotencyStore
 from src.automation.checkpoint import CheckpointStore
+from src.automation.engine import AutomationEngine
+from src.automation.rules import RuleMatcher, RuleStore
+from src.automation.actions import ActionExecutor
 
 __all__ = [
     "AutomationService",
@@ -11,4 +14,8 @@ __all__ = [
     "SnapshotStore",
     "IdempotencyStore",
     "CheckpointStore",
+    "AutomationEngine",
+    "RuleMatcher",
+    "RuleStore",
+    "ActionExecutor",
 ]

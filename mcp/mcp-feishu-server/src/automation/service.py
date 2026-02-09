@@ -6,13 +6,15 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.automation.checkpoint import CheckpointStore
+from src.automation.engine import AutomationEngine
+from src.automation.rules import build_business_hash_payload
 from src.automation.snapshot import SnapshotStore
 from src.automation.store import IdempotencyStore
 from src.config import Settings
-from src.feishu.client import FeishuAPIError, FeishuClient
+from src.feishu.client import FeishuAPIError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -42,9 +44,9 @@ def _to_int_timestamp(value: Any) -> int:
 
 
 class AutomationService:
-    """自动化执行服务（Phase A: 事件、快照、幂等、扫描）。"""
+    """自动化执行服务（Phase A/B: 事件、快照、规则、动作、幂等、扫描）。"""
 
-    def __init__(self, settings: Settings, client: FeishuClient) -> None:
+    def __init__(self, settings: Settings, client: Any) -> None:
         self._settings = settings
         self._client = client
 
@@ -52,6 +54,10 @@ class AutomationService:
         if not storage_root.is_absolute():
             storage_root = Path.cwd() / storage_root
         storage_root.mkdir(parents=True, exist_ok=True)
+
+        rules_file = Path(settings.automation.rules_file)
+        if not rules_file.is_absolute():
+            rules_file = Path.cwd() / rules_file
 
         self._snapshot = SnapshotStore(storage_root / "snapshot.json")
         self._idempotency = IdempotencyStore(
@@ -61,6 +67,7 @@ class AutomationService:
             max_keys=settings.automation.max_dedupe_keys,
         )
         self._checkpoint = CheckpointStore(storage_root / "checkpoint.json")
+        self._engine = AutomationEngine(settings, client, rules_file)
 
     def _ensure_enabled(self) -> None:
         if not self._settings.automation.enabled:
@@ -109,12 +116,7 @@ class AutomationService:
         changed = diff.get("changed") or {}
         if not isinstance(changed, dict):
             changed = {}
-        payload = {
-            "table_id": table_id,
-            "record_id": record_id,
-            "changed": changed,
-        }
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        encoded = build_business_hash_payload(table_id, record_id, changed)
         digest = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
         return f"{table_id}:{record_id}:{digest}"
 
@@ -160,7 +162,8 @@ class AutomationService:
     @staticmethod
     def _extract_record_meta(item: dict[str, Any]) -> tuple[str, dict[str, Any], int]:
         record_id = _normalize_record_id(item.get("record_id") or item.get("recordId") or item.get("id"))
-        fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+        raw_fields = item.get("fields")
+        fields = cast(dict[str, Any], raw_fields) if isinstance(raw_fields, dict) else {}
         modified_time = _to_int_timestamp(
             item.get("last_modified_time")
             or item.get("lastModifiedTime")
@@ -211,6 +214,15 @@ class AutomationService:
             }
 
         self._idempotency.mark_business(business_key)
+        rule_execution = await self._engine.execute(
+            app_token=app_token,
+            table_id=table_id,
+            record_id=record_id,
+            event_id=event_id,
+            old_fields=old_fields,
+            current_fields=current_fields,
+            diff=diff,
+        )
         self._snapshot.save(table_id, record_id, current_fields)
         changed = diff.get("changed") or {}
         return {
@@ -220,6 +232,7 @@ class AutomationService:
             "record_id": record_id,
             "changed_fields": sorted(changed.keys()) if isinstance(changed, dict) else [],
             "business_key": business_key,
+            "rules": rule_execution,
         }
 
     async def handle_event(self, payload: dict[str, Any]) -> dict[str, Any]:

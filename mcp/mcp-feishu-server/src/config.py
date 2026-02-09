@@ -118,6 +118,7 @@ class AutomationSettings(BaseModel):
     verification_token: str = ""
     encrypt_key: str = ""
     storage_dir: str = "automation_data"
+    rules_file: str = "automation_rules.yaml"
     event_ttl_seconds: int = 604800
     business_ttl_seconds: int = 604800
     max_dedupe_keys: int = 50000
@@ -191,6 +192,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_EVENT_VERIFY_TOKEN": ["automation", "verification_token"],
         "FEISHU_EVENT_ENCRYPT_KEY": ["automation", "encrypt_key"],
         "AUTOMATION_STORAGE_DIR": ["automation", "storage_dir"],
+        "AUTOMATION_RULES_FILE": ["automation", "rules_file"],
         "AUTOMATION_EVENT_TTL_SECONDS": ["automation", "event_ttl_seconds"],
         "AUTOMATION_BUSINESS_TTL_SECONDS": ["automation", "business_ttl_seconds"],
         "AUTOMATION_MAX_DEDUPE_KEYS": ["automation", "max_dedupe_keys"],

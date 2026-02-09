@@ -1,6 +1,6 @@
 # 自动化设计评审文档
 
-状态：评审中（设计已完成，运行时未启用）
+状态：开发中（Phase A/B 已实现，Phase C 待实现）
 
 本文档为自动化模块的“可直接评审”版本，包含目标、边界、架构、流程、接口草案、数据模型、幂等策略与上线方案。
 
@@ -14,17 +14,19 @@
 
 - 事件接入设计（`bitable_record_changed` / `bitable_field_changed`）
 - 快照对比与规则匹配
-- 动作执行（写表、建日历、发消息）
+- 动作执行（`log.write`、写表、建日历）
 - 幂等、重试、轮询补偿
 
 不包含：
 
-- Phase B/C 的完整规则动作链落地
+- Phase C 的补偿轮询与重试死信
+- 消息类动作（IM）
 - 生产环境监控平台建设（仅定义埋点与日志字段）
 
 ## 3. 目录与关联文件
 
 - `rules.template.yaml`：规则模板（仅示例，不被系统加载）
+- `../automation_rules.yaml`：运行时规则文件（系统加载）
 - `events.sample.json`：飞书事件样例（字段待以真实抓包为准）
 - `fields.yaml`：表字段约定与自动化状态字段规范
 - `todo.md`：实施任务拆解与验收项
@@ -108,20 +110,20 @@ def handle_record_changed(event):
     return "triggered"
 ```
 
-## 7. 接口（设计草案）
+## 7. 接口（当前状态）
 
 ### 7.1 事件入口
 
-- `POST /feishu/events`（预留路径，待实现）
+- `POST /feishu/events`（已实现）
   - 功能：接收飞书事件，支持 `url_verification`
   - 输入：`events.sample.json` 结构
   - 输出：`{"status":"ok"}` / `{"challenge":"..."}`
 
 ### 7.2 调试入口
 
-- `POST /automation/init`（预留调试入口，待实现）
+- `POST /automation/init`（已实现）
   - 功能：初始化快照（首次）
-- `POST /automation/scan?table_id=...`（预留调试入口，待实现）
+- `POST /automation/scan?table_id=...`（已实现）
   - 功能：手动触发一次补偿扫描
 
 ## 8. 数据模型草案
@@ -164,5 +166,5 @@ def handle_record_changed(event):
 
 ## 12. 约定
 
-- 当前仓库仅保留自动化设计文档，不启用运行时自动化入口
-- 进入 Phase B 前，先完成规则模板评审并确认字段契约
+- 运行时已启用 Phase A/B：事件入口、规则匹配、动作执行、状态回写
+- 进入 Phase C 前，优先确认轮询补偿窗口和重试策略

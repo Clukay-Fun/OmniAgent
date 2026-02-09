@@ -1,0 +1,48 @@
+meta:
+  version: "1.1"
+  status: runtime
+  notes:
+    - "将 enabled 改为 true 后生效"
+
+rules:
+  - rule_id: R001
+    name: "案件分类改为劳动争议"
+    enabled: false
+    priority: 100
+    table:
+      table_id: tbl_xxx
+
+    trigger:
+      field: 案件分类
+      condition:
+        changed: true
+        equals: 劳动争议
+
+    pipeline:
+      before_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 处理中
+            自动化_最近错误: ""
+
+      actions:
+        - type: log.write
+          level: info
+          message: "规则命中：{record_id}"
+        # - type: calendar.create
+        #   summary_template: "劳动争议跟进：{案号}"
+        #   description_template: "委托人：{委托人}"
+        #   start_field: 开庭日
+        #   duration_minutes: 30
+
+      success_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 成功
+            自动化_最近错误: ""
+
+      error_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 失败
+            自动化_最近错误: "{error}"

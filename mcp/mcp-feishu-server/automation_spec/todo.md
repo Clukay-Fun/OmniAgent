@@ -1,6 +1,6 @@
 # 自动化实施任务单 v1.1（评审版）
 
-状态：评审中（设计保留，运行时未启用）
+状态：开发中（Phase A/B 已落地，Phase C 待完成）
 
 ## 0. 评审结论门槛
 
@@ -9,47 +9,47 @@
 - [ ] 事件样例字段已抓包确认（以真实回调为准）
 - [ ] 凭证边界已确认（testA/testB）
 
-## 1. Phase A - 事件与存储底座（待实现）
+## 1. Phase A - 事件与存储底座
 
 目标：具备“可接收、可对比、可去重”的最小闭环
 
-- [ ] A1 新增事件入口 `/feishu/events`
-  - [ ] 支持 `url_verification`
-  - [ ] 支持 token 校验
-  - [ ] 可选支持 encrypt 解密
-- [ ] A2 新增快照模块 `snapshot`
-  - [ ] `load/save/diff/init_full_snapshot`
-- [ ] A3 新增幂等模块 `store`
-  - [ ] `event_key` 去重
-  - [ ] `business_key` 去重
-- [ ] A4 新增 checkpoint 模块
-  - [ ] 首次初始化游标
-  - [ ] 增量扫描游标
+- [x] A1 新增事件入口 `/feishu/events`
+  - [x] 支持 `url_verification`
+  - [x] 支持 token 校验
+  - [x] 可选支持 encrypt 解密
+- [x] A2 新增快照模块 `snapshot`
+  - [x] `load/save/diff/init_full_snapshot`
+- [x] A3 新增幂等模块 `store`
+  - [x] `event_key` 去重
+  - [x] `business_key` 去重
+- [x] A4 新增 checkpoint 模块
+  - [x] 首次初始化游标
+  - [x] 增量扫描游标
 
 交付标准（DoD）：
 
-- [ ] 单测覆盖 snapshot diff 与去重逻辑
-- [ ] 首次初始化不触发业务动作
+- [x] 单测覆盖 snapshot diff 与去重逻辑
+- [x] 首次初始化不触发业务动作
 
 ## 2. Phase B - 规则与动作引擎
 
 目标：在字段变化时稳定触发动作链
 
-- [ ] B1 规则加载与匹配（rules + engine）
-  - [ ] 支持 `changed/equals/in/any_field_changed`
-  - [ ] 支持 `exclude_fields`
-- [ ] B2 动作执行器（actions）
-  - [ ] `log.write`
-  - [ ] `bitable.update`
-  - [ ] `calendar.create`（可开关）
-- [ ] B3 状态可观测
-  - [ ] `自动化_执行状态`（处理中/成功/失败）
-  - [ ] `自动化_最近错误`
+- [x] B1 规则加载与匹配（rules + engine）
+  - [x] 支持 `changed/equals/in/any_field_changed`
+  - [x] 支持 `exclude_fields`
+- [x] B2 动作执行器（actions）
+  - [x] `log.write`
+  - [x] `bitable.update`
+  - [x] `calendar.create`（可开关）
+- [x] B3 状态可观测
+  - [x] `自动化_执行状态`（处理中/成功/失败）
+  - [x] `自动化_最近错误`
 
 交付标准（DoD）：
 
-- [ ] 命中规则后可见“处理中 -> 成功/失败”
-- [ ] 失败信息可直接在表中查看
+- [x] 命中规则后可见“处理中 -> 成功/失败”
+- [x] 失败信息可直接在表中查看
 
 ## 3. Phase C - 补偿与稳定性
 

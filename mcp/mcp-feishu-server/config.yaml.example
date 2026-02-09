@@ -131,6 +131,7 @@ automation:
   verification_token: ${FEISHU_EVENT_VERIFY_TOKEN:-}
   encrypt_key: ${FEISHU_EVENT_ENCRYPT_KEY:-}
   storage_dir: ${AUTOMATION_STORAGE_DIR:-automation_data}
+  rules_file: ${AUTOMATION_RULES_FILE:-automation_rules.yaml}
   event_ttl_seconds: ${AUTOMATION_EVENT_TTL_SECONDS:-604800}
   business_ttl_seconds: ${AUTOMATION_BUSINESS_TTL_SECONDS:-604800}
   max_dedupe_keys: ${AUTOMATION_MAX_DEDUPE_KEYS:-50000}
