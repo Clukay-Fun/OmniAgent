@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "version": "1.1",
+    "status": "design",
+    "description": "飞书多维表格事件样例（评审版）。字段以真实抓包为准。"
+  },
+  "contracts": {
+    "required_event_types": [
+      "drive.file.bitable_record_changed_v1",
+      "drive.file.bitable_field_changed_v1"
+    ],
+    "required_header_fields": [
+      "event_id",
+      "event_type"
+    ],
+    "required_record_changed_fields": [
+      "table_id",
+      "record_id"
+    ],
+    "security": {
+      "token_verification": true,
+      "encrypt_supported": true
+    }
+  },
+  "samples": {
+    "url_verification": {
+      "request": {
+        "type": "url_verification",
+        "challenge": "abc123"
+      },
+      "response": {
+        "challenge": "abc123"
+      }
+    },
+    "record_changed": {
+      "header": {
+        "event_id": "evt_xxx",
+        "event_type": "drive.file.bitable_record_changed_v1",
+        "token": "verification_token"
+      },
+      "event": {
+        "app_token": "app_token_xxx",
+        "table_id": "tbl_xxx",
+        "record_id": "rec_xxx",
+        "action_type": "record_edited",
+        "operator_id": "ou_xxx",
+        "timestamp": "1739000000000"
+      }
+    },
+    "field_changed": {
+      "header": {
+        "event_id": "evt_xxx",
+        "event_type": "drive.file.bitable_field_changed_v1",
+        "token": "verification_token"
+      },
+      "event": {
+        "app_token": "app_token_xxx",
+        "table_id": "tbl_xxx",
+        "field_id": "fld_xxx",
+        "action_type": "field_updated",
+        "operator_id": "ou_xxx",
+        "timestamp": "1739000001000"
+      }
+    },
+    "encrypted_envelope": {
+      "encrypt": "base64_aes_cbc_payload"
+    }
+  }
+}

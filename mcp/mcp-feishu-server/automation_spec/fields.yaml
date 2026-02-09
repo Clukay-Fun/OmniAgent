@@ -1,0 +1,77 @@
+# 表字段约定 v1.1（评审版）
+
+meta:
+  version: "1.1"
+  status: design
+  owner: TBD
+  reviewed_at: TBD
+
+conventions:
+  field_type_enum:
+    text: 文本
+    datetime: 日期时间
+    single_select: 单选
+    multi_select: 多选
+    person: 人员
+    number: 数字
+    link: 关联记录
+  automation_fields:
+    - 自动化_执行状态
+    - 自动化_最近错误
+  status_values:
+    - 处理中
+    - 成功
+    - 失败
+
+tables:
+  - table_name: 案件项目总库
+    table_id: tblDTbRZRB89q8GJ
+    purpose: 案件主台账
+    keys:
+      primary_hint: 项目ID
+      business_hints: [案号, 委托人]
+    fields:
+      - name: 案件分类
+        type: single_select
+        required: false
+        options: [劳动争议, 民商事, 刑事, 行政, 非诉]
+        used_by_rules:
+          - R001
+
+      - name: 案号
+        type: text
+        required: false
+        used_by_rules:
+          - R001
+
+      - name: 开庭日
+        type: datetime
+        required: false
+        used_by_rules:
+          - R001
+
+      - name: 自动化_执行状态
+        type: single_select
+        required: false
+        options: [处理中, 成功, 失败]
+        writable_by_automation: true
+
+      - name: 自动化_最近错误
+        type: text
+        required: false
+        max_length_hint: 500
+        writable_by_automation: true
+
+validation:
+  - rule_id: V001
+    description: 自动化状态字段必须存在
+    checks:
+      - table: 案件项目总库
+        must_have_fields: [自动化_执行状态, 自动化_最近错误]
+
+  - rule_id: V002
+    description: 自动化_执行状态 必须为约定枚举
+    checks:
+      - table: 案件项目总库
+        field: 自动化_执行状态
+        allowed_values: [处理中, 成功, 失败]

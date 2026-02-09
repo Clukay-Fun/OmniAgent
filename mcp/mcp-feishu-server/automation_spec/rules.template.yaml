@@ -1,0 +1,103 @@
+# 自动化规则模板 v1.1（评审版）
+# 说明：仅文档示例，不被系统加载执行。
+
+meta:
+  version: "1.1"
+  status: "design"
+  owner: "TBD"
+  reviewed_at: "TBD"
+  notes:
+    - "模板与 README 的流程/接口草案对齐"
+    - "支持事件触发与轮询补偿统一规则结构"
+
+# 约定：
+# - 占位变量使用 {字段名}，如 {案号}、{委托人}
+# - 状态字段：自动化_执行状态 / 自动化_最近错误
+# - condition 支持：changed / equals / in / any_field_changed
+
+rules:
+  - rule_id: R001
+    name: "示例-案件分类改为劳动争议"
+    enabled: false
+    priority: 100
+    table:
+      table_id: tbl_xxx
+      table_name: 案件项目总库
+
+    trigger:
+      field: 案件分类
+      condition:
+        changed: true
+        equals: 劳动争议
+        old_not_equals_new: true
+
+    guard:
+      idempotency_scope: business
+      dedupe_keys:
+        - record_id
+        - table_id
+        - field_hash
+      cooldown_seconds: 0
+
+    pipeline:
+      before_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 处理中
+            自动化_最近错误: ""
+
+      actions:
+        - type: log.write
+          level: info
+          message: "规则命中：{record_id} 案件分类={案件分类}"
+
+        # 如后续恢复日历动作，可取消注释
+        # - type: calendar.create
+        #   summary_template: "劳动争议案件跟进：{案号}"
+        #   description_template: "委托人：{委托人}；对方：{对方当事人}"
+        #   start_field: 开庭日
+        #   duration_minutes: 30
+
+      success_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 成功
+            自动化_最近错误: ""
+
+      error_actions:
+        - type: bitable.update
+          fields:
+            自动化_执行状态: 失败
+            自动化_最近错误: "{error}"
+
+    observability:
+      emit_metrics: true
+      metric_tags:
+        - rule_id
+        - table_id
+      log_fields:
+        - event_id
+        - record_id
+        - action_type
+        - duration_ms
+
+  - rule_id: R002
+    name: "示例-任意字段变更（排除自动化字段）"
+    enabled: false
+    priority: 10
+    table:
+      table_id: tbl_xxx
+      table_name: 案件项目总库
+
+    trigger:
+      any_field_changed: true
+      exclude_fields:
+        - 自动化_执行状态
+        - 自动化_最近错误
+        - 自动化_最后触发时间
+
+    pipeline:
+      actions:
+        - type: log.write
+          level: info
+          message: "任意字段变更：{record_id}"

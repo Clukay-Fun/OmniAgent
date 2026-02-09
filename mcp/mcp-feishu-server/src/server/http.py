@@ -177,5 +177,7 @@ def _get_field_type_name(field_type: int | None) -> str:
         1002: "修改人",
         1003: "修改时间",
     }
-    return type_map.get(field_type, "未知")
+    if field_type is None:
+        return "未知"
+    return type_map.get(int(field_type), "未知")
 # endregion
