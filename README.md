@@ -135,6 +135,12 @@ OmniAgent/
 - PostgreSQL 14+（Reminder 需要）
 - 飞书开放平台应用
 
+### 本地端口约定
+
+- MCP Feishu Server（testA 数据侧）：`8081`
+- Feishu Agent（testB 机器人侧）：`8088`
+- ngrok 本地 mux：`8090`
+
 ### 1. 启动 MCP Server
 
 ```bash
@@ -157,12 +163,29 @@ python run_server.py
 
 本地开发模式：`python run_dev.py`（默认监听 `8088`）
 
-### 3. 配置飞书 Webhook
+### 3. 启动本地 ngrok mux（单域名路径转发）
 
-在飞书开放平台配置事件订阅地址：`https://<your-ngrok-domain>/feishu/webhook`
+```bash
+python scripts/ngrok_mux.py --port 8090
+```
+
+当前路由：
+- `/feishu/webhook` -> `http://127.0.0.1:8088`
+
+说明：当前仓库不启用运行时自动化入口，`/feishu/events` 仅在 `automation_spec` 中作为未来设计保留。
+
+### 4. 启动 ngrok 并配置飞书 Webhook
+
+```bash
+ngrok http 8090 --domain=manubrial-anahi-richly.ngrok-free.dev
+```
+
+在飞书开放平台配置事件订阅地址：
+
+`https://manubrial-anahi-richly.ngrok-free.dev/feishu/webhook`
 
 说明：
-- 本地开发 + ngrok 时，ngrok 需要转发到 `8088`
+- 本地开发 + ngrok 时，ngrok 先转发到 mux `8090`，再由 mux 转发到 Agent `8088`
 - Docker 编排时，Agent 默认对外端口是 `8080`
 - 组织A（数据应用）不需要配置事件订阅/回调
 - 组织B（机器人应用）需要配置 `im.message.receive_v1`
@@ -267,6 +290,15 @@ MCP_SERVER_BASE=http://localhost:8081
 ```bash
 # MCP 健康检查
 curl http://localhost:8081/health
+
+# Agent 健康检查
+curl http://localhost:8088/health
+
+# mux 健康检查
+curl http://localhost:8090/health
+
+# Webhook 链路探测（经 ngrok + mux 到 agent）
+curl -i https://manubrial-anahi-richly.ngrok-free.dev/feishu/webhook
 
 # 查看工具列表
 curl http://localhost:8081/mcp/tools

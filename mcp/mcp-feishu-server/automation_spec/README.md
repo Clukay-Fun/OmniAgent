@@ -1,6 +1,6 @@
 # 自动化设计评审文档
 
-状态：设计阶段（运行代码已清零，本目录仅存设计稿）
+状态：评审中（设计已完成，运行时未启用）
 
 本文档为自动化模块的“可直接评审”版本，包含目标、边界、架构、流程、接口草案、数据模型、幂等策略与上线方案。
 
@@ -19,7 +19,7 @@
 
 不包含：
 
-- 当前版本可执行自动化接口
+- Phase B/C 的完整规则动作链落地
 - 生产环境监控平台建设（仅定义埋点与日志字段）
 
 ## 3. 目录与关联文件
@@ -108,20 +108,20 @@ def handle_record_changed(event):
     return "triggered"
 ```
 
-## 7. 接口草案（未实现，仅评审）
+## 7. 接口（设计草案）
 
 ### 7.1 事件入口
 
-- `POST /feishu/events`
+- `POST /feishu/events`（预留路径，待实现）
   - 功能：接收飞书事件，支持 `url_verification`
   - 输入：`events.sample.json` 结构
   - 输出：`{"status":"ok"}` / `{"challenge":"..."}`
 
 ### 7.2 调试入口
 
-- `POST /automation/init`
+- `POST /automation/init`（预留调试入口，待实现）
   - 功能：初始化快照（首次）
-- `POST /automation/scan?table_id=...`
+- `POST /automation/scan?table_id=...`（预留调试入口，待实现）
   - 功能：手动触发一次补偿扫描
 
 ## 8. 数据模型草案
@@ -164,5 +164,5 @@ def handle_record_changed(event):
 
 ## 12. 约定
 
-- 自动化真正落地前，不新增 `/feishu/events` 与 `/automation/*` 运行入口
-- 先评审本文档与模板文件，通过后再编码实现
+- 当前仓库仅保留自动化设计文档，不启用运行时自动化入口
+- 进入 Phase B 前，先完成规则模板评审并确认字段契约

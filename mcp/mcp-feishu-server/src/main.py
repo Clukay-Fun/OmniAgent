@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 
 from src.config import get_settings
+from src.server.automation import router as automation_router
 from src.server.http import router as http_router
 import src.tools  # noqa: F401
 from src.utils.logger import setup_logging
@@ -33,4 +34,5 @@ print(f"=========================")
 # region FastAPI 应用
 app = FastAPI(title="MCP Feishu Server", version="0.1.0")
 app.include_router(http_router)
+app.include_router(automation_router)
 # endregion

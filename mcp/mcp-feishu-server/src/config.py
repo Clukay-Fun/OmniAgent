@@ -111,6 +111,22 @@ class SecuritySettings(BaseModel):
     allowed_ips: list[str] = Field(default_factory=list)
 
 
+class AutomationSettings(BaseModel):
+    """自动化模块配置"""
+
+    enabled: bool = False
+    verification_token: str = ""
+    encrypt_key: str = ""
+    storage_dir: str = "automation_data"
+    event_ttl_seconds: int = 604800
+    business_ttl_seconds: int = 604800
+    max_dedupe_keys: int = 50000
+    scan_page_size: int = 100
+    max_scan_pages: int = 50
+    status_field: str = "自动化_执行状态"
+    error_field: str = "自动化_最近错误"
+
+
 class Settings(BaseModel):
     """MCP Server 配置聚合根"""
     server: ServerSettings = Field(default_factory=ServerSettings)
@@ -121,6 +137,7 @@ class Settings(BaseModel):
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    automation: AutomationSettings = Field(default_factory=AutomationSettings)
 # endregion
 
 
@@ -170,6 +187,17 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_CALENDAR_ID": ["calendar", "default_calendar_id"],
         "FEISHU_CALENDAR_TIMEZONE": ["calendar", "timezone"],
         "FEISHU_CALENDAR_DEFAULT_DURATION_MINUTES": ["calendar", "default_duration_minutes"],
+        "AUTOMATION_ENABLED": ["automation", "enabled"],
+        "FEISHU_EVENT_VERIFY_TOKEN": ["automation", "verification_token"],
+        "FEISHU_EVENT_ENCRYPT_KEY": ["automation", "encrypt_key"],
+        "AUTOMATION_STORAGE_DIR": ["automation", "storage_dir"],
+        "AUTOMATION_EVENT_TTL_SECONDS": ["automation", "event_ttl_seconds"],
+        "AUTOMATION_BUSINESS_TTL_SECONDS": ["automation", "business_ttl_seconds"],
+        "AUTOMATION_MAX_DEDUPE_KEYS": ["automation", "max_dedupe_keys"],
+        "AUTOMATION_SCAN_PAGE_SIZE": ["automation", "scan_page_size"],
+        "AUTOMATION_MAX_SCAN_PAGES": ["automation", "max_scan_pages"],
+        "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
+        "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

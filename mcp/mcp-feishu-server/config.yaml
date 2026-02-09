@@ -151,6 +151,22 @@ logging:
       backup_count: 5
 
 # ------------------------------------------------------------
+# 自动化配置（Phase A）
+# ------------------------------------------------------------
+automation:
+  enabled: ${AUTOMATION_ENABLED:-false}
+  verification_token: ${FEISHU_EVENT_VERIFY_TOKEN:-}
+  encrypt_key: ${FEISHU_EVENT_ENCRYPT_KEY:-}
+  storage_dir: ${AUTOMATION_STORAGE_DIR:-automation_data}
+  event_ttl_seconds: ${AUTOMATION_EVENT_TTL_SECONDS:-604800}
+  business_ttl_seconds: ${AUTOMATION_BUSINESS_TTL_SECONDS:-604800}
+  max_dedupe_keys: ${AUTOMATION_MAX_DEDUPE_KEYS:-50000}
+  scan_page_size: ${AUTOMATION_SCAN_PAGE_SIZE:-100}
+  max_scan_pages: ${AUTOMATION_MAX_SCAN_PAGES:-50}
+  status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
+  error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}
+
+# ------------------------------------------------------------
 # 安全配置（可选）
 # ------------------------------------------------------------
 security:
