@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from src.automation.actions import ActionExecutor
+from src.automation.deadletter import DeadLetterStore
 from src.automation.rules import RuleMatcher, RuleStore
 from src.config import Settings
 
@@ -27,6 +28,24 @@ class AutomationEngine:
         self._store = RuleStore(rules_file)
         self._matcher = RuleMatcher()
         self._executor = ActionExecutor(settings, client)
+
+        dead_letter_path = Path(settings.automation.dead_letter_file)
+        if not dead_letter_path.is_absolute():
+            dead_letter_path = Path.cwd() / dead_letter_path
+        self._dead_letters = DeadLetterStore(dead_letter_path)
+
+    def list_poll_table_ids(self, default_table_id: str) -> list[str]:
+        table_ids: list[str] = []
+        if default_table_id:
+            table_ids.append(default_table_id)
+        for rule in self._store.load_all_enabled_rules():
+            table = rule.get("table") or {}
+            if not isinstance(table, dict):
+                continue
+            table_id = str(table.get("table_id") or "").strip()
+            if table_id and table_id not in table_ids:
+                table_ids.append(table_id)
+        return table_ids
 
     def _build_default_status_action(self, status: str, error: str) -> dict[str, Any] | None:
         status_field = str(self._settings.automation.status_field or "").strip()
@@ -104,6 +123,17 @@ class AutomationEngine:
                 )
             except Exception:
                 pass
+            self._dead_letters.write(
+                {
+                    "rule_id": str(rule.get("rule_id") or ""),
+                    "rule_name": str(rule.get("name") or ""),
+                    "event_id": str(context.get("event_id") or ""),
+                    "app_token": str(context.get("app_token") or ""),
+                    "table_id": str(context.get("table_id") or ""),
+                    "record_id": str(context.get("record_id") or ""),
+                    "error": error_text,
+                }
+            )
             return RuleExecutionResult(
                 rule_id=str(rule.get("rule_id") or ""),
                 name=str(rule.get("name") or ""),

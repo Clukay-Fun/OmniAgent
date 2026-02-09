@@ -1,6 +1,6 @@
 # 自动化设计评审文档
 
-状态：开发中（Phase A/B 已实现，Phase C 待实现）
+状态：开发中（Phase A/B/C 核心已实现）
 
 本文档为自动化模块的“可直接评审”版本，包含目标、边界、架构、流程、接口草案、数据模型、幂等策略与上线方案。
 
@@ -19,7 +19,6 @@
 
 不包含：
 
-- Phase C 的补偿轮询与重试死信
 - 消息类动作（IM）
 - 生产环境监控平台建设（仅定义埋点与日志字段）
 
@@ -135,6 +134,8 @@ def handle_record_changed(event):
   - 业务级键：`record_id + table_id + field_hash`
 - 游标：`checkpoint.json`
   - `table_id -> last_scan_cursor`
+- 死信：`dead_letters.jsonl`
+  - 记录规则执行失败上下文与错误
 
 ## 9. 字段规范
 

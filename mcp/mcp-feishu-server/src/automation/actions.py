@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -8,6 +9,16 @@ from src.config import Settings
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+class ActionExecutionError(RuntimeError):
+    """动作执行错误（包含重试信息）。"""
+
+    def __init__(self, action_type: str, attempts: int, detail: str) -> None:
+        self.action_type = action_type
+        self.attempts = attempts
+        self.detail = detail
+        super().__init__(f"action {action_type} failed after {attempts} attempts: {detail}")
 
 
 class _SafeTemplateDict(dict[str, Any]):
@@ -75,11 +86,28 @@ def _to_unix_seconds(dt: datetime) -> str:
 
 
 class ActionExecutor:
-    """动作执行器：支持 log.write 与 bitable.update。"""
+    """动作执行器：支持 log.write、bitable.update、calendar.create（含重试）。"""
 
     def __init__(self, settings: Settings, client: Any) -> None:
         self._settings = settings
         self._client = client
+        self._max_retries = max(0, int(settings.automation.action_max_retries or 0))
+        self._retry_delay_seconds = max(0.0, float(settings.automation.action_retry_delay_seconds or 0.0))
+
+    async def _run_with_retry(self, action_type: str, runner: Any) -> dict[str, Any]:
+        attempts = self._max_retries + 1
+        for attempt in range(attempts):
+            try:
+                result = await runner()
+                if not isinstance(result, dict):
+                    raise ValueError(f"action {action_type} returned non-dict result")
+                return result
+            except Exception as exc:
+                if attempt >= attempts - 1:
+                    raise ActionExecutionError(action_type, attempts, str(exc)) from exc
+                if self._retry_delay_seconds > 0:
+                    await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
+        raise ActionExecutionError(action_type, attempts, "unreachable")
 
     @staticmethod
     def _compose_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -219,8 +247,10 @@ class ActionExecutor:
             f"/calendar/v4/calendars/{calendar_id}/events",
             json_body=body,
         )
-        data = response.get("data") or {}
-        event = data.get("event") if isinstance(data.get("event"), dict) else {}
+        raw_data = response.get("data")
+        data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+        raw_event = data.get("event")
+        event = raw_event if isinstance(raw_event, dict) else {}
         event_id = event.get("event_id") or data.get("event_id") or ""
         event_url = event.get("url") or event.get("html_link") or data.get("url") or ""
 
@@ -247,15 +277,28 @@ class ActionExecutor:
         for action in actions:
             action_type = str(action.get("type") or "").strip()
             if action_type == "log.write":
-                results.append(await self._action_log_write(action, context))
+                results.append(
+                    await self._run_with_retry(
+                        action_type,
+                        lambda: self._action_log_write(action, context),
+                    )
+                )
                 continue
             if action_type == "bitable.update":
                 results.append(
-                    await self._action_bitable_update(action, context, app_token, table_id, record_id)
+                    await self._run_with_retry(
+                        action_type,
+                        lambda: self._action_bitable_update(action, context, app_token, table_id, record_id),
+                    )
                 )
                 continue
             if action_type == "calendar.create":
-                results.append(await self._action_calendar_create(action, context))
+                results.append(
+                    await self._run_with_retry(
+                        action_type,
+                        lambda: self._action_calendar_create(action, context),
+                    )
+                )
                 continue
             raise ValueError(f"unsupported action type: {action_type}")
         return results

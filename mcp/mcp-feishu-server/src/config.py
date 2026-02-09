@@ -124,6 +124,11 @@ class AutomationSettings(BaseModel):
     max_dedupe_keys: int = 50000
     scan_page_size: int = 100
     max_scan_pages: int = 50
+    poller_enabled: bool = False
+    poller_interval_seconds: float = 60.0
+    action_max_retries: int = 1
+    action_retry_delay_seconds: float = 0.5
+    dead_letter_file: str = "automation_data/dead_letters.jsonl"
     status_field: str = "自动化_执行状态"
     error_field: str = "自动化_最近错误"
 
@@ -198,6 +203,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_MAX_DEDUPE_KEYS": ["automation", "max_dedupe_keys"],
         "AUTOMATION_SCAN_PAGE_SIZE": ["automation", "scan_page_size"],
         "AUTOMATION_MAX_SCAN_PAGES": ["automation", "max_scan_pages"],
+        "AUTOMATION_POLLER_ENABLED": ["automation", "poller_enabled"],
+        "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
+        "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
+        "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
+        "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
         "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
         "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
     }

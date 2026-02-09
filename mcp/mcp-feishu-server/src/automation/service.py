@@ -298,6 +298,10 @@ class AutomationService:
             raise AutomationValidationError("table_id/app_token required")
         return resolved_table_id, resolved_app_token
 
+    def get_poll_table_ids(self) -> list[str]:
+        default_table_id = str(self._settings.bitable.default_table_id or "").strip()
+        return self._engine.list_poll_table_ids(default_table_id)
+
     async def init_snapshot(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
@@ -417,4 +421,34 @@ class AutomationService:
             "pages": pages,
             "counters": counters,
             "mode": "scan",
+        }
+
+    async def scan_once_all_tables(self) -> dict[str, Any]:
+        self._ensure_enabled()
+
+        app_token = str(self._settings.bitable.default_app_token or "").strip()
+        if not app_token:
+            raise AutomationValidationError("default app_token required for poller")
+
+        table_ids = self.get_poll_table_ids()
+        results: list[dict[str, Any]] = []
+        for table_id in table_ids:
+            try:
+                result = await self.scan_table(table_id=table_id, app_token=app_token)
+                results.append(result)
+            except Exception as exc:
+                LOGGER.exception("poller scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "status": "ok",
+            "mode": "poller_scan",
+            "tables": table_ids,
+            "results": results,
         }

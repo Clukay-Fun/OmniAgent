@@ -124,7 +124,7 @@ logging:
       backup_count: 5
 
 # ------------------------------------------------------------
-# 自动化配置（Phase A）
+# 自动化配置（Phase A/B/C）
 # ------------------------------------------------------------
 automation:
   enabled: ${AUTOMATION_ENABLED:-false}
@@ -137,6 +137,11 @@ automation:
   max_dedupe_keys: ${AUTOMATION_MAX_DEDUPE_KEYS:-50000}
   scan_page_size: ${AUTOMATION_SCAN_PAGE_SIZE:-100}
   max_scan_pages: ${AUTOMATION_MAX_SCAN_PAGES:-50}
+  poller_enabled: ${AUTOMATION_POLLER_ENABLED:-false}
+  poller_interval_seconds: ${AUTOMATION_POLLER_INTERVAL_SECONDS:-60}
+  action_max_retries: ${AUTOMATION_ACTION_MAX_RETRIES:-1}
+  action_retry_delay_seconds: ${AUTOMATION_ACTION_RETRY_DELAY_SECONDS:-0.5}
+  dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
   status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
   error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}
 

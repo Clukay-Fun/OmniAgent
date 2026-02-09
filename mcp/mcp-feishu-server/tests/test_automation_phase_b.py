@@ -106,6 +106,8 @@ def _build_settings(tmp_path: Path, rules_path: Path) -> Settings:
                 "verification_token": "token_test",
                 "storage_dir": str(tmp_path / "automation_data"),
                 "rules_file": str(rules_path),
+                "action_max_retries": 0,
+                "dead_letter_file": str(tmp_path / "automation_data" / "dead_letters.jsonl"),
             },
         }
     )

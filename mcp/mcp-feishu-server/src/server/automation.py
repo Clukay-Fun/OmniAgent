@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.automation import AutomationService, AutomationValidationError
+from src.automation import AutomationPoller, AutomationService, AutomationValidationError
 from src.config import Settings, get_settings
 from src.feishu.client import FeishuAPIError, FeishuClient
 
@@ -13,6 +13,7 @@ router = APIRouter()
 
 _feishu_client: FeishuClient | None = None
 _automation_service: AutomationService | None = None
+_automation_poller: AutomationPoller | None = None
 
 
 def get_feishu_client(settings: Settings) -> FeishuClient:
@@ -27,6 +28,32 @@ def get_automation_service(settings: Settings) -> AutomationService:
     if _automation_service is None:
         _automation_service = AutomationService(settings, get_feishu_client(settings))
     return _automation_service
+
+
+def get_automation_poller(settings: Settings) -> AutomationPoller:
+    global _automation_poller
+    if _automation_poller is None:
+        _automation_poller = AutomationPoller(
+            service=get_automation_service(settings),
+            enabled=bool(settings.automation.poller_enabled),
+            interval_seconds=float(settings.automation.poller_interval_seconds),
+        )
+    return _automation_poller
+
+
+async def start_automation_poller() -> None:
+    settings = get_settings()
+    if not settings.automation.enabled:
+        return
+    poller = get_automation_poller(settings)
+    await poller.start()
+
+
+async def stop_automation_poller() -> None:
+    global _automation_poller
+    if _automation_poller is None:
+        return
+    await _automation_poller.stop()
 
 
 @router.post("/feishu/events")

@@ -48,17 +48,8 @@ class RuleStore:
         return parsed
 
     def load_enabled_rules(self, table_id: str) -> list[dict[str, Any]]:
-        parsed = self._load_raw()
-        rules = parsed.get("rules")
-        if not isinstance(rules, list):
-            return []
-
         enabled_rules: list[dict[str, Any]] = []
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            if not bool(rule.get("enabled")):
-                continue
+        for rule in self.load_all_enabled_rules():
             rule_table = rule.get("table") or {}
             if isinstance(rule_table, dict):
                 rule_table_id = str(rule_table.get("table_id") or "").strip()
@@ -73,6 +64,21 @@ class RuleStore:
             ),
             reverse=True,
         )
+        return enabled_rules
+
+    def load_all_enabled_rules(self) -> list[dict[str, Any]]:
+        parsed = self._load_raw()
+        rules = parsed.get("rules")
+        if not isinstance(rules, list):
+            return []
+
+        enabled_rules: list[dict[str, Any]] = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            if not bool(rule.get("enabled")):
+                continue
+            enabled_rules.append(rule)
         return enabled_rules
 
 
