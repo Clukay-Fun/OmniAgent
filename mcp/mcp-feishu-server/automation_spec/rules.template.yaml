@@ -1,5 +1,8 @@
 # 自动化规则模板 v1.2（与当前实现对齐）
-# 说明：本文件仅供评审与参考，不会被运行时直接加载。
+# 用途：给新规则提供统一写法模板（trigger/guard/pipeline）。
+# 运行时加载：否（仅模板）；真正生效文件是 ../automation_rules.yaml。
+# 关联文件：README.md（流程说明）、fields.yaml（字段契约）。
+# 说明：默认推荐日志优先，状态字段回写按 status_write_enabled 决定。
 
 meta:
   version: "v1.2"

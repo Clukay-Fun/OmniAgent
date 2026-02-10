@@ -13,6 +13,16 @@
 - ✅ 飞书文档搜索
 - ✅ MCP 工具注册与统一调用入口
 
+## 🗂️ 目录说明
+
+- `src/`：服务源码（路由、自动化引擎、工具实现）
+- `tests/`：测试代码
+- `automation_spec/`：文档与模板（不参与运行时加载）
+- `automation_rules.yaml`：运行时规则（实际生效）
+- `automation_data/`：运行时产物（快照/日志/死信，默认已忽略）
+
+详见：`PROJECT_STRUCTURE.md`
+
 ---
 
 ## 🏗️ 架构图

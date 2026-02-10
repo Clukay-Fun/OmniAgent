@@ -1,4 +1,8 @@
 # 表字段约定 v1.2（与当前实现对齐）
+# 用途：定义业务字段与自动化字段契约、校验规则。
+# 运行时加载：否（文档/模板文件，不直接驱动服务逻辑）。
+# 关联文件：rules.template.yaml、../automation_rules.yaml。
+# 备注：状态字段在 status_write_enabled=false 时可缺省。
 
 meta:
   version: "v1.2"

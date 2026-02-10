@@ -2,7 +2,11 @@
   "meta": {
     "version": "v1.2",
     "status": "aligned",
-    "description": "飞书多维表格事件样例（与当前实现对齐）"
+    "description": "飞书多维表格事件样例（与当前实现对齐）",
+    "purpose": "定义事件契约与样例回包，供联调/评审使用",
+    "runtime_loaded": false,
+    "source_of_truth": "生产抓包事件结构",
+    "reviewed_at": "2026-02"
   },
   "contracts": {
     "required_event_types": [
