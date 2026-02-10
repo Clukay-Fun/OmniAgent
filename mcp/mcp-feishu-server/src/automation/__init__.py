@@ -9,6 +9,7 @@ from src.automation.rules import RuleMatcher, RuleStore
 from src.automation.actions import ActionExecutionError, ActionExecutor
 from src.automation.poller import AutomationPoller
 from src.automation.deadletter import DeadLetterStore
+from src.automation.runlog import RunLogStore
 
 __all__ = [
     "AutomationService",
@@ -23,4 +24,5 @@ __all__ = [
     "ActionExecutionError",
     "AutomationPoller",
     "DeadLetterStore",
+    "RunLogStore",
 ]

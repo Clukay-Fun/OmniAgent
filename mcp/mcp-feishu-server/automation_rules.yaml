@@ -3,14 +3,21 @@ meta:
   status: runtime
   notes:
     - "将 enabled 改为 true 后生效"
+    - "watched_fields 可选；默认会自动从规则提取"
+
+watched_fields:
+  tblDTbRZRB89q8GJ:
+    - 案件分类
+    - 开庭日
+    - 委托人
 
 rules:
   - rule_id: R001
     name: "案件分类改为劳动争议"
-    enabled: false
+    enabled: true
     priority: 100
     table:
-      table_id: tbl_xxx
+      table_id: tblDTbRZRB89q8GJ
 
     trigger:
       field: 案件分类
@@ -19,12 +26,6 @@ rules:
         equals: 劳动争议
 
     pipeline:
-      before_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 处理中
-            自动化_最近错误: ""
-
       actions:
         - type: log.write
           level: info
@@ -35,14 +36,5 @@ rules:
         #   start_field: 开庭日
         #   duration_minutes: 30
 
-      success_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 成功
-            自动化_最近错误: ""
-
-      error_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 失败
-            自动化_最近错误: "{error}"
+      # 可选：如果需要回写状态字段，设置 AUTOMATION_STATUS_WRITE_ENABLED=true
+      # 并在此处配置 before/success/error 的 bitable.update 动作

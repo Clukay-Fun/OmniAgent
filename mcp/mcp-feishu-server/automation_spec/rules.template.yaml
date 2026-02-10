@@ -1,25 +1,28 @@
-# 自动化规则模板 v1.1（评审版）
-# 说明：仅文档示例，不被系统加载执行。
+# 自动化规则模板 v1.2（与当前实现对齐）
+# 说明：本文件仅供评审与参考，不会被运行时直接加载。
 
 meta:
-  version: "1.1"
-  status: "design"
-  owner: "TBD"
-  reviewed_at: "TBD"
+  version: "v1.2"
+  status: aligned
+  owner: automation
+  reviewed_at: "2026-02"
   notes:
-    - "模板与 README 的流程/接口草案对齐"
-    - "支持事件触发与轮询补偿统一规则结构"
+    - "运行时默认 status_write_enabled=false（仅日志）"
+    - "watched_fields 默认可自动从 rules 提取"
 
-# 约定：
-# - 占位变量使用 {字段名}，如 {案号}、{委托人}
-# - 状态字段：自动化_执行状态 / 自动化_最近错误
-# - condition 支持：changed / equals / in / any_field_changed
+# 可选手工 watched_fields（不配也可）
+watched_fields:
+  tbl_xxx:
+    - 案件分类
+    - 开庭日
+    - 委托人
 
 rules:
   - rule_id: R001
     name: "示例-案件分类改为劳动争议"
     enabled: false
     priority: 100
+
     table:
       table_id: tbl_xxx
       table_name: 案件项目总库
@@ -33,58 +36,57 @@ rules:
 
     guard:
       idempotency_scope: business
-      dedupe_keys:
-        - record_id
-        - table_id
-        - field_hash
+      dedupe_keys: [record_id, table_id, field_hash]
       cooldown_seconds: 0
 
     pipeline:
-      before_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 处理中
-            自动化_最近错误: ""
-
       actions:
         - type: log.write
           level: info
           message: "规则命中：{record_id} 案件分类={案件分类}"
 
-        # 如后续恢复日历动作，可取消注释
+        # 可选：需要建日历时启用
         # - type: calendar.create
         #   summary_template: "劳动争议案件跟进：{案号}"
-        #   description_template: "委托人：{委托人}；对方：{对方当事人}"
+        #   description_template: "委托人：{委托人}"
         #   start_field: 开庭日
         #   duration_minutes: 30
 
-      success_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 成功
-            自动化_最近错误: ""
-
-      error_actions:
-        - type: bitable.update
-          fields:
-            自动化_执行状态: 失败
-            自动化_最近错误: "{error}"
+      # 可选：仅当 status_write_enabled=true 时建议配置
+      # before_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 处理中
+      #       自动化_最近错误: ""
+      # success_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 成功
+      #       自动化_最近错误: ""
+      # error_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 失败
+      #       自动化_最近错误: "{error}"
 
     observability:
-      emit_metrics: true
-      metric_tags:
-        - rule_id
-        - table_id
+      run_log_enabled: true
+      dead_letter_on_failure: true
       log_fields:
         - event_id
+        - rule_id
+        - table_id
         - record_id
-        - action_type
+        - trigger_field
+        - result
+        - retry_count
         - duration_ms
 
   - rule_id: R002
-    name: "示例-任意字段变更（排除自动化字段）"
+    name: "示例-任意字段变更（排除字段）"
     enabled: false
     priority: 10
+
     table:
       table_id: tbl_xxx
       table_name: 案件项目总库

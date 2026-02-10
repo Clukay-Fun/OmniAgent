@@ -129,6 +129,8 @@ class AutomationSettings(BaseModel):
     action_max_retries: int = 1
     action_retry_delay_seconds: float = 0.5
     dead_letter_file: str = "automation_data/dead_letters.jsonl"
+    run_log_file: str = "automation_data/run_logs.jsonl"
+    status_write_enabled: bool = False
     status_field: str = "自动化_执行状态"
     error_field: str = "自动化_最近错误"
 
@@ -208,6 +210,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
         "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
         "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
+        "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
+        "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
         "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
         "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
     }

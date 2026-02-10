@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-from src.automation.rules import RuleMatcher
+from src.automation.rules import RuleMatcher, RuleStore
 from src.automation.service import AutomationService
 from src.config import Settings
 
@@ -17,6 +18,8 @@ class FakeFeishuClient:
         self.records: dict[str, dict[str, Any]] = {}
         self.update_calls: list[dict[str, Any]] = []
         self.calendar_calls: list[dict[str, Any]] = []
+        self.get_params_calls: list[dict[str, Any] | None] = []
+        self.search_payloads: list[dict[str, Any] | None] = []
         self._update_call_count = 0
         self.fail_on_update_call: int | None = None
 
@@ -31,12 +34,25 @@ class FakeFeishuClient:
         _ = params, headers
         if method == "GET" and "/records/" in path:
             record_id = path.rsplit("/", 1)[-1]
+            self.get_params_calls.append(dict(params) if isinstance(params, dict) else None)
+            fields = dict(self.records.get(record_id, {}))
+            if isinstance(params, dict) and params.get("field_names"):
+                try:
+                    names = json.loads(str(params.get("field_names")))
+                except json.JSONDecodeError:
+                    names = []
+                if isinstance(names, list) and names:
+                    fields = {
+                        key: value
+                        for key, value in fields.items()
+                        if key in {str(name) for name in names}
+                    }
             return {
                 "code": 0,
                 "data": {
                     "record": {
                         "record_id": record_id,
-                        "fields": self.records.get(record_id, {}),
+                        "fields": fields,
                     }
                 },
             }
@@ -68,6 +84,7 @@ class FakeFeishuClient:
             }
 
         if method == "POST" and path.endswith("/records/search"):
+            self.search_payloads.append(dict(json_body) if isinstance(json_body, dict) else None)
             return {
                 "code": 0,
                 "data": {"items": [], "has_more": False, "page_token": ""},
@@ -89,7 +106,12 @@ class FakeFeishuClient:
         raise RuntimeError(f"unexpected request: {method} {path}")
 
 
-def _build_settings(tmp_path: Path, rules_path: Path) -> Settings:
+def _build_settings(
+    tmp_path: Path,
+    rules_path: Path,
+    *,
+    status_write_enabled: bool = True,
+) -> Settings:
     return Settings.model_validate(
         {
             "bitable": {
@@ -108,6 +130,8 @@ def _build_settings(tmp_path: Path, rules_path: Path) -> Settings:
                 "rules_file": str(rules_path),
                 "action_max_retries": 0,
                 "dead_letter_file": str(tmp_path / "automation_data" / "dead_letters.jsonl"),
+                "run_log_file": str(tmp_path / "automation_data" / "run_logs.jsonl"),
+                "status_write_enabled": status_write_enabled,
             },
         }
     )
@@ -464,3 +488,178 @@ def test_rule_match_in_condition(new_value: str, expected: bool) -> None:
         }
     }
     assert matcher.match(rule, old_fields, current_fields, diff) is expected
+
+
+def test_rule_store_watch_plan_extracts_trigger_fields(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    _write_rules(
+        rules_path,
+        [
+            {
+                "rule_id": "R005",
+                "enabled": True,
+                "priority": 10,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "field": "案件分类",
+                    "condition": {"changed": True},
+                },
+            },
+            {
+                "rule_id": "R006",
+                "enabled": True,
+                "priority": 9,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "field": "开庭日",
+                    "condition": {"changed": True},
+                },
+            },
+        ],
+    )
+
+    store = RuleStore(rules_path)
+    plan = store.get_watch_plan("tbl_test")
+    assert plan["mode"] == "fields"
+    assert plan["fields"] == ["开庭日", "案件分类"]
+
+
+def test_rule_store_watch_plan_falls_back_to_full_for_any_field_changed(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    _write_rules(
+        rules_path,
+        [
+            {
+                "rule_id": "R_ANY",
+                "enabled": True,
+                "priority": 10,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "any_field_changed": True,
+                    "exclude_fields": ["自动化_执行状态"],
+                },
+            }
+        ],
+    )
+
+    store = RuleStore(rules_path)
+    plan = store.get_watch_plan("tbl_test")
+    assert plan["mode"] == "full"
+    assert plan["fields"] == []
+
+
+def test_status_write_disabled_skips_status_update_actions(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    _write_rules(
+        rules_path,
+        [
+            {
+                "rule_id": "R007",
+                "name": "仅状态回写",
+                "enabled": True,
+                "priority": 100,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "field": "案件分类",
+                    "condition": {"changed": True, "equals": "劳动争议"},
+                },
+                "pipeline": {
+                    "before_actions": [
+                        {
+                            "type": "bitable.update",
+                            "fields": {"自动化_执行状态": "处理中", "自动化_最近错误": ""},
+                        }
+                    ],
+                    "actions": [
+                        {"type": "log.write", "message": "仅写日志"},
+                    ],
+                    "success_actions": [
+                        {
+                            "type": "bitable.update",
+                            "fields": {"自动化_执行状态": "成功", "自动化_最近错误": ""},
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+    settings = _build_settings(tmp_path, rules_path, status_write_enabled=False)
+    client = FakeFeishuClient()
+    service = AutomationService(settings=settings, client=client)
+
+    client.records["rec_1"] = {"案件分类": "民商事"}
+    assert asyncio.run(service.handle_event({
+        "header": {
+            "event_id": "evt_s1",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "token": "token_test",
+        },
+        "event": {"app_token": "app_test", "table_id": "tbl_test", "record_id": "rec_1"},
+    }))["kind"] == "initialized"
+
+    client.records["rec_1"] = {"案件分类": "劳动争议"}
+    result = asyncio.run(service.handle_event({
+        "header": {
+            "event_id": "evt_s2",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "token": "token_test",
+        },
+        "event": {"app_token": "app_test", "table_id": "tbl_test", "record_id": "rec_1"},
+    }))
+
+    assert result["rules"]["status"] == "success"
+    assert len(client.update_calls) == 0
+
+
+def test_event_fetch_uses_watched_field_names(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    _write_rules(
+        rules_path,
+        [
+            {
+                "rule_id": "R008",
+                "name": "只关心案件分类",
+                "enabled": True,
+                "priority": 100,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "field": "案件分类",
+                    "condition": {"changed": True, "equals": "劳动争议"},
+                },
+                "pipeline": {
+                    "actions": [{"type": "log.write", "message": "hit"}],
+                },
+            }
+        ],
+    )
+
+    settings = _build_settings(tmp_path, rules_path, status_write_enabled=False)
+    client = FakeFeishuClient()
+    service = AutomationService(settings=settings, client=client)
+
+    client.records["rec_1"] = {"案件分类": "民商事", "开庭日": "2026-02-10", "案号": "A-1"}
+    assert asyncio.run(service.handle_event({
+        "header": {
+            "event_id": "evt_w1",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "token": "token_test",
+        },
+        "event": {"app_token": "app_test", "table_id": "tbl_test", "record_id": "rec_1"},
+    }))["kind"] == "initialized"
+
+    client.records["rec_1"] = {"案件分类": "民商事", "开庭日": "2026-02-11", "案号": "A-1"}
+    result = asyncio.run(service.handle_event({
+        "header": {
+            "event_id": "evt_w2",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "token": "token_test",
+        },
+        "event": {"app_token": "app_test", "table_id": "tbl_test", "record_id": "rec_1"},
+    }))
+
+    assert result["kind"] == "no_change"
+    assert client.get_params_calls
+    last_params = client.get_params_calls[-1] or {}
+    field_names = json.loads(str(last_params.get("field_names") or "[]"))
+    assert "案件分类" in field_names

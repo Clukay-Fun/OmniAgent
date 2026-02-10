@@ -77,7 +77,9 @@ def _build_settings(
     tmp_path: Path,
     rules_path: Path,
     dead_letter_path: Path,
+    run_log_path: Path,
     max_retries: int,
+    status_write_enabled: bool = True,
 ) -> Settings:
     return Settings.model_validate(
         {
@@ -93,6 +95,8 @@ def _build_settings(
                 "action_max_retries": max_retries,
                 "action_retry_delay_seconds": 0,
                 "dead_letter_file": str(dead_letter_path),
+                "run_log_file": str(run_log_path),
+                "status_write_enabled": status_write_enabled,
             },
         }
     )
@@ -116,6 +120,7 @@ def _event_payload(event_id: str) -> dict[str, Any]:
 def test_phase_c_action_retry_succeeds(tmp_path: Path) -> None:
     rules_path = tmp_path / "rules.yaml"
     dead_letter_path = tmp_path / "dead_letters.jsonl"
+    run_log_path = tmp_path / "run_logs.jsonl"
     _write_rules(
         rules_path,
         [
@@ -138,7 +143,7 @@ def test_phase_c_action_retry_succeeds(tmp_path: Path) -> None:
         ],
     )
 
-    settings = _build_settings(tmp_path, rules_path, dead_letter_path, max_retries=1)
+    settings = _build_settings(tmp_path, rules_path, dead_letter_path, run_log_path, max_retries=1)
     client = FakeFeishuClient()
     client.fail_calls = {2}
     service = AutomationService(settings=settings, client=client)
@@ -153,11 +158,19 @@ def test_phase_c_action_retry_succeeds(tmp_path: Path) -> None:
     assert client.records["rec_1"]["业务动作"] == "已执行"
     assert client.records["rec_1"]["自动化_执行状态"] == "成功"
     assert dead_letter_path.exists() is False
+    lines = run_log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["rule_id"] == "RRETRY"
+    assert payload["result"] == "success"
+    assert payload["trigger_field"] == "案件分类"
+    assert payload["retry_count"] == 1
 
 
 def test_phase_c_dead_letter_written_after_retry_exhausted(tmp_path: Path) -> None:
     rules_path = tmp_path / "rules.yaml"
     dead_letter_path = tmp_path / "dead_letters.jsonl"
+    run_log_path = tmp_path / "run_logs.jsonl"
     _write_rules(
         rules_path,
         [
@@ -180,7 +193,7 @@ def test_phase_c_dead_letter_written_after_retry_exhausted(tmp_path: Path) -> No
         ],
     )
 
-    settings = _build_settings(tmp_path, rules_path, dead_letter_path, max_retries=1)
+    settings = _build_settings(tmp_path, rules_path, dead_letter_path, run_log_path, max_retries=1)
     client = FakeFeishuClient()
     client.fail_calls = {2, 3}
     service = AutomationService(settings=settings, client=client)
@@ -199,6 +212,64 @@ def test_phase_c_dead_letter_written_after_retry_exhausted(tmp_path: Path) -> No
     assert payload["rule_id"] == "RDLQ"
     assert payload["record_id"] == "rec_1"
     assert "failed after 2 attempts" in payload["error"]
+
+    run_logs = run_log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(run_logs) == 1
+    run_payload = json.loads(run_logs[0])
+    assert run_payload["result"] == "failed"
+    assert run_payload["sent_to_dead_letter"] is True
+    assert run_payload["retry_count"] == 1
+
+
+def test_phase_c_run_log_works_without_status_fields(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    dead_letter_path = tmp_path / "dead_letters.jsonl"
+    run_log_path = tmp_path / "run_logs.jsonl"
+    _write_rules(
+        rules_path,
+        [
+            {
+                "rule_id": "RLOG",
+                "name": "仅日志",
+                "enabled": True,
+                "priority": 100,
+                "table": {"table_id": "tbl_test"},
+                "trigger": {
+                    "field": "案件分类",
+                    "condition": {"changed": True, "equals": "劳动争议"},
+                },
+                "pipeline": {
+                    "actions": [{"type": "log.write", "message": "ok"}],
+                },
+            }
+        ],
+    )
+
+    settings = _build_settings(
+        tmp_path,
+        rules_path,
+        dead_letter_path,
+        run_log_path,
+        max_retries=0,
+        status_write_enabled=False,
+    )
+    client = FakeFeishuClient()
+    service = AutomationService(settings=settings, client=client)
+
+    client.records["rec_1"] = {"案件分类": "民商事", "案号": "A-1"}
+    assert asyncio.run(service.handle_event(_event_payload("evt_log_1")))["kind"] == "initialized"
+
+    client.records["rec_1"] = {"案件分类": "劳动争议", "案号": "A-1"}
+    result = asyncio.run(service.handle_event(_event_payload("evt_log_2")))
+    assert result["rules"]["status"] == "success"
+
+    lines = run_log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["rule_id"] == "RLOG"
+    assert payload["result"] == "success"
+    assert payload["error"] is None
+    assert payload["record_id"] == "rec_1"
 
 
 def test_phase_c_poller_runs_periodic_scan() -> None:

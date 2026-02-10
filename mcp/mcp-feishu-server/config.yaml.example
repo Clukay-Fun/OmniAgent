@@ -142,6 +142,8 @@ automation:
   action_max_retries: ${AUTOMATION_ACTION_MAX_RETRIES:-1}
   action_retry_delay_seconds: ${AUTOMATION_ACTION_RETRY_DELAY_SECONDS:-0.5}
   dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
+  run_log_file: ${AUTOMATION_RUN_LOG_FILE:-automation_data/run_logs.jsonl}
+  status_write_enabled: ${AUTOMATION_STATUS_WRITE_ENABLED:-false}
   status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
   error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}
 

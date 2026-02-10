@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from string import Formatter
 from typing import Any
 
 import yaml
@@ -25,6 +26,41 @@ def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
     return [value]
+
+
+_FORMATTER = Formatter()
+_NON_FIELD_TEMPLATE_KEYS = {
+    "event_id",
+    "table_id",
+    "record_id",
+    "app_token",
+    "error",
+    "fields",
+    "old_fields",
+    "diff",
+}
+
+
+def _extract_template_fields(value: Any) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    fields: set[str] = set()
+    for _, field_name, _, _ in _FORMATTER.parse(value):
+        if not field_name:
+            continue
+        key = str(field_name).strip()
+        if not key or key in _NON_FIELD_TEMPLATE_KEYS:
+            continue
+        if any(ch in key for ch in (".", "[", "]")):
+            continue
+        fields.add(key)
+    return fields
+
+
+def _as_action_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 class RuleStore:
@@ -80,6 +116,91 @@ class RuleStore:
                 continue
             enabled_rules.append(rule)
         return enabled_rules
+
+    def _manual_watch_fields(self, table_id: str) -> set[str]:
+        parsed = self._load_raw()
+        watched = parsed.get("watched_fields")
+        if not isinstance(watched, dict):
+            return set()
+
+        result: set[str] = set()
+        for key in (table_id, "*", "default"):
+            values = watched.get(key)
+            if not isinstance(values, list):
+                continue
+            for item in values:
+                field = str(item or "").strip()
+                if field:
+                    result.add(field)
+        return result
+
+    def _extract_rule_watch_fields(self, rule: dict[str, Any]) -> tuple[set[str], bool]:
+        fields: set[str] = set()
+        full_mode = False
+
+        trigger = rule.get("trigger") or {}
+        if isinstance(trigger, dict):
+            if bool(trigger.get("any_field_changed")):
+                full_mode = True
+
+            field = str(trigger.get("field") or "").strip()
+            if field:
+                fields.add(field)
+
+        pipeline = rule.get("pipeline") or {}
+        if not isinstance(pipeline, dict):
+            return fields, full_mode
+
+        all_actions: list[dict[str, Any]] = []
+        all_actions.extend(_as_action_list(pipeline.get("before_actions")))
+        all_actions.extend(_as_action_list(pipeline.get("actions")))
+        all_actions.extend(_as_action_list(pipeline.get("success_actions")))
+        all_actions.extend(_as_action_list(pipeline.get("error_actions")))
+
+        for action in all_actions:
+            action_type = str(action.get("type") or "").strip()
+
+            if action_type == "calendar.create":
+                for key in ("start_field", "end_field"):
+                    name = str(action.get(key) or "").strip()
+                    if name:
+                        fields.add(name)
+
+            for key in ("message", "summary", "summary_template", "description", "description_template"):
+                fields.update(_extract_template_fields(action.get(key)))
+
+            action_fields = action.get("fields")
+            if isinstance(action_fields, dict):
+                for value in action_fields.values():
+                    fields.update(_extract_template_fields(value))
+
+        return fields, full_mode
+
+    def get_watch_plan(self, table_id: str, excluded_fields: set[str] | None = None) -> dict[str, Any]:
+        excluded = excluded_fields or set()
+        fields = self._manual_watch_fields(table_id)
+        rules = self.load_enabled_rules(table_id)
+
+        full_mode = False
+        for rule in rules:
+            rule_fields, rule_full_mode = self._extract_rule_watch_fields(rule)
+            fields.update(rule_fields)
+            if rule_full_mode:
+                full_mode = True
+
+        if excluded:
+            fields = {name for name in fields if name not in excluded}
+
+        if full_mode or not fields:
+            return {
+                "mode": "full",
+                "fields": [],
+            }
+
+        return {
+            "mode": "fields",
+            "fields": sorted(fields),
+        }
 
 
 class RuleMatcher:

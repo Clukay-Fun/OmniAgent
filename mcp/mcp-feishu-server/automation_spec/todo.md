@@ -1,89 +1,56 @@
-# 自动化实施任务单 v1.1（评审版）
+# 自动化实施任务单 v1.2
 
-状态：开发中（Phase A/B/C 核心已落地）
+状态：核心能力已落地，文档与实现同步中
 
-## 0. 评审结论门槛
+meta:
+- version: v1.2
+- reviewed_at: 2026-02
 
-- [ ] README（评审文档）已通过评审
-- [ ] `rules.template.yaml` v1.1 已通过评审
-- [ ] 事件样例字段已抓包确认（以真实回调为准）
-- [ ] 凭证边界已确认（testA/testB）
+## 0. 评审门槛
 
-## 1. Phase A - 事件与存储底座
+- [x] 事件入口契约与安全校验明确
+- [x] 规则模板结构稳定（trigger/pipeline）
+- [x] 幂等策略确认（event_key + business_key）
+- [x] 失败路径可观测（run_logs + dead_letters）
 
-目标：具备“可接收、可对比、可去重”的最小闭环
+## 1. Phase A（底座）
 
-- [x] A1 新增事件入口 `/feishu/events`
-  - [x] 支持 `url_verification`
-  - [x] 支持 token 校验
-  - [x] 可选支持 encrypt 解密
-- [x] A2 新增快照模块 `snapshot`
-  - [x] `load/save/diff/init_full_snapshot`
-- [x] A3 新增幂等模块 `store`
-  - [x] `event_key` 去重
-  - [x] `business_key` 去重
-- [x] A4 新增 checkpoint 模块
-  - [x] 首次初始化游标
-  - [x] 增量扫描游标
+- [x] `/feishu/events`（challenge/token/encrypt）
+- [x] 快照模块（load/save/diff/init）
+- [x] 幂等模块（event/business）
+- [x] checkpoint 模块（初始化与增量游标）
 
-交付标准（DoD）：
+## 2. Phase B（规则与动作）
 
-- [x] 单测覆盖 snapshot diff 与去重逻辑
-- [x] 首次初始化不触发业务动作
+- [x] 匹配能力：`changed/equals/in/any_field_changed/exclude_fields`
+- [x] 动作能力：`log.write` / `bitable.update` / `calendar.create`
+- [x] watched_fields 自动提取
+- [x] `any_field_changed` 自动全字段回退
+- [x] 状态回写可切换（`status_write_enabled`）
+- [x] 运行日志固定结构（`run_logs.jsonl`）
 
-## 2. Phase B - 规则与动作引擎
+## 3. Phase C（稳定性）
 
-目标：在字段变化时稳定触发动作链
+- [x] 轮询补偿（poller + hybrid）
+- [x] 动作级重试
+- [x] 死信记录（`dead_letters.jsonl`）
 
-- [x] B1 规则加载与匹配（rules + engine）
-  - [x] 支持 `changed/equals/in/any_field_changed`
-  - [x] 支持 `exclude_fields`
-- [x] B2 动作执行器（actions）
-  - [x] `log.write`
-  - [x] `bitable.update`
-  - [x] `calendar.create`（可开关）
-- [x] B3 状态可观测
-  - [x] `自动化_执行状态`（处理中/成功/失败）
-  - [x] `自动化_最近错误`
+## 4. 当前默认运行建议
 
-交付标准（DoD）：
+- [x] 默认使用日志观测：`status_write_enabled=false`
+- [x] 状态字段删除场景可运行（仅日志+死信）
+- [x] 灰度检查支持低 API：`--no-api`
 
-- [x] 命中规则后可见“处理中 -> 成功/失败”
-- [x] 失败信息可直接在表中查看
+## 5. 回归清单
 
-## 3. Phase C - 补偿与稳定性
+- [x] 单规则命中
+- [x] any_field_changed 排除字段
+- [x] 重复事件不重复执行
+- [x] 失败重试后入死信
+- [x] 无状态字段下仍可观测
 
-目标：事件丢失/重放情况下仍可最终一致
+## 6. 待办
 
-- [x] C1 轮询补偿器 `poller`
-  - [x] 固定间隔扫描
-  - [x] 与事件模式共存（hybrid）
-- [x] C2 错误重试与死信（可选）
-  - [x] 动作级重试
-  - [x] 死信记录
-
-交付标准（DoD）：
-
-- [x] 事件丢失时可由轮询补偿恢复
-- [x] 重复事件不重复执行动作
-
-## 4. 回归与验收
-
-- [ ] R1 单规则命中：`案件分类 -> 劳动争议`
-- [ ] R2 任意字段规则（排除自动化字段）
-- [ ] R3 幂等校验（重复事件）
-- [ ] R4 失败路径（权限/字段不存在）
-- [ ] R5 回滚开关验证（停用自动化）
-
-## 5. 运行与运维清单
-
-- [ ] 发布前：`dry-run` 至少 1 天
-- [ ] 灰度：仅开启 1 条规则
-- [ ] 观察：命中率、失败率、重复率
-- [ ] 稳定后逐步扩展规则
-
-## 6. 风险与决策待办
-
-- [ ] 是否保留 `calendar.create`（当前建议可开关）
-- [ ] 是否引入消息动作（需明确 testB 调用边界）
-- [ ] 数据存储选型：json vs sqlite vs postgres
+- [ ] run_logs 文件轮转（按天/按大小）
+- [ ] run_logs 保留策略（建议 30 天）
+- [ ] 灰度脚本支持 rule_id 维度聚合报告

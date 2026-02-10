@@ -1,8 +1,8 @@
 {
   "meta": {
-    "version": "1.1",
-    "status": "design",
-    "description": "飞书多维表格事件样例（评审版）。字段以真实抓包为准。"
+    "version": "v1.2",
+    "status": "aligned",
+    "description": "飞书多维表格事件样例（与当前实现对齐）"
   },
   "contracts": {
     "required_event_types": [
@@ -14,18 +14,24 @@
       "event_type"
     ],
     "required_record_changed_fields": [
+      "app_token",
       "table_id",
       "record_id"
     ],
     "security": {
       "token_verification": true,
       "encrypt_supported": true
+    },
+    "runtime_behavior": {
+      "record_changed": "processed",
+      "field_changed": "accepted_but_ignored_in_current_stage"
     }
   },
   "samples": {
     "url_verification": {
       "request": {
         "type": "url_verification",
+        "token": "verification_token",
         "challenge": "abc123"
       },
       "response": {

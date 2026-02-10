@@ -93,6 +93,9 @@ class ActionExecutor:
         self._client = client
         self._max_retries = max(0, int(settings.automation.action_max_retries or 0))
         self._retry_delay_seconds = max(0.0, float(settings.automation.action_retry_delay_seconds or 0.0))
+        self._status_write_enabled = bool(settings.automation.status_write_enabled)
+        self._status_field = str(settings.automation.status_field or "").strip()
+        self._error_field = str(settings.automation.error_field or "").strip()
 
     async def _run_with_retry(self, action_type: str, runner: Any) -> dict[str, Any]:
         attempts = self._max_retries + 1
@@ -101,6 +104,7 @@ class ActionExecutor:
                 result = await runner()
                 if not isinstance(result, dict):
                     raise ValueError(f"action {action_type} returned non-dict result")
+                result["retry_count"] = attempt
                 return result
             except Exception as exc:
                 if attempt >= attempts - 1:
@@ -116,6 +120,23 @@ class ActionExecutor:
         if isinstance(fields, dict):
             merged.update(fields)
         return merged
+
+    def _filter_status_fields(self, fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        if self._status_write_enabled:
+            return fields, []
+
+        status_names = {name for name in (self._status_field, self._error_field) if name}
+        if not status_names:
+            return fields, []
+
+        filtered: dict[str, Any] = {}
+        skipped: list[str] = []
+        for key, value in fields.items():
+            if key in status_names:
+                skipped.append(key)
+                continue
+            filtered[key] = value
+        return filtered, skipped
 
     async def _action_log_write(self, action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         level = str(action.get("level") or "info").lower()
@@ -146,19 +167,30 @@ class ActionExecutor:
         if not isinstance(rendered_fields, dict) or not rendered_fields:
             raise ValueError("bitable.update rendered fields is empty")
 
+        filtered_fields, skipped_fields = self._filter_status_fields(rendered_fields)
+        if not filtered_fields:
+            return {
+                "type": "bitable.update",
+                "fields": {},
+                "skipped": True,
+                "skip_reason": "status_write_disabled",
+                "skipped_fields": skipped_fields,
+            }
+
         await self._client.request(
             "PUT",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
-            json_body={"fields": rendered_fields},
+            json_body={"fields": filtered_fields},
         )
 
         fields = context.get("fields")
         if isinstance(fields, dict):
-            fields.update(rendered_fields)
+            fields.update(filtered_fields)
 
         return {
             "type": "bitable.update",
-            "fields": rendered_fields,
+            "fields": filtered_fields,
+            "skipped_fields": skipped_fields,
         }
 
     async def _action_calendar_create(self, action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:

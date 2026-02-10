@@ -229,6 +229,33 @@ tools:
 
 ---
 
+## 🔎 灰度检查脚本
+
+自动化灰度结束后，可用脚本一次性汇总：
+
+- 运行日志窗口统计（`automation_data/run_logs.jsonl`）
+- 死信总量与最近窗口死信数
+- 最近窗口状态字段分布（`自动化_执行状态`）
+- 最近窗口错误字段非空数量（`自动化_最近错误`）
+
+说明：如果你已删除状态字段，请保持 `AUTOMATION_STATUS_WRITE_ENABLED=false`，仅依赖 `run_logs.jsonl` 与 `dead_letters.jsonl` 观察。
+
+```bash
+# 默认检查最近 24 小时
+python automation_gray_check.py
+
+# 严格模式：发现异常返回非 0
+python automation_gray_check.py --strict
+
+# JSON 输出，便于 CI 收集
+python automation_gray_check.py --json
+
+# 零 API 模式（只读本地 run_logs/dead_letters）
+python automation_gray_check.py --no-api --strict
+```
+
+---
+
 ## 📄 License
 
 MIT License

@@ -43,6 +43,22 @@ def _to_int_timestamp(value: Any) -> int:
         return 0
 
 
+def _is_watch_mode_full(plan: dict[str, Any]) -> bool:
+    return str(plan.get("mode") or "full") == "full"
+
+
+def _watch_fields(plan: dict[str, Any]) -> list[str]:
+    fields = plan.get("fields")
+    if not isinstance(fields, list):
+        return []
+    result: list[str] = []
+    for item in fields:
+        name = str(item or "").strip()
+        if name:
+            result.append(name)
+    return result
+
+
 class AutomationService:
     """自动化执行服务（Phase A/B: 事件、快照、规则、动作、幂等、扫描）。"""
 
@@ -121,10 +137,35 @@ class AutomationService:
         return f"{table_id}:{record_id}:{digest}"
 
     async def _fetch_record_fields(self, app_token: str, table_id: str, record_id: str) -> dict[str, Any]:
-        response = await self._client.request(
-            "GET",
-            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
-        )
+        return await self._fetch_record_fields_with_watch(app_token, table_id, record_id, field_names=None)
+
+    async def _fetch_record_fields_with_watch(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        field_names: list[str] | None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] | None = None
+        if field_names:
+            params = {
+                "field_names": json.dumps(field_names, ensure_ascii=False),
+            }
+
+        try:
+            response = await self._client.request(
+                "GET",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+                params=params,
+            )
+        except FeishuAPIError:
+            if not params:
+                raise
+            response = await self._client.request(
+                "GET",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+            )
+
         data = response.get("data") or {}
         record = data.get("record") or data
         fields = record.get("fields")
@@ -132,18 +173,36 @@ class AutomationService:
             raise AutomationValidationError("record fields missing in API response")
         return fields
 
+    @staticmethod
+    def _filter_fields_by_watch(fields: dict[str, Any], watch_plan: dict[str, Any]) -> dict[str, Any]:
+        if _is_watch_mode_full(watch_plan):
+            return dict(fields)
+
+        watched = set(_watch_fields(watch_plan))
+        if not watched:
+            return dict(fields)
+
+        filtered: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key in watched:
+                filtered[key] = value
+        return filtered
+
     async def _list_records_page(
         self,
         app_token: str,
         table_id: str,
         page_token: str,
         page_size: int,
+        field_names: list[str] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "page_size": page_size,
         }
         if page_token:
             payload["page_token"] = page_token
+        if field_names:
+            payload["field_names"] = field_names
         response = await self._client.request(
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/search",
@@ -180,7 +239,25 @@ class AutomationService:
         table_id: str,
         record_id: str,
     ) -> dict[str, Any]:
-        current_fields = await self._fetch_record_fields(app_token, table_id, record_id)
+        watch_plan = self._engine.get_watch_plan(table_id)
+        watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
+        current_raw = await self._fetch_record_fields_with_watch(
+            app_token,
+            table_id,
+            record_id,
+            field_names=watch_fields,
+        )
+        current_fields = self._filter_fields_by_watch(current_raw, watch_plan)
+        return await self._process_record_changed(event_id, app_token, table_id, record_id, current_fields)
+
+    async def _process_record_changed(
+        self,
+        event_id: str,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        current_fields: dict[str, Any],
+    ) -> dict[str, Any]:
         old_fields = self._snapshot.load(table_id, record_id)
 
         if old_fields is None:
@@ -306,6 +383,9 @@ class AutomationService:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
+        watch_plan = self._engine.get_watch_plan(resolved_table_id)
+        watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
+
         page_token = ""
         page_size = max(1, min(self._settings.automation.scan_page_size, 500))
         max_pages = max(1, self._settings.automation.max_scan_pages)
@@ -315,7 +395,13 @@ class AutomationService:
         pages = 0
 
         while pages < max_pages:
-            page = await self._list_records_page(resolved_app_token, resolved_table_id, page_token, page_size)
+            page = await self._list_records_page(
+                resolved_app_token,
+                resolved_table_id,
+                page_token,
+                page_size,
+                field_names=watch_fields,
+            )
             pages += 1
             items = page.get("items") or []
             for item in items:
@@ -324,7 +410,7 @@ class AutomationService:
                 record_id, fields, modified_time = self._extract_record_meta(item)
                 if not record_id:
                     continue
-                records[record_id] = fields
+                records[record_id] = self._filter_fields_by_watch(fields, watch_plan)
                 if modified_time > max_cursor:
                     max_cursor = modified_time
 
@@ -351,6 +437,9 @@ class AutomationService:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
+        watch_plan = self._engine.get_watch_plan(resolved_table_id)
+        watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
+
         cursor = self._checkpoint.get(resolved_table_id)
         max_seen_cursor = cursor
         page_token = ""
@@ -368,7 +457,13 @@ class AutomationService:
 
         pages = 0
         while pages < max_pages:
-            page = await self._list_records_page(resolved_app_token, resolved_table_id, page_token, page_size)
+            page = await self._list_records_page(
+                resolved_app_token,
+                resolved_table_id,
+                page_token,
+                page_size,
+                field_names=watch_fields,
+            )
             pages += 1
             items = page.get("items") or []
 
@@ -376,7 +471,7 @@ class AutomationService:
                 if not isinstance(item, dict):
                     continue
                 counters["scanned"] += 1
-                record_id, _, modified_time = self._extract_record_meta(item)
+                record_id, fields, modified_time = self._extract_record_meta(item)
                 if not record_id:
                     continue
                 if modified_time and modified_time <= cursor:
@@ -388,11 +483,22 @@ class AutomationService:
                     f"scan:{resolved_table_id}:{record_id}:{modified_time or int(time.time() * 1000)}"
                 )
                 try:
-                    result = await self.handle_record_changed(
+                    filtered_fields = self._filter_fields_by_watch(fields, watch_plan)
+                    if not filtered_fields:
+                        filtered_fields = await self._fetch_record_fields_with_watch(
+                            resolved_app_token,
+                            resolved_table_id,
+                            record_id,
+                            field_names=watch_fields,
+                        )
+                        filtered_fields = self._filter_fields_by_watch(filtered_fields, watch_plan)
+
+                    result = await self._process_record_changed(
                         synthetic_event_id,
                         resolved_app_token,
                         resolved_table_id,
                         record_id,
+                        filtered_fields,
                     )
                     kind = str(result.get("kind") or "")
                     if kind in counters:
