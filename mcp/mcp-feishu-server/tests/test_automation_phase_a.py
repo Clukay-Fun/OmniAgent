@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from src.automation.service import AutomationService
 from src.automation.snapshot import SnapshotStore
 from src.automation.store import IdempotencyStore
@@ -13,6 +15,7 @@ from src.config import Settings
 class FakeFeishuClient:
     def __init__(self) -> None:
         self.records: dict[str, dict[str, Any]] = {}
+        self.record_modified_times: dict[str, int] = {}
 
     async def request(
         self,
@@ -43,7 +46,7 @@ class FakeFeishuClient:
                     {
                         "record_id": record_id,
                         "fields": fields,
-                        "last_modified_time": 1739000000000,
+                        "last_modified_time": int(self.record_modified_times.get(record_id, 1739000000000)),
                     }
                 )
             return {
@@ -58,21 +61,30 @@ class FakeFeishuClient:
         raise RuntimeError(f"unexpected request: {method} {path}")
 
 
-def _build_settings(tmp_path: Path) -> Settings:
+def _build_settings(tmp_path: Path, automation_overrides: dict[str, Any] | None = None) -> Settings:
+    rules_file = tmp_path / "rules.yaml"
+    if not rules_file.exists():
+        rules_file.write_text("meta: {}\nrules: []\n", encoding="utf-8")
+
+    automation_payload: dict[str, Any] = {
+        "enabled": True,
+        "verification_token": "token_test",
+        "storage_dir": str(tmp_path / "automation_data"),
+        "rules_file": str(rules_file),
+        "event_ttl_seconds": 3600,
+        "business_ttl_seconds": 3600,
+        "max_dedupe_keys": 1000,
+    }
+    if automation_overrides:
+        automation_payload.update(automation_overrides)
+
     return Settings.model_validate(
         {
             "bitable": {
                 "default_app_token": "app_test",
                 "default_table_id": "tbl_test",
             },
-            "automation": {
-                "enabled": True,
-                "verification_token": "token_test",
-                "storage_dir": str(tmp_path / "automation_data"),
-                "event_ttl_seconds": 3600,
-                "business_ttl_seconds": 3600,
-                "max_dedupe_keys": 1000,
-            },
+            "automation": automation_payload,
         }
     )
 
@@ -182,3 +194,121 @@ def test_automation_service_url_verification(tmp_path: Path) -> None:
     }
     result = asyncio.run(service.handle_event(payload))
     assert result == {"kind": "challenge", "challenge": "abc123"}
+
+
+def test_new_record_event_can_trigger_rules_when_enabled(tmp_path: Path) -> None:
+    rules_file = tmp_path / "rules_event.yaml"
+    rules_file.write_text(
+        yaml.safe_dump(
+            {
+                "meta": {"version": "test"},
+                "rules": [
+                    {
+                        "rule_id": "R-EVENT-NEW",
+                        "name": "新记录触发",
+                        "enabled": True,
+                        "priority": 100,
+                        "table": {"table_id": "tbl_test"},
+                        "trigger": {
+                            "field": "案件分类",
+                            "condition": {"changed": True, "equals": "劳动争议"},
+                        },
+                        "pipeline": {
+                            "actions": [{"type": "log.write", "message": "new record hit"}],
+                        },
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = _build_settings(
+        tmp_path,
+        {
+            "rules_file": str(rules_file),
+            "trigger_on_new_record_event": True,
+            "status_write_enabled": False,
+        },
+    )
+    client = FakeFeishuClient()
+    service = AutomationService(settings=settings, client=client)
+
+    client.records["rec_1"] = {"案件分类": "劳动争议"}
+    payload = {
+        "header": {
+            "event_id": "evt_new_1",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "token": "token_test",
+        },
+        "event": {
+            "app_token": "app_test",
+            "table_id": "tbl_test",
+            "record_id": "rec_1",
+        },
+    }
+
+    result = asyncio.run(service.handle_event(payload))
+    assert result["kind"] == "initialized_triggered"
+    assert result["rules"]["status"] == "success"
+    assert result["rules"]["matched"] == 1
+
+
+def test_scan_new_record_trigger_only_after_checkpoint(tmp_path: Path) -> None:
+    rules_file = tmp_path / "rules_scan.yaml"
+    rules_file.write_text(
+        yaml.safe_dump(
+            {
+                "meta": {"version": "test"},
+                "rules": [
+                    {
+                        "rule_id": "R-SCAN-NEW",
+                        "name": "扫描新记录触发",
+                        "enabled": True,
+                        "priority": 100,
+                        "table": {"table_id": "tbl_test"},
+                        "trigger": {
+                            "field": "案件分类",
+                            "condition": {"changed": True, "equals": "劳动争议"},
+                        },
+                        "pipeline": {
+                            "actions": [{"type": "log.write", "message": "scan new record hit"}],
+                        },
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = _build_settings(
+        tmp_path,
+        {
+            "rules_file": str(rules_file),
+            "trigger_on_new_record_event": False,
+            "trigger_on_new_record_scan": True,
+            "trigger_on_new_record_scan_requires_checkpoint": True,
+            "new_record_scan_max_trigger_per_run": 10,
+            "status_write_enabled": False,
+        },
+    )
+    client = FakeFeishuClient()
+    service = AutomationService(settings=settings, client=client)
+
+    client.records["rec_1"] = {"案件分类": "劳动争议"}
+    client.record_modified_times["rec_1"] = 1000
+
+    first_scan = asyncio.run(service.scan_table(table_id="tbl_test", app_token="app_test"))
+    assert first_scan["counters"]["initialized"] == 1
+    assert first_scan["counters"]["initialized_triggered"] == 0
+
+    service._checkpoint.set("tbl_test", 1500)
+    client.records["rec_2"] = {"案件分类": "劳动争议"}
+    client.record_modified_times["rec_2"] = 2000
+
+    second_scan = asyncio.run(service.scan_table(table_id="tbl_test", app_token="app_test"))
+    assert second_scan["counters"]["initialized_triggered"] == 1

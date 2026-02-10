@@ -82,6 +82,13 @@
 9. 失败写 `dead_letters.jsonl`
 10. 更新快照与幂等键
 
+新记录触发边界：
+
+- 首次初始化（`/automation/init`）只建快照，不触发规则
+- 事件入口是否触发新记录由 `trigger_on_new_record_event` 控制
+- 轮询是否触发新记录由 `trigger_on_new_record_scan` 控制
+- 若 `trigger_on_new_record_scan_requires_checkpoint=true` 且游标为 0，轮询新记录不触发
+
 ## 6. 接口
 
 - `POST /feishu/events`：事件入口（已实现）

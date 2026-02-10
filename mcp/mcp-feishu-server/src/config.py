@@ -124,6 +124,10 @@ class AutomationSettings(BaseModel):
     max_dedupe_keys: int = 50000
     scan_page_size: int = 100
     max_scan_pages: int = 50
+    trigger_on_new_record_event: bool = False
+    trigger_on_new_record_scan: bool = True
+    trigger_on_new_record_scan_requires_checkpoint: bool = True
+    new_record_scan_max_trigger_per_run: int = 50
     poller_enabled: bool = False
     poller_interval_seconds: float = 60.0
     action_max_retries: int = 1
@@ -205,6 +209,16 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_MAX_DEDUPE_KEYS": ["automation", "max_dedupe_keys"],
         "AUTOMATION_SCAN_PAGE_SIZE": ["automation", "scan_page_size"],
         "AUTOMATION_MAX_SCAN_PAGES": ["automation", "max_scan_pages"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT": ["automation", "trigger_on_new_record_event"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN": ["automation", "trigger_on_new_record_scan"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT": [
+            "automation",
+            "trigger_on_new_record_scan_requires_checkpoint",
+        ],
+        "AUTOMATION_NEW_RECORD_SCAN_MAX_TRIGGER_PER_RUN": [
+            "automation",
+            "new_record_scan_max_trigger_per_run",
+        ],
         "AUTOMATION_POLLER_ENABLED": ["automation", "poller_enabled"],
         "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
         "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],

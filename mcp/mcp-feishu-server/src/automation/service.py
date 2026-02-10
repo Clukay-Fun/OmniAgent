@@ -238,7 +238,11 @@ class AutomationService:
         app_token: str,
         table_id: str,
         record_id: str,
+        trigger_on_new_record: bool | None = None,
     ) -> dict[str, Any]:
+        if trigger_on_new_record is None:
+            trigger_on_new_record = bool(self._settings.automation.trigger_on_new_record_event)
+
         watch_plan = self._engine.get_watch_plan(table_id)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
         current_raw = await self._fetch_record_fields_with_watch(
@@ -248,7 +252,14 @@ class AutomationService:
             field_names=watch_fields,
         )
         current_fields = self._filter_fields_by_watch(current_raw, watch_plan)
-        return await self._process_record_changed(event_id, app_token, table_id, record_id, current_fields)
+        return await self._process_record_changed(
+            event_id,
+            app_token,
+            table_id,
+            record_id,
+            current_fields,
+            trigger_on_new_record=bool(trigger_on_new_record),
+        )
 
     async def _process_record_changed(
         self,
@@ -257,16 +268,61 @@ class AutomationService:
         table_id: str,
         record_id: str,
         current_fields: dict[str, Any],
+        trigger_on_new_record: bool,
     ) -> dict[str, Any]:
         old_fields = self._snapshot.load(table_id, record_id)
 
         if old_fields is None:
+            if not trigger_on_new_record:
+                self._snapshot.save(table_id, record_id, current_fields)
+                return {
+                    "kind": "initialized",
+                    "event_id": event_id,
+                    "table_id": table_id,
+                    "record_id": record_id,
+                }
+
+            diff = self._snapshot.diff({}, current_fields)
+            if not diff.get("has_changes"):
+                self._snapshot.save(table_id, record_id, current_fields)
+                return {
+                    "kind": "initialized",
+                    "event_id": event_id,
+                    "table_id": table_id,
+                    "record_id": record_id,
+                }
+
+            business_key = self._build_business_key(table_id, record_id, diff)
+            if self._idempotency.is_business_duplicate(business_key):
+                self._snapshot.save(table_id, record_id, current_fields)
+                return {
+                    "kind": "duplicate_business",
+                    "event_id": event_id,
+                    "table_id": table_id,
+                    "record_id": record_id,
+                    "business_key": business_key,
+                }
+
+            self._idempotency.mark_business(business_key)
+            rule_execution = await self._engine.execute(
+                app_token=app_token,
+                table_id=table_id,
+                record_id=record_id,
+                event_id=event_id,
+                old_fields={},
+                current_fields=current_fields,
+                diff=diff,
+            )
             self._snapshot.save(table_id, record_id, current_fields)
+            changed = diff.get("changed") or {}
             return {
-                "kind": "initialized",
+                "kind": "initialized_triggered",
                 "event_id": event_id,
                 "table_id": table_id,
                 "record_id": record_id,
+                "changed_fields": sorted(changed.keys()) if isinstance(changed, dict) else [],
+                "business_key": business_key,
+                "rules": rule_execution,
             }
 
         diff = self._snapshot.diff(old_fields, current_fields)
@@ -364,7 +420,13 @@ class AutomationService:
         if not app_token or not table_id or not record_id:
             raise AutomationValidationError("record_changed event missing app_token/table_id/record_id")
 
-        result = await self.handle_record_changed(event_id, app_token, table_id, record_id)
+        result = await self.handle_record_changed(
+            event_id,
+            app_token,
+            table_id,
+            record_id,
+            trigger_on_new_record=bool(self._settings.automation.trigger_on_new_record_event),
+        )
         self._idempotency.mark_event(event_id)
         return result
 
@@ -448,12 +510,21 @@ class AutomationService:
 
         counters = {
             "initialized": 0,
+            "initialized_triggered": 0,
             "no_change": 0,
             "changed": 0,
             "duplicate_business": 0,
             "failed": 0,
             "scanned": 0,
         }
+
+        allow_new_record_trigger = bool(self._settings.automation.trigger_on_new_record_scan)
+        require_checkpoint = bool(self._settings.automation.trigger_on_new_record_scan_requires_checkpoint)
+        if allow_new_record_trigger and require_checkpoint and cursor <= 0:
+            allow_new_record_trigger = False
+
+        max_new_record_triggers = max(0, int(self._settings.automation.new_record_scan_max_trigger_per_run or 0))
+        new_record_triggered_count = 0
 
         pages = 0
         while pages < max_pages:
@@ -499,10 +570,25 @@ class AutomationService:
                         resolved_table_id,
                         record_id,
                         filtered_fields,
+                        trigger_on_new_record=allow_new_record_trigger,
                     )
                     kind = str(result.get("kind") or "")
                     if kind in counters:
                         counters[kind] += 1
+
+                    if kind == "initialized_triggered":
+                        new_record_triggered_count += 1
+                        if (
+                            allow_new_record_trigger
+                            and max_new_record_triggers > 0
+                            and new_record_triggered_count >= max_new_record_triggers
+                        ):
+                            allow_new_record_trigger = False
+                            LOGGER.warning(
+                                "scan new-record trigger capped at %s for table %s",
+                                max_new_record_triggers,
+                                resolved_table_id,
+                            )
                 except FeishuAPIError as exc:
                     counters["failed"] += 1
                     LOGGER.error("scan_table fetch failed: %s", exc)
