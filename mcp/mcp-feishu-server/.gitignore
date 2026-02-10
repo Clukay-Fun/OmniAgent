@@ -1,9 +1,0 @@
-# Runtime outputs (automation)
-automation_data/*.json
-automation_data/*.jsonl
-!automation_data/.gitkeep
-!automation_data/.gitignore
-
-# Local Python caches
-src/**/__pycache__/
-tests/**/__pycache__/

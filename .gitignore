@@ -50,3 +50,7 @@ agent/workspace/
 docs
 scripts
 TEST.md
+
+# mcp-feishu-server runtime outputs (centralized)
+mcp/mcp-feishu-server/automation_data/*
+!mcp/mcp-feishu-server/automation_data/.gitkeep
