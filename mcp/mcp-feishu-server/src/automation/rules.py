@@ -66,8 +66,54 @@ def _as_action_list(value: Any) -> list[dict[str, Any]]:
 class RuleStore:
     """规则加载器：从 YAML 加载并过滤启用规则。"""
 
-    def __init__(self, rules_file: Path) -> None:
+    def __init__(self, rules_file: Path, runtime_state_file: Path | None = None) -> None:
         self._rules_file = rules_file
+        self._runtime_state_file = runtime_state_file
+
+    def _load_runtime_state(self) -> dict[str, Any]:
+        if self._runtime_state_file is None:
+            return {}
+        if not self._runtime_state_file.exists():
+            return {}
+        raw = self._runtime_state_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return parsed
+
+    def _disabled_rule_ids(self) -> set[str]:
+        runtime_state = self._load_runtime_state()
+        disabled_rules = runtime_state.get("disabled_rules")
+        if not isinstance(disabled_rules, dict):
+            return set()
+        return {
+            str(rule_id).strip()
+            for rule_id in disabled_rules.keys()
+            if str(rule_id).strip()
+        }
+
+    def _table_available_fields(self, app_token: str, table_id: str) -> set[str] | None:
+        runtime_state = self._load_runtime_state()
+        schema_tables = runtime_state.get("schema_tables")
+        if not isinstance(schema_tables, dict):
+            return None
+        key = f"{app_token}::{table_id}" if app_token else table_id
+        schema = schema_tables.get(key)
+        if not isinstance(schema, dict):
+            return None
+        names = schema.get("field_names")
+        if not isinstance(names, list):
+            return None
+        return {
+            str(name).strip()
+            for name in names
+            if str(name).strip()
+        }
 
     def _load_raw(self) -> dict[str, Any]:
         if not self._rules_file.exists():
@@ -83,13 +129,20 @@ class RuleStore:
             return {}
         return parsed
 
-    def load_enabled_rules(self, table_id: str) -> list[dict[str, Any]]:
+    def load_enabled_rules(self, table_id: str, app_token: str = "") -> list[dict[str, Any]]:
+        disabled_ids = self._disabled_rule_ids()
         enabled_rules: list[dict[str, Any]] = []
         for rule in self.load_all_enabled_rules():
+            rule_id = str(rule.get("rule_id") or "").strip()
+            if rule_id and rule_id in disabled_ids:
+                continue
             rule_table = rule.get("table") or {}
             if isinstance(rule_table, dict):
                 rule_table_id = str(rule_table.get("table_id") or "").strip()
                 if rule_table_id and rule_table_id != table_id:
+                    continue
+                rule_app_token = str(rule_table.get("app_token") or "").strip()
+                if app_token and rule_app_token and rule_app_token != app_token:
                     continue
             enabled_rules.append(rule)
 
@@ -117,6 +170,13 @@ class RuleStore:
             enabled_rules.append(rule)
         return enabled_rules
 
+    def load_all_rules(self) -> list[dict[str, Any]]:
+        parsed = self._load_raw()
+        rules = parsed.get("rules")
+        if not isinstance(rules, list):
+            return []
+        return [rule for rule in rules if isinstance(rule, dict)]
+
     def _manual_watch_fields(self, table_id: str) -> set[str]:
         parsed = self._load_raw()
         watched = parsed.get("watched_fields")
@@ -138,14 +198,30 @@ class RuleStore:
         fields: set[str] = set()
         full_mode = False
 
-        trigger = rule.get("trigger") or {}
-        if isinstance(trigger, dict):
-            if bool(trigger.get("any_field_changed")):
+        def collect_trigger(node: dict[str, Any]) -> None:
+            nonlocal full_mode
+            if bool(node.get("any_field_changed")):
                 full_mode = True
 
-            field = str(trigger.get("field") or "").strip()
-            if field:
-                fields.add(field)
+            field_name = str(node.get("field") or "").strip()
+            if field_name:
+                fields.add(field_name)
+
+        trigger = rule.get("trigger") or {}
+        if isinstance(trigger, dict):
+            collect_trigger(trigger)
+
+            trigger_all = trigger.get("all")
+            if isinstance(trigger_all, list):
+                for clause in trigger_all:
+                    if isinstance(clause, dict):
+                        collect_trigger(clause)
+
+            trigger_any = trigger.get("any")
+            if isinstance(trigger_any, list):
+                for clause in trigger_any:
+                    if isinstance(clause, dict):
+                        collect_trigger(clause)
 
         pipeline = rule.get("pipeline") or {}
         if not isinstance(pipeline, dict):
@@ -174,12 +250,24 @@ class RuleStore:
                 for value in action_fields.values():
                     fields.update(_extract_template_fields(value))
 
+            for key in ("match_fields", "update_fields", "create_fields"):
+                action_dict = action.get(key)
+                if not isinstance(action_dict, dict):
+                    continue
+                for value in action_dict.values():
+                    fields.update(_extract_template_fields(value))
+
         return fields, full_mode
 
-    def get_watch_plan(self, table_id: str, excluded_fields: set[str] | None = None) -> dict[str, Any]:
+    def get_watch_plan(
+        self,
+        table_id: str,
+        excluded_fields: set[str] | None = None,
+        app_token: str = "",
+    ) -> dict[str, Any]:
         excluded = excluded_fields or set()
         fields = self._manual_watch_fields(table_id)
-        rules = self.load_enabled_rules(table_id)
+        rules = self.load_enabled_rules(table_id, app_token=app_token)
 
         full_mode = False
         for rule in rules:
@@ -190,6 +278,10 @@ class RuleStore:
 
         if excluded:
             fields = {name for name in fields if name not in excluded}
+
+        available_fields = self._table_available_fields(app_token=app_token, table_id=table_id)
+        if available_fields is not None:
+            fields = {name for name in fields if name in available_fields}
 
         if full_mode or not fields:
             return {
@@ -259,6 +351,18 @@ class RuleMatcher:
 
         return True
 
+    def _match_single_trigger(
+        self,
+        trigger: dict[str, Any],
+        old_fields: dict[str, Any],
+        current_fields: dict[str, Any],
+        changed: dict[str, dict[str, Any]],
+    ) -> bool:
+        changed_fields = set(changed.keys())
+        if self._match_any_field_changed(trigger, changed_fields):
+            return True
+        return self._match_field_condition(trigger, current_fields, old_fields, changed)
+
     def match(
         self,
         rule: dict[str, Any],
@@ -273,12 +377,26 @@ class RuleMatcher:
         changed = diff.get("changed") or {}
         if not isinstance(changed, dict):
             changed = {}
-        changed_fields = set(changed.keys())
 
-        if self._match_any_field_changed(trigger, changed_fields):
+        trigger_all = trigger.get("all")
+        if isinstance(trigger_all, list) and trigger_all:
+            for clause in trigger_all:
+                if not isinstance(clause, dict):
+                    return False
+                if not self._match_single_trigger(clause, old_fields, current_fields, changed):
+                    return False
             return True
 
-        return self._match_field_condition(trigger, current_fields, old_fields, changed)
+        trigger_any = trigger.get("any")
+        if isinstance(trigger_any, list) and trigger_any:
+            for clause in trigger_any:
+                if not isinstance(clause, dict):
+                    continue
+                if self._match_single_trigger(clause, old_fields, current_fields, changed):
+                    return True
+            return False
+
+        return self._match_single_trigger(trigger, old_fields, current_fields, changed)
 
 
 def build_business_hash_payload(table_id: str, record_id: str, changed: dict[str, Any]) -> str:

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from src.config import Settings
+from src.feishu.client import FeishuAPIError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -28,6 +29,11 @@ class _SafeTemplateDict(dict[str, Any]):
 
 def _render_value(value: Any, context: dict[str, Any]) -> Any:
     if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1 and stripped.count("}") == 1:
+            key = stripped[1:-1].strip()
+            if key in context:
+                return context.get(key)
         return value.format_map(_SafeTemplateDict(context))
     if isinstance(value, dict):
         return {k: _render_value(v, context) for k, v in value.items()}
@@ -83,6 +89,140 @@ def _parse_datetime(value: Any) -> datetime:
 
 def _to_unix_seconds(dt: datetime) -> str:
     return str(int(dt.timestamp()))
+
+
+def _normalize_compare_value(value: Any) -> Any:
+    if isinstance(value, (int, float, bool, str)):
+        return value
+
+    if isinstance(value, dict):
+        if "text" in value and isinstance(value.get("text"), str):
+            return value.get("text")
+
+        if "value" in value and isinstance(value.get("value"), list):
+            list_value = value.get("value")
+            if isinstance(list_value, list):
+                text_parts: list[str] = []
+                all_text = True
+                for item in list_value:
+                    if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                        all_text = False
+                        break
+                    text_parts.append(str(item.get("text")))
+                if all_text and text_parts:
+                    return "".join(text_parts)
+
+        for key in ("id", "open_id", "user_id", "union_id"):
+            if key in value and value.get(key):
+                return {"__id__": str(value.get(key))}
+        return {k: _normalize_compare_value(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+
+    if isinstance(value, list):
+        if all(isinstance(item, dict) for item in value):
+            ids: list[str] = []
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                normalized = _normalize_compare_value(item)
+                if isinstance(normalized, dict) and "__id__" in normalized:
+                    ids.append(str(normalized.get("__id__")))
+            if len(ids) == len(value) and ids:
+                return sorted(ids)
+
+        text_parts: list[str] = []
+        all_text_items = True
+        for item in value:
+            if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                all_text_items = False
+                break
+            text_parts.append(str(item.get("text")))
+        if all_text_items and text_parts:
+            return "".join(text_parts)
+
+        return [_normalize_compare_value(item) for item in value]
+    return value
+
+
+def _same_compare_value(left: Any, right: Any) -> bool:
+    return _normalize_compare_value(left) == _normalize_compare_value(right)
+
+
+def _normalize_bitable_field_value(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float, bool, str)):
+        return value
+
+    if isinstance(value, dict):
+        if "text" in value and isinstance(value.get("text"), str):
+            return value.get("text")
+
+        if "value" in value and isinstance(value.get("value"), list):
+            list_value = value.get("value")
+            if isinstance(list_value, list):
+                text_parts: list[str] = []
+                all_text = True
+                for item in list_value:
+                    if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                        all_text = False
+                        break
+                    text_parts.append(str(item.get("text")))
+                if all_text and text_parts:
+                    return "".join(text_parts)
+
+        for key in ("id", "open_id", "user_id", "union_id"):
+            if key in value and value.get(key):
+                return [{"id": str(value.get(key))}]
+        return {k: _normalize_bitable_field_value(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        normalized_users: list[dict[str, str]] = []
+        is_user_list = True
+        for item in value:
+            if not isinstance(item, dict):
+                is_user_list = False
+                break
+            user_id = None
+            for key in ("id", "open_id", "user_id", "union_id"):
+                if item.get(key):
+                    user_id = str(item.get(key))
+                    break
+            if not user_id:
+                is_user_list = False
+                break
+            normalized_users.append({"id": user_id})
+
+        if is_user_list and normalized_users:
+            return normalized_users
+
+        text_parts: list[str] = []
+        all_text_items = True
+        for item in value:
+            if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                all_text_items = False
+                break
+            text_parts.append(str(item.get("text")))
+        if all_text_items and text_parts:
+            return "".join(text_parts)
+
+        return [_normalize_bitable_field_value(item) for item in value]
+
+    return value
+
+
+def _normalize_bitable_fields_payload(fields: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in fields.items():
+        normalized_value = _normalize_bitable_field_value(value)
+        if normalized_value is None:
+            continue
+        if isinstance(normalized_value, str):
+            stripped = normalized_value.strip()
+            if stripped.startswith("{") and stripped.endswith("}") and len(stripped) >= 3:
+                continue
+        normalized[key] = normalized_value
+    return normalized
 
 
 class ActionExecutor:
@@ -168,6 +308,7 @@ class ActionExecutor:
             raise ValueError("bitable.update rendered fields is empty")
 
         filtered_fields, skipped_fields = self._filter_status_fields(rendered_fields)
+        filtered_fields = _normalize_bitable_fields_payload(filtered_fields)
         if not filtered_fields:
             return {
                 "type": "bitable.update",
@@ -297,6 +438,227 @@ class ActionExecutor:
             "timezone": timezone,
         }
 
+    async def _action_bitable_upsert(
+        self,
+        action: dict[str, Any],
+        context: dict[str, Any],
+        app_token: str,
+    ) -> dict[str, Any]:
+        rendered_action = _render_value(action, self._compose_context(context))
+        if not isinstance(rendered_action, dict):
+            raise ValueError("bitable.upsert action payload is invalid")
+
+        target_table_id = str(rendered_action.get("target_table_id") or "").strip()
+        if not target_table_id:
+            raise ValueError("bitable.upsert requires target_table_id")
+
+        target_app_token = str(rendered_action.get("target_app_token") or app_token or "").strip()
+        if not target_app_token:
+            raise ValueError("bitable.upsert requires target_app_token or current app_token")
+
+        match_fields = rendered_action.get("match_fields")
+        if not isinstance(match_fields, dict) or not match_fields:
+            raise ValueError("bitable.upsert requires non-empty match_fields")
+
+        update_fields = rendered_action.get("update_fields")
+        if not isinstance(update_fields, dict):
+            update_fields = {}
+
+        create_fields = rendered_action.get("create_fields")
+        if not isinstance(create_fields, dict):
+            create_fields = {}
+
+        page_size = max(1, min(int(self._settings.automation.scan_page_size or 100), 500))
+        max_pages = max(1, int(self._settings.automation.max_scan_pages or 50))
+        match_field_names = sorted([str(key) for key in match_fields.keys() if str(key).strip()])
+        update_all_matches = bool(rendered_action.get("update_all_matches", False))
+
+        matched_record_ids: list[str] = []
+        matched_set: set[str] = set()
+        page_token = ""
+        pages = 0
+        while pages < max_pages:
+            payload: dict[str, Any] = {
+                "page_size": page_size,
+            }
+            if page_token:
+                payload["page_token"] = page_token
+            if match_field_names:
+                payload["field_names"] = match_field_names
+
+            response = await self._client.request(
+                "POST",
+                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}/records/search",
+                json_body=payload,
+            )
+            data = response.get("data") or {}
+            items = data.get("items") or []
+            if not isinstance(items, list):
+                items = []
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                record_fields = item.get("fields")
+                if not isinstance(record_fields, dict):
+                    record_fields = {}
+
+                matched = True
+                for field_name, expected_value in match_fields.items():
+                    if not _same_compare_value(record_fields.get(field_name), expected_value):
+                        matched = False
+                        break
+                if not matched:
+                    continue
+
+                matched_record_id = str(item.get("record_id") or item.get("recordId") or "").strip()
+                if matched_record_id and matched_record_id not in matched_set:
+                    matched_record_ids.append(matched_record_id)
+                    matched_set.add(matched_record_id)
+
+            pages += 1
+            if matched_record_ids and not update_all_matches:
+                break
+
+            has_more = bool(data.get("has_more"))
+            if not has_more:
+                break
+            page_token = str(data.get("page_token") or "")
+            if not page_token:
+                break
+
+        write_match_fields_on_update = bool(rendered_action.get("write_match_fields_on_update", False))
+
+        async def update_with_fallback(record_id_to_update: str, fields_to_update: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+            if not fields_to_update:
+                return {}, {}
+
+            try:
+                await self._client.request(
+                    "PUT",
+                    (
+                        f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}"
+                        f"/records/{record_id_to_update}"
+                    ),
+                    json_body={"fields": fields_to_update},
+                )
+                return dict(fields_to_update), {}
+            except FeishuAPIError:
+                success_fields: dict[str, Any] = {}
+                failed_fields: dict[str, str] = {}
+                for field_name, field_value in fields_to_update.items():
+                    try:
+                        await self._client.request(
+                            "PUT",
+                            (
+                                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}"
+                                f"/records/{record_id_to_update}"
+                            ),
+                            json_body={"fields": {field_name: field_value}},
+                        )
+                        success_fields[field_name] = field_value
+                    except FeishuAPIError as exc:
+                        failed_fields[field_name] = str(exc)
+                return success_fields, failed_fields
+
+        if matched_record_ids:
+            merged_update_fields: dict[str, Any] = {}
+            if write_match_fields_on_update:
+                merged_update_fields.update(match_fields)
+            merged_update_fields.update(update_fields)
+            merged_update_fields = _normalize_bitable_fields_payload(merged_update_fields)
+
+            if merged_update_fields:
+                ids_to_update = matched_record_ids if update_all_matches else [matched_record_ids[0]]
+                merged_success_fields: dict[str, Any] = {}
+                merged_failed_fields: dict[str, str] = {}
+                for matched_record_id in ids_to_update:
+                    success_fields, failed_fields = await update_with_fallback(matched_record_id, merged_update_fields)
+                    if success_fields:
+                        merged_success_fields.update(success_fields)
+                    if failed_fields:
+                        merged_failed_fields.update(failed_fields)
+
+                if merged_success_fields and merged_failed_fields:
+                    operation = "updated_partial_many" if len(ids_to_update) > 1 else "updated_partial"
+                elif merged_success_fields:
+                    operation = "updated_many" if len(ids_to_update) > 1 else "updated"
+                else:
+                    raise ValueError(f"bitable.upsert update failed for all fields: {merged_failed_fields}")
+            else:
+                operation = "matched_no_update"
+                merged_success_fields = {}
+                merged_failed_fields = {}
+
+            return {
+                "type": "bitable.upsert",
+                "operation": operation,
+                "target_app_token": target_app_token,
+                "target_table_id": target_table_id,
+                "target_record_id": matched_record_ids[0],
+                "target_record_ids": matched_record_ids,
+                "match_fields": match_fields,
+                "update_fields": merged_success_fields,
+                "failed_fields": merged_failed_fields,
+            }
+
+        merged_create_fields: dict[str, Any] = {}
+        merged_create_fields.update(match_fields)
+        merged_create_fields.update(update_fields)
+        merged_create_fields.update(create_fields)
+        merged_create_fields = _normalize_bitable_fields_payload(merged_create_fields)
+        if not merged_create_fields:
+            raise ValueError("bitable.upsert create payload is empty")
+
+        failed_fields: dict[str, str] = {}
+        try:
+            create_response = await self._client.request(
+                "POST",
+                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}/records",
+                json_body={"fields": merged_create_fields},
+            )
+            create_operation = "created"
+            created_update_fields = dict(merged_create_fields)
+        except FeishuAPIError:
+            minimal_create_fields = _normalize_bitable_fields_payload(match_fields)
+            if not minimal_create_fields:
+                raise
+
+            create_response = await self._client.request(
+                "POST",
+                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}/records",
+                json_body={"fields": minimal_create_fields},
+            )
+            create_operation = "created_partial"
+            created_update_fields = dict(minimal_create_fields)
+
+        create_data = create_response.get("data") or {}
+        create_record = create_data.get("record")
+        created_record_id = ""
+        if isinstance(create_record, dict):
+            created_record_id = str(create_record.get("record_id") or create_record.get("recordId") or "").strip()
+        if not created_record_id:
+            created_record_id = str(create_data.get("record_id") or create_data.get("recordId") or "").strip()
+
+        if create_operation == "created_partial" and created_record_id:
+            minimal_keys = set(_normalize_bitable_fields_payload(match_fields).keys())
+            extra_fields = {k: v for k, v in merged_create_fields.items() if k not in minimal_keys}
+            success_fields, extra_failed = await update_with_fallback(created_record_id, extra_fields)
+            created_update_fields.update(success_fields)
+            failed_fields.update(extra_failed)
+
+        return {
+            "type": "bitable.upsert",
+            "operation": create_operation,
+            "target_app_token": target_app_token,
+            "target_table_id": target_table_id,
+            "target_record_id": created_record_id,
+            "match_fields": match_fields,
+            "update_fields": created_update_fields,
+            "create_fields": create_fields,
+            "failed_fields": failed_fields,
+        }
+
     async def run_actions(
         self,
         actions: list[dict[str, Any]],
@@ -309,28 +671,42 @@ class ActionExecutor:
         for action in actions:
             action_type = str(action.get("type") or "").strip()
             if action_type == "log.write":
-                results.append(
-                    await self._run_with_retry(
-                        action_type,
-                        lambda: self._action_log_write(action, context),
-                    )
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_log_write(action, context),
                 )
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
                 continue
             if action_type == "bitable.update":
-                results.append(
-                    await self._run_with_retry(
-                        action_type,
-                        lambda: self._action_bitable_update(action, context, app_token, table_id, record_id),
-                    )
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_bitable_update(action, context, app_token, table_id, record_id),
                 )
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
                 continue
             if action_type == "calendar.create":
-                results.append(
-                    await self._run_with_retry(
-                        action_type,
-                        lambda: self._action_calendar_create(action, context),
-                    )
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_calendar_create(action, context),
                 )
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
+                continue
+            if action_type == "bitable.upsert":
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_bitable_upsert(action, context, app_token),
+                )
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
+                context["upsert_record_id"] = str(result.get("target_record_id") or "")
+                context["upsert_operation"] = str(result.get("operation") or "")
                 continue
             raise ValueError(f"unsupported action type: {action_type}")
         return results

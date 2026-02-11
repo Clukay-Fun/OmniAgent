@@ -3,6 +3,7 @@
 # 运行时加载：否（仅模板）；真正生效文件是 ../automation_rules.yaml。
 # 关联文件：README.md（流程说明）、fields.yaml（字段契约）。
 # 说明：默认推荐日志优先，状态字段回写按 status_write_enabled 决定。
+# 当前动作类型：log.write / bitable.update / bitable.upsert / calendar.create
 
 meta:
   version: "v1.2"
@@ -29,6 +30,8 @@ rules:
     table:
       table_id: tbl_xxx
       table_name: 案件项目总库
+      # 可选：当该表不在默认 BITABLE_APP_TOKEN 下时填写
+      app_token: app_token_xxx
 
     trigger:
       field: 案件分类
@@ -93,6 +96,7 @@ rules:
     table:
       table_id: tbl_xxx
       table_name: 案件项目总库
+      app_token: app_token_xxx
 
     trigger:
       any_field_changed: true
@@ -106,3 +110,46 @@ rules:
         - type: log.write
           level: info
           message: "任意字段变更：{record_id}"
+
+  - rule_id: R003
+    name: "示例-工作台同步到总览（upsert）"
+    enabled: false
+    priority: 120
+
+    table:
+      table_id: tbl_source
+      app_token: app_token_source
+
+    trigger:
+      all:
+        - field: 协作类型
+          condition:
+            in: [需要协助, 分派给他人, 团队共享]
+        - field: 已同步到总览
+          condition:
+            equals: false
+
+    pipeline:
+      actions:
+        - type: bitable.upsert
+          target_table_id: tbl_overview
+          update_all_matches: true   # 可选：命中多条重复记录时全部更新
+          match_fields:
+            任务ID: "{record_id}"
+            发起人: "{发起人}"
+          update_fields:
+            任务ID: "{record_id}"
+            待办事项: "{待办事项}"
+            任务状态: "{任务状态}"
+            截止时间: "{截止时间}"
+        - type: bitable.update
+          fields:
+            已同步到总览: true
+            任务ID: "{record_id}"
+        - type: log.write
+          level: info
+          message: "同步到总览：{record_id}"
+
+# 说明：若后续配置“已同步后更新”规则，建议 any_field_changed.exclude_fields 至少包含：
+# - 已同步到总览
+# - 任务ID

@@ -174,6 +174,20 @@ automation:
   action_retry_delay_seconds: ${AUTOMATION_ACTION_RETRY_DELAY_SECONDS:-0.5}
   dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
   run_log_file: ${AUTOMATION_RUN_LOG_FILE:-automation_data/run_logs.jsonl}
+  schema_sync_enabled: ${AUTOMATION_SCHEMA_SYNC_ENABLED:-true}
+  schema_sync_interval_seconds: ${AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS:-300}
+  schema_sync_event_driven: ${AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN:-true}
+  schema_cache_file: ${AUTOMATION_SCHEMA_CACHE_FILE:-automation_data/schema_cache.json}
+  schema_runtime_state_file: ${AUTOMATION_SCHEMA_RUNTIME_STATE_FILE:-automation_data/schema_runtime_state.json}
+  schema_webhook_enabled: ${AUTOMATION_SCHEMA_WEBHOOK_ENABLED:-false}
+  schema_webhook_url: ${AUTOMATION_SCHEMA_WEBHOOK_URL:-}
+  schema_webhook_secret: ${AUTOMATION_SCHEMA_WEBHOOK_SECRET:-}
+  schema_webhook_timeout_seconds: ${AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS:-5}
+  schema_policy_on_field_added: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED:-auto_map_if_same_name}
+  schema_policy_on_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED:-auto_remove}
+  schema_policy_on_field_renamed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED:-warn_only}
+  schema_policy_on_field_type_changed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_TYPE_CHANGED:-warn_only}
+  schema_policy_on_trigger_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_TRIGGER_FIELD_REMOVED:-disable_rule}
   status_write_enabled: ${AUTOMATION_STATUS_WRITE_ENABLED:-false}
   status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
   error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}

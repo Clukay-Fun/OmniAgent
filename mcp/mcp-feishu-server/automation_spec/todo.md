@@ -26,7 +26,9 @@
 ## 2. Phase B（规则与动作）
 
 - [x] 匹配能力：`changed/equals/in/any_field_changed/exclude_fields`
+- [x] 匹配能力扩展：`trigger.all`（AND）/`trigger.any`（OR）
 - [x] 动作能力：`log.write` / `bitable.update` / `calendar.create`
+- [x] 动作能力扩展：`bitable.upsert`（跨表 upsert）
 - [x] watched_fields 自动提取
 - [x] `any_field_changed` 自动全字段回退
 - [x] 状态回写可切换（`status_write_enabled`）

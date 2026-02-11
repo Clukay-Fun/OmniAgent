@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -25,9 +26,15 @@ class RuleExecutionResult:
 class AutomationEngine:
     """规则引擎：加载规则、匹配规则并执行动作链。"""
 
-    def __init__(self, settings: Settings, client: Any, rules_file: Path) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: Any,
+        rules_file: Path,
+        runtime_state_file: Path | None = None,
+    ) -> None:
         self._settings = settings
-        self._store = RuleStore(rules_file)
+        self._store = RuleStore(rules_file, runtime_state_file=runtime_state_file)
         self._matcher = RuleMatcher()
         self._executor = ActionExecutor(settings, client)
 
@@ -41,20 +48,45 @@ class AutomationEngine:
             run_log_path = Path.cwd() / run_log_path
         self._run_logs = RunLogStore(run_log_path)
 
-    def list_poll_table_ids(self, default_table_id: str) -> list[str]:
-        table_ids: list[str] = []
+    def list_poll_targets(self, default_table_id: str, default_app_token: str) -> list[dict[str, str]]:
+        targets: list[dict[str, str]] = []
         if default_table_id:
-            table_ids.append(default_table_id)
+            targets.append(
+                {
+                    "table_id": default_table_id,
+                    "app_token": default_app_token,
+                }
+            )
+
         for rule in self._store.load_all_enabled_rules():
             table = rule.get("table") or {}
             if not isinstance(table, dict):
                 continue
-            table_id = str(table.get("table_id") or "").strip()
-            if table_id and table_id not in table_ids:
-                table_ids.append(table_id)
-        return table_ids
 
-    def get_watch_plan(self, table_id: str) -> dict[str, Any]:
+            table_id = str(table.get("table_id") or "").strip()
+            if not table_id:
+                continue
+
+            app_token = str(table.get("app_token") or default_app_token or "").strip()
+
+            exists = False
+            for target in targets:
+                if target.get("table_id") == table_id and target.get("app_token") == app_token:
+                    exists = True
+                    break
+            if exists:
+                continue
+
+            targets.append(
+                {
+                    "table_id": table_id,
+                    "app_token": app_token,
+                }
+            )
+
+        return targets
+
+    def get_watch_plan(self, table_id: str, app_token: str = "") -> dict[str, Any]:
         excluded = {
             name
             for name in (
@@ -63,7 +95,7 @@ class AutomationEngine:
             )
             if name
         }
-        return self._store.get_watch_plan(table_id, excluded_fields=excluded)
+        return self._store.get_watch_plan(table_id, excluded_fields=excluded, app_token=app_token)
 
     def _build_default_status_action(self, status: str, error: str) -> dict[str, Any] | None:
         if not bool(self._settings.automation.status_write_enabled):
@@ -297,9 +329,9 @@ class AutomationEngine:
                 "table_id": table_id,
                 "record_id": record_id,
                 "app_token": app_token,
-                "fields": current_fields,
-                "old_fields": old_fields,
-                "diff": diff,
+                "fields": copy.deepcopy(current_fields),
+                "old_fields": copy.deepcopy(old_fields),
+                "diff": copy.deepcopy(diff),
                 "error": "",
             }
             execution = await self._run_rule_pipeline(rule, context, app_token, table_id, record_id)

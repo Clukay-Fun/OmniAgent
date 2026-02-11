@@ -134,6 +134,20 @@ class AutomationSettings(BaseModel):
     action_retry_delay_seconds: float = 0.5
     dead_letter_file: str = "automation_data/dead_letters.jsonl"
     run_log_file: str = "automation_data/run_logs.jsonl"
+    schema_sync_enabled: bool = True
+    schema_sync_interval_seconds: float = 300.0
+    schema_sync_event_driven: bool = True
+    schema_cache_file: str = "automation_data/schema_cache.json"
+    schema_runtime_state_file: str = "automation_data/schema_runtime_state.json"
+    schema_webhook_enabled: bool = False
+    schema_webhook_url: str = ""
+    schema_webhook_secret: str = ""
+    schema_webhook_timeout_seconds: float = 5.0
+    schema_policy_on_field_added: str = "auto_map_if_same_name"
+    schema_policy_on_field_removed: str = "auto_remove"
+    schema_policy_on_field_renamed: str = "warn_only"
+    schema_policy_on_field_type_changed: str = "warn_only"
+    schema_policy_on_trigger_field_removed: str = "disable_rule"
     status_write_enabled: bool = False
     status_field: str = "自动化_执行状态"
     error_field: str = "自动化_最近错误"
@@ -225,6 +239,23 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
         "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
         "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
+        "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
+        "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],
+        "AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN": ["automation", "schema_sync_event_driven"],
+        "AUTOMATION_SCHEMA_CACHE_FILE": ["automation", "schema_cache_file"],
+        "AUTOMATION_SCHEMA_RUNTIME_STATE_FILE": ["automation", "schema_runtime_state_file"],
+        "AUTOMATION_SCHEMA_WEBHOOK_ENABLED": ["automation", "schema_webhook_enabled"],
+        "AUTOMATION_SCHEMA_WEBHOOK_URL": ["automation", "schema_webhook_url"],
+        "AUTOMATION_SCHEMA_WEBHOOK_SECRET": ["automation", "schema_webhook_secret"],
+        "AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS": ["automation", "schema_webhook_timeout_seconds"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED": ["automation", "schema_policy_on_field_added"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED": ["automation", "schema_policy_on_field_removed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED": ["automation", "schema_policy_on_field_renamed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_TYPE_CHANGED": ["automation", "schema_policy_on_field_type_changed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_TRIGGER_FIELD_REMOVED": [
+            "automation",
+            "schema_policy_on_trigger_field_removed",
+        ],
         "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
         "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
         "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],

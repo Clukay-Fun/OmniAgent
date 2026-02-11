@@ -84,6 +84,7 @@ class AutomationService:
         )
         self._checkpoint = CheckpointStore(storage_root / "checkpoint.json")
         self._engine = AutomationEngine(settings, client, rules_file)
+        self._poller_skip_targets: set[tuple[str, str]] = set()
 
     def _ensure_enabled(self) -> None:
         if not self._settings.automation.enabled:
@@ -390,28 +391,48 @@ class AutomationService:
         event_type = str(header.get("event_type") or "").strip()
         self._verify_token(header.get("token"))
 
+        LOGGER.info(
+            "automation event received: event_id=%s event_type=%s",
+            event_id or "-",
+            event_type or "-",
+        )
+
         if not event_id:
             raise AutomationValidationError("missing header.event_id")
         if event_type not in SUPPORTED_EVENT_TYPES:
-            return {
+            result = {
                 "kind": "ignored",
                 "reason": "unsupported_event_type",
                 "event_id": event_id,
                 "event_type": event_type,
             }
+            LOGGER.info(
+                "automation event ignored: event_id=%s reason=%s",
+                event_id,
+                result.get("reason"),
+            )
+            return result
         if self._idempotency.is_event_duplicate(event_id):
-            return {
+            result = {
                 "kind": "duplicate_event",
                 "event_id": event_id,
             }
+            LOGGER.info("automation event duplicate: event_id=%s", event_id)
+            return result
 
         if event_type == EVENT_TYPE_FIELD_CHANGED:
             self._idempotency.mark_event(event_id)
-            return {
+            result = {
                 "kind": "ignored",
                 "reason": "field_changed_not_handled_in_phase_a",
                 "event_id": event_id,
             }
+            LOGGER.info(
+                "automation event ignored: event_id=%s reason=%s",
+                event_id,
+                result.get("reason"),
+            )
+            return result
 
         app_token = str(event.get("app_token") or event.get("appToken") or "").strip()
         table_id = str(event.get("table_id") or event.get("tableId") or "").strip()
@@ -428,6 +449,13 @@ class AutomationService:
             trigger_on_new_record=bool(self._settings.automation.trigger_on_new_record_event),
         )
         self._idempotency.mark_event(event_id)
+        LOGGER.info(
+            "automation event processed: event_id=%s kind=%s table_id=%s record_id=%s",
+            event_id,
+            result.get("kind"),
+            table_id,
+            record_id,
+        )
         return result
 
     def _resolve_table_params(self, table_id: str | None, app_token: str | None) -> tuple[str, str]:
@@ -438,8 +466,17 @@ class AutomationService:
         return resolved_table_id, resolved_app_token
 
     def get_poll_table_ids(self) -> list[str]:
+        ids: list[str] = []
+        for target in self.get_poll_targets():
+            table_id = target.get("table_id")
+            if table_id and table_id not in ids:
+                ids.append(table_id)
+        return ids
+
+    def get_poll_targets(self) -> list[dict[str, str]]:
         default_table_id = str(self._settings.bitable.default_table_id or "").strip()
-        return self._engine.list_poll_table_ids(default_table_id)
+        default_app_token = str(self._settings.bitable.default_app_token or "").strip()
+        return self._engine.list_poll_targets(default_table_id, default_app_token)
 
     async def init_snapshot(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
         self._ensure_enabled()
@@ -618,22 +655,54 @@ class AutomationService:
     async def scan_once_all_tables(self) -> dict[str, Any]:
         self._ensure_enabled()
 
-        app_token = str(self._settings.bitable.default_app_token or "").strip()
-        if not app_token:
-            raise AutomationValidationError("default app_token required for poller")
-
-        table_ids = self.get_poll_table_ids()
+        targets = self.get_poll_targets()
         results: list[dict[str, Any]] = []
-        for table_id in table_ids:
+        for target in targets:
+            table_id = str(target.get("table_id") or "").strip()
+            app_token = str(target.get("app_token") or "").strip()
+            if not table_id or not app_token:
+                continue
+
+            target_key = (app_token, table_id)
+            if target_key in self._poller_skip_targets:
+                results.append(
+                    {
+                        "status": "skipped",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "reason": "wrong_table_id_cached",
+                    }
+                )
+                continue
+
             try:
                 result = await self.scan_table(table_id=table_id, app_token=app_token)
+                result["app_token"] = app_token
                 results.append(result)
+            except FeishuAPIError as exc:
+                if int(exc.code) == 1254004:
+                    self._poller_skip_targets.add(target_key)
+                    LOGGER.warning(
+                        "poller disabled table due to WrongTableId: table_id=%s app_token=%s",
+                        table_id,
+                        app_token,
+                    )
+                LOGGER.exception("poller scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": str(exc),
+                    }
+                )
             except Exception as exc:
                 LOGGER.exception("poller scan failed for table %s: %s", table_id, exc)
                 results.append(
                     {
                         "status": "failed",
                         "table_id": table_id,
+                        "app_token": app_token,
                         "error": str(exc),
                     }
                 )
@@ -641,6 +710,6 @@ class AutomationService:
         return {
             "status": "ok",
             "mode": "poller_scan",
-            "tables": table_ids,
+            "tables": [target.get("table_id") for target in targets],
             "results": results,
         }

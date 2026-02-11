@@ -87,8 +87,9 @@ BITABLE_VIEW_ID=             # 视图 ID（可选，建议留空）
 
 # 自动化关键开关（可选）
 AUTOMATION_ENABLED=true
-AUTOMATION_POLLER_ENABLED=true
+AUTOMATION_POLLER_ENABLED=false
 AUTOMATION_STATUS_WRITE_ENABLED=false
+FEISHU_EVENT_VERIFY_TOKEN=your_event_token
 AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT=true
@@ -96,7 +97,7 @@ AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT=true
 
 双组织说明：
 - MCP Server 仅使用组织A数据凭证（`FEISHU_DATA_*`）
-- 组织A应用不需要配置机器人能力、事件订阅或 Webhook 回调
+- 若要走实时自动化，需要在组织A应用里配置事件订阅回调 `/feishu/events`
 
 ### 4. 启动服务
 
@@ -109,6 +110,24 @@ python run_dev.py
 ```
 
 默认端口：`8081`
+
+### 5. 实时事件订阅（推荐）
+
+1) 准备公网回调地址（例如 `ngrok http 8081`）
+
+2) 在飞书开发者后台配置事件订阅：
+- 请求地址：`https://<你的公网域名>/feishu/events`
+- Verification Token：与 `FEISHU_EVENT_VERIFY_TOKEN` 保持一致
+- 订阅事件：`drive.file.bitable_record_changed_v1`
+
+3) 建议开关：
+- `AUTOMATION_ENABLED=true`
+- `AUTOMATION_POLLER_ENABLED=false`（避免轮询抢跑与额外 API 消耗）
+- `AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=true`
+
+4) 完成后看日志：
+- 收到事件：`automation event received`
+- 处理结果：`automation event processed`
 
 ---
 
@@ -138,6 +157,9 @@ python run_dev.py
 | `/mcp/tools` | GET | 列出所有工具 |
 | `/mcp/tools/{tool_name}` | POST | 调用指定工具 |
 | `/bitable/fields` | GET | 查看表格字段（调试用）|
+| `/feishu/events` | POST | 飞书事件订阅回调（实时触发） |
+| `/automation/init` | POST | 初始化快照 |
+| `/automation/scan` | POST | 手动补偿扫描 |
 
 ### 示例请求
 

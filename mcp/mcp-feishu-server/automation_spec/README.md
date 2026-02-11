@@ -26,7 +26,7 @@
 - 补偿入口：`/automation/init`、`/automation/scan`
 - 快照、幂等、游标、轮询补偿
 - 规则匹配：`changed/equals/in/any_field_changed/exclude_fields`
-- 动作执行：`log.write`、`bitable.update`、`calendar.create`
+- 动作执行：`log.write`、`bitable.update`、`bitable.upsert`、`calendar.create`
 - 动作重试、死信记录、运行日志
 
 不包含：
@@ -89,11 +89,22 @@
 - 轮询是否触发新记录由 `trigger_on_new_record_scan` 控制
 - 若 `trigger_on_new_record_scan_requires_checkpoint=true` 且游标为 0，轮询新记录不触发
 
+触发条件写法：
+
+- 单条件：`trigger.field + condition`
+- 多条件 AND：`trigger.all`
+- 多条件 OR：`trigger.any`
+
 ## 6. 接口
 
 - `POST /feishu/events`：事件入口（已实现）
 - `POST /automation/init`：初始化快照（已实现）
 - `POST /automation/scan`：手动补偿扫描（已实现）
+
+表来源说明：
+
+- 规则可在 `table.app_token` 指定该表所属 app_token（可选）
+- 若不填写，默认使用 `BITABLE_APP_TOKEN`
 
 ## 7. 数据文件
 
