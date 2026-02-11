@@ -143,6 +143,7 @@ class AutomationSettings(BaseModel):
     schema_webhook_url: str = ""
     schema_webhook_secret: str = ""
     schema_webhook_timeout_seconds: float = 5.0
+    schema_webhook_drill_enabled: bool = False
     schema_policy_on_field_added: str = "auto_map_if_same_name"
     schema_policy_on_field_removed: str = "auto_remove"
     schema_policy_on_field_renamed: str = "warn_only"
@@ -248,6 +249,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_SCHEMA_WEBHOOK_URL": ["automation", "schema_webhook_url"],
         "AUTOMATION_SCHEMA_WEBHOOK_SECRET": ["automation", "schema_webhook_secret"],
         "AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS": ["automation", "schema_webhook_timeout_seconds"],
+        "AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED": ["automation", "schema_webhook_drill_enabled"],
         "AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED": ["automation", "schema_policy_on_field_added"],
         "AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED": ["automation", "schema_policy_on_field_removed"],
         "AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED": ["automation", "schema_policy_on_field_renamed"],

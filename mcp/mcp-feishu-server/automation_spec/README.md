@@ -10,6 +10,7 @@
 本文档描述 `mcp-feishu-server` 自动化模块的当前实现方法，重点覆盖：
 
 - watched_fields 自动提取（按规则字段最小化拉取）
+- schema watcher（5 分钟轮询 + 字段事件即时刷新）
 - `status_write_enabled` 可切换状态回写
 - `run_logs.jsonl` 固定结构运行日志
 - 重试、死信、轮询补偿
@@ -27,6 +28,7 @@
 - 快照、幂等、游标、轮询补偿
 - 规则匹配：`changed/equals/in/any_field_changed/exclude_fields`
 - 动作执行：`log.write`、`bitable.update`、`bitable.upsert`、`calendar.create`
+- schema 同步：`schema_cache.json` + `schema_runtime_state.json` + 风险 webhook
 - 动作重试、死信记录、运行日志
 
 不包含：
@@ -72,7 +74,7 @@
 ## 5. 关键流程（当前）
 
 1. 收到事件或轮询扫描记录
-2. 获取 `table_id/record_id`
+2. 获取 `table_id/record_id`（字段变更事件走 schema 刷新链路）
 3. 计算 watch 计划（字段模式/全字段模式）
 4. 按 watch 计划拉取记录字段
 5. 与快照做 diff
@@ -101,6 +103,12 @@
 - `POST /automation/init`：初始化快照（已实现）
 - `POST /automation/scan`：手动补偿扫描（已实现）
 
+字段结构同步：
+
+- `drive.file.bitable_field_changed_v1` 到达后立即刷新对应表 schema
+- 后台轮询按 `AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS` 执行全量刷新
+- trigger 字段被删除时，规则仅运行态禁用（不改 `automation_rules.yaml`）
+
 表来源说明：
 
 - 规则可在 `table.app_token` 指定该表所属 app_token（可选）
@@ -111,6 +119,8 @@
 - `snapshot.json`：快照
 - `idempotency.json`：事件级/业务级去重键
 - `checkpoint.json`：扫描游标
+- `schema_cache.json`：字段快照缓存（按 `app_token::table_id`）
+- `schema_runtime_state.json`：运行态 schema + 规则禁用状态
 - `run_logs.jsonl`：规则执行日志
 - `dead_letters.jsonl`：失败死信
 
@@ -123,6 +133,12 @@
 - `AUTOMATION_DEAD_LETTER_FILE`
 - `AUTOMATION_ACTION_MAX_RETRIES`
 - `AUTOMATION_ACTION_RETRY_DELAY_SECONDS`
+- `AUTOMATION_SCHEMA_SYNC_ENABLED`
+- `AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS`
+- `AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN`
+- `AUTOMATION_SCHEMA_WEBHOOK_ENABLED`
+- `AUTOMATION_SCHEMA_WEBHOOK_URL`
+- `AUTOMATION_SCHEMA_WEBHOOK_SECRET`
 
 ## 9. run_logs 单条结构（固定）
 

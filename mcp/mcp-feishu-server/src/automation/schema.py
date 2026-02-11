@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -94,22 +95,34 @@ class SchemaStateStore:
             disabled_rules = data.get("disabled_rules")
             if not isinstance(disabled_rules, dict):
                 disabled_rules = {}
-            return {"disabled_rules": disabled_rules}
+            schema_tables = data.get("schema_tables")
+            if not isinstance(schema_tables, dict):
+                schema_tables = {}
+            return {
+                "disabled_rules": disabled_rules,
+                "schema_tables": schema_tables,
+            }
 
     def save_runtime_state(self, state: dict[str, Any]) -> None:
         with self._lock:
             payload = {
-                "disabled_rules": state.get("disabled_rules") if isinstance(state.get("disabled_rules"), dict) else {},
+                "disabled_rules": state.get("disabled_rules")
+                if isinstance(state.get("disabled_rules"), dict)
+                else {},
+                "schema_tables": state.get("schema_tables")
+                if isinstance(state.get("schema_tables"), dict)
+                else {},
             }
             self._safe_dump(self._runtime_state_file, payload)
 
 
 class WebhookNotifier:
-    def __init__(self, enabled: bool, url: str, secret: str, timeout_seconds: float) -> None:
+    def __init__(self, enabled: bool, url: str, secret: str, timeout_seconds: float, max_retries: int = 2) -> None:
         self._enabled = bool(enabled)
         self._url = str(url or "").strip()
         self._secret = str(secret or "").strip()
         self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._max_retries = max(0, int(max_retries))
 
     def _build_sign_payload(self) -> dict[str, str]:
         if not self._secret:
@@ -123,35 +136,49 @@ class WebhookNotifier:
             "sign": sign,
         }
 
-    async def send(self, title: str, lines: list[str]) -> dict[str, Any]:
+    async def send(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self._enabled or not self._url:
             return {"status": "disabled"}
 
-        text = title
-        if lines:
-            text = title + "\n" + "\n".join(lines)
-
-        payload: dict[str, Any] = {
+        body: dict[str, Any] = {
             "msg_type": "text",
             "content": {
-                "text": text,
+                "text": json.dumps(payload, ensure_ascii=False),
             },
         }
-        payload.update(self._build_sign_payload())
+        body.update(self._build_sign_payload())
 
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout_seconds, trust_env=False) as client:
-                response = await client.post(self._url, json=payload)
-            return {
-                "status": "sent" if response.status_code < 400 else "failed",
-                "status_code": response.status_code,
-                "body": response.text,
-            }
-        except Exception as exc:
-            return {
-                "status": "failed",
-                "error": str(exc),
-            }
+        last_error: dict[str, Any] | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout_seconds, trust_env=False) as client:
+                    response = await client.post(self._url, json=body)
+                if response.status_code < 400:
+                    return {
+                        "status": "sent",
+                        "status_code": response.status_code,
+                        "body": response.text,
+                    }
+
+                last_error = {
+                    "status": "failed",
+                    "status_code": response.status_code,
+                    "body": response.text,
+                }
+                should_retry = response.status_code >= 500 and attempt < self._max_retries
+                if not should_retry:
+                    return last_error
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as exc:
+                last_error = {
+                    "status": "failed",
+                    "error": str(exc),
+                }
+                if attempt >= self._max_retries:
+                    return last_error
+
+            await asyncio.sleep(0.5 * (2**attempt))
+
+        return last_error or {"status": "failed", "error": "unknown webhook error"}
 
 
 class SchemaWatcher:
@@ -189,12 +216,42 @@ class SchemaWatcher:
         return fields
 
     @staticmethod
-    def _field_name_set(fields_by_id: dict[str, dict[str, Any]]) -> set[str]:
+    def _build_runtime_schema(fields_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        field_names: list[str] = []
+        field_types: dict[str, int] = {}
+        for meta in fields_by_id.values():
+            name = str(meta.get("name") or "").strip()
+            if not name:
+                continue
+            field_names.append(name)
+            field_types[name] = int(meta.get("type") or 0)
         return {
-            str(meta.get("name") or "").strip()
-            for meta in fields_by_id.values()
-            if str(meta.get("name") or "").strip()
+            "field_names": sorted(set(field_names)),
+            "field_types": field_types,
+            "updated_at": _utc_now_iso(),
         }
+
+    @staticmethod
+    def _detect_alias_conflicts(fields_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[str, list[str]] = {}
+        for field_id, meta in fields_by_id.items():
+            name = str(meta.get("name") or "").strip()
+            if not name:
+                continue
+            grouped.setdefault(name, []).append(field_id)
+
+        conflicts: list[dict[str, Any]] = []
+        for name, ids in grouped.items():
+            if len(ids) <= 1:
+                continue
+            conflicts.append(
+                {
+                    "name": name,
+                    "field_ids": sorted(ids),
+                }
+            )
+        conflicts.sort(key=lambda item: str(item.get("name") or ""))
+        return conflicts
 
     @staticmethod
     def _diff_fields(
@@ -259,23 +316,103 @@ class SchemaWatcher:
             matched.append(rule)
         return matched
 
-    async def _notify_if_needed(self, title: str, lines: list[str]) -> dict[str, Any]:
-        result = await self._notifier.send(title=title, lines=lines)
-        self._run_logs.write(
-            {
-                "event_id": "schema_webhook",
-                "rule_id": None,
-                "record_id": "",
-                "table_id": "",
-                "trigger_field": None,
-                "changed": None,
-                "actions_executed": ["schema.webhook"],
-                "result": "schema_webhook_sent" if result.get("status") == "sent" else "schema_webhook_failed",
-                "error": None if result.get("status") == "sent" else str(result),
-                "retry_count": 0,
-                "sent_to_dead_letter": False,
-                "duration_ms": 0,
-            }
+    def _write_schema_log(
+        self,
+        *,
+        result: str,
+        app_token: str,
+        table_id: str,
+        changed: dict[str, Any],
+        actions_executed: list[str],
+        error: str | None = None,
+        rule_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "event_id": f"schema:{table_id}:{int(time.time())}",
+            "rule_id": rule_id,
+            "record_id": "",
+            "table_id": table_id,
+            "trigger_field": None,
+            "changed": changed,
+            "actions_executed": actions_executed,
+            "result": result,
+            "error": error,
+            "retry_count": 0,
+            "sent_to_dead_letter": False,
+            "duration_ms": 0,
+            "app_token": app_token,
+        }
+        if extra:
+            payload.update(extra)
+        self._run_logs.write(payload)
+
+    async def _notify_if_needed(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._notifier.send(payload)
+        is_drill = bool(payload.get("drill"))
+        self._write_schema_log(
+            result="schema_webhook_sent" if result.get("status") == "sent" else "schema_webhook_failed",
+            app_token=str(payload.get("app_token") or ""),
+            table_id=str(payload.get("table_id") or ""),
+            changed={
+                "payload": payload,
+            },
+            actions_executed=["schema.webhook"],
+            error=None if result.get("status") == "sent" else str(result),
+            extra={
+                "webhook_result": result,
+                "drill": is_drill,
+                "schema_triggered_by": str(payload.get("triggered_by") or ""),
+            },
+        )
+        return result
+
+    async def send_risk_drill(self, app_token: str, table_id: str, triggered_by: str) -> dict[str, Any]:
+        webhook_payload = {
+            "kind": "schema_change_alert",
+            "table": {
+                "app_token": app_token,
+                "table_id": table_id,
+            },
+            "change_type": "risk",
+            "drill": True,
+            "added": [],
+            "removed": [],
+            "type_changed": [
+                {
+                    "field_id": "drill_field",
+                    "field_name": "schema_webhook_drill",
+                    "from": 1,
+                    "to": 2,
+                }
+            ],
+            "alias_conflicts": [],
+            "affected_rules": [],
+            "disabled_rules": [],
+            "action": {
+                "mode": "drill_only",
+                "description": "manual risk drill, no schema mutation",
+            },
+            "timestamp": _utc_now_iso(),
+            "app_token": app_token,
+            "table_id": table_id,
+            "triggered_by": triggered_by,
+        }
+        result = await self._notify_if_needed(webhook_payload)
+        self._write_schema_log(
+            result="schema_webhook_drill",
+            app_token=app_token,
+            table_id=table_id,
+            changed={
+                "payload": webhook_payload,
+            },
+            actions_executed=["schema.webhook.drill"],
+            error=None if result.get("status") == "sent" else str(result),
+            extra={
+                "webhook_result": result,
+                "drill": True,
+                "schema_triggered_by": triggered_by,
+            },
         )
         return result
 
@@ -292,15 +429,33 @@ class SchemaWatcher:
         }
         return True
 
+    async def _list_all_fields(self, app_token: str, table_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            params: dict[str, Any] = {
+                "page_size": 500,
+            }
+            if page_token:
+                params["page_token"] = page_token
+            response = await self._client.request(
+                "GET",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+                params=params,
+            )
+            data = response.get("data") or {}
+            page_items = data.get("items") or []
+            if isinstance(page_items, list):
+                items.extend([item for item in page_items if isinstance(item, dict)])
+            if not bool(data.get("has_more")):
+                break
+            page_token = str(data.get("page_token") or "")
+            if not page_token:
+                break
+        return items
+
     async def refresh_table(self, app_token: str, table_id: str, triggered_by: str) -> dict[str, Any]:
-        response = await self._client.request(
-            "GET",
-            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
-        )
-        data = response.get("data") or {}
-        items = data.get("items") or []
-        if not isinstance(items, list):
-            items = []
+        items = await self._list_all_fields(app_token, table_id)
 
         key = _table_key(app_token, table_id)
         cache = self._state_store.load_cache()
@@ -313,6 +468,7 @@ class SchemaWatcher:
 
         new_fields_by_id = self._normalize_fields(items)
         diff = self._diff_fields(old_fields_by_id, new_fields_by_id)
+        alias_conflicts = self._detect_alias_conflicts(new_fields_by_id)
 
         tables = cache.setdefault("tables", {})
         if not isinstance(tables, dict):
@@ -326,21 +482,22 @@ class SchemaWatcher:
         }
         self._state_store.save_cache(cache)
 
-        changed = bool(diff.get("added") or diff.get("removed") or diff.get("renamed") or diff.get("type_changed"))
-        if not changed:
-            return {
-                "status": "ok",
-                "table_id": table_id,
-                "app_token": app_token,
-                "changed": False,
-            }
-
         runtime_state = self._state_store.load_runtime_state()
-        disabled_rules_now: list[str] = []
+        schema_tables = runtime_state.setdefault("schema_tables", {})
+        if not isinstance(schema_tables, dict):
+            schema_tables = {}
+            runtime_state["schema_tables"] = schema_tables
+        schema_tables[key] = {
+            "app_token": app_token,
+            "table_id": table_id,
+            **self._build_runtime_schema(new_fields_by_id),
+        }
 
         removed_fields = set([str(name) for name in diff.get("removed") or [] if str(name).strip()])
         table_rules = self._rules_for_table(app_token, table_id)
         policy_trigger_removed = str(self._policy.get("on_trigger_field_removed") or "disable_rule")
+        disabled_rules_now: list[str] = []
+        affected_rules: list[str] = []
 
         if removed_fields and policy_trigger_removed == "disable_rule":
             for rule in table_rules:
@@ -354,49 +511,110 @@ class SchemaWatcher:
                 hit = sorted(trigger_fields & removed_fields)
                 if not hit:
                     continue
+                affected_rules.append(rule_id)
                 reason = f"trigger_field_removed:{','.join(hit)}"
                 if self._disable_rule(runtime_state, rule_id, reason):
                     disabled_rules_now.append(rule_id)
 
-        if disabled_rules_now:
-            self._state_store.save_runtime_state(runtime_state)
+        self._state_store.save_runtime_state(runtime_state)
 
-        self._run_logs.write(
-            {
-                "event_id": f"schema:{table_id}:{int(time.time())}",
-                "rule_id": None,
-                "record_id": "",
+        changed = bool(
+            diff.get("added")
+            or diff.get("removed")
+            or diff.get("renamed")
+            or diff.get("type_changed")
+            or alias_conflicts
+            or disabled_rules_now
+        )
+        if not changed:
+            return {
+                "status": "ok",
                 "table_id": table_id,
-                "trigger_field": None,
-                "changed": {
-                    "added": diff.get("added") or [],
-                    "removed": diff.get("removed") or [],
-                    "renamed": diff.get("renamed") or [],
-                    "type_changed": diff.get("type_changed") or [],
-                    "disabled_rules": disabled_rules_now,
-                },
-                "actions_executed": ["schema.refresh"],
-                "result": "schema_changed",
-                "error": None,
-                "retry_count": 0,
-                "sent_to_dead_letter": False,
-                "duration_ms": 0,
-                "schema_triggered_by": triggered_by,
+                "app_token": app_token,
+                "changed": False,
             }
+
+        policy_applied = {
+            "on_field_added": str(self._policy.get("on_field_added") or "auto_map_if_same_name"),
+            "on_field_removed": str(self._policy.get("on_field_removed") or "auto_remove"),
+            "on_field_renamed": str(self._policy.get("on_field_renamed") or "warn_only"),
+            "on_field_type_changed": str(self._policy.get("on_field_type_changed") or "warn_only"),
+            "on_trigger_field_removed": policy_trigger_removed,
+        }
+
+        self._write_schema_log(
+            result="schema_changed",
+            app_token=app_token,
+            table_id=table_id,
+            changed={
+                "added": diff.get("added") or [],
+                "removed": diff.get("removed") or [],
+                "renamed": diff.get("renamed") or [],
+                "type_changed": diff.get("type_changed") or [],
+                "alias_conflicts": alias_conflicts,
+                "disabled_rules": disabled_rules_now,
+            },
+            actions_executed=["schema.refresh"],
+            extra={"schema_triggered_by": triggered_by},
         )
 
-        risky = bool(diff.get("renamed") or diff.get("type_changed") or disabled_rules_now)
+        self._write_schema_log(
+            result="schema_policy_applied",
+            app_token=app_token,
+            table_id=table_id,
+            changed={
+                "policy": policy_applied,
+                "added": diff.get("added") or [],
+                "removed": diff.get("removed") or [],
+                "renamed": diff.get("renamed") or [],
+                "type_changed": diff.get("type_changed") or [],
+                "alias_conflicts": alias_conflicts,
+                "affected_rules": affected_rules,
+            },
+            actions_executed=["schema.policy"],
+            extra={"schema_triggered_by": triggered_by},
+        )
+
+        for rule_id in disabled_rules_now:
+            self._write_schema_log(
+                result="schema_rule_disabled",
+                app_token=app_token,
+                table_id=table_id,
+                changed={
+                    "rule_id": rule_id,
+                    "reason": "trigger_field_removed",
+                },
+                actions_executed=["schema.disable_rule"],
+                rule_id=rule_id,
+                extra={"schema_triggered_by": triggered_by},
+            )
+
+        risky = bool(diff.get("type_changed") or alias_conflicts or disabled_rules_now)
         if risky:
-            lines: list[str] = [
-                f"表: {table_id}",
-                f"新增字段: {', '.join(diff.get('added') or []) or '-'}",
-                f"删除字段: {', '.join(diff.get('removed') or []) or '-'}",
-                f"改名字段: {len(diff.get('renamed') or [])}",
-                f"类型变化: {len(diff.get('type_changed') or [])}",
-            ]
-            if disabled_rules_now:
-                lines.append(f"规则已暂停: {', '.join(disabled_rules_now)}")
-            await self._notify_if_needed("⚠️ Schema 变更提醒", lines)
+            webhook_payload = {
+                "kind": "schema_change_alert",
+                "table": {
+                    "app_token": app_token,
+                    "table_id": table_id,
+                },
+                "change_type": "risk",
+                "added": diff.get("added") or [],
+                "removed": diff.get("removed") or [],
+                "type_changed": diff.get("type_changed") or [],
+                "alias_conflicts": alias_conflicts,
+                "affected_rules": sorted(set(affected_rules)),
+                "disabled_rules": disabled_rules_now,
+                "action": {
+                    "trigger_field_removed": policy_trigger_removed,
+                    "on_field_type_changed": policy_applied["on_field_type_changed"],
+                    "on_field_renamed": policy_applied["on_field_renamed"],
+                },
+                "timestamp": _utc_now_iso(),
+                "app_token": app_token,
+                "table_id": table_id,
+                "triggered_by": triggered_by,
+            }
+            await self._notify_if_needed(webhook_payload)
 
         return {
             "status": "ok",
@@ -404,5 +622,6 @@ class SchemaWatcher:
             "app_token": app_token,
             "changed": True,
             "diff": diff,
+            "alias_conflicts": alias_conflicts,
             "disabled_rules": disabled_rules_now,
         }

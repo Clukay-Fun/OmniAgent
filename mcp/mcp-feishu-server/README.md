@@ -93,6 +93,13 @@ FEISHU_EVENT_VERIFY_TOKEN=your_event_token
 AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT=true
+AUTOMATION_SCHEMA_SYNC_ENABLED=true
+AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS=300
+AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=true
+AUTOMATION_SCHEMA_WEBHOOK_ENABLED=true
+AUTOMATION_SCHEMA_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
+AUTOMATION_SCHEMA_WEBHOOK_SECRET=xxx
+AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=false
 ```
 
 双组织说明：
@@ -119,6 +126,7 @@ python run_dev.py
 - 请求地址：`https://<你的公网域名>/feishu/events`
 - Verification Token：与 `FEISHU_EVENT_VERIFY_TOKEN` 保持一致
 - 订阅事件：`drive.file.bitable_record_changed_v1`
+- 订阅事件：`drive.file.bitable_field_changed_v1`
 
 3) 建议开关：
 - `AUTOMATION_ENABLED=true`
@@ -160,6 +168,7 @@ python run_dev.py
 | `/feishu/events` | POST | 飞书事件订阅回调（实时触发） |
 | `/automation/init` | POST | 初始化快照 |
 | `/automation/scan` | POST | 手动补偿扫描 |
+| `/automation/schema/refresh` | POST | 手动刷新表结构（支持全量/单表，支持风险演练） |
 
 ### 示例请求
 
@@ -182,7 +191,23 @@ curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_keyword \
 curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_person \
   -H "Content-Type: application/json" \
   -d '{"params": {"field": "主办律师", "open_id": "ou_xxx"}}'
+
+# 手动刷新全部表 schema
+curl -X POST http://localhost:8081/automation/schema/refresh
+
+# 手动刷新单表 schema
+curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx"
+
+# 强制风险演练（只发 webhook，不改 schema；需开启 AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=true）
+curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx&drill=true"
 ```
+
+### Schema 风险演练开关
+
+- `AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=false`（默认）时，`drill=true` 会被拒绝（HTTP 400）
+- `AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=true` 时，可通过 `/automation/schema/refresh?...&drill=true` 强制发送一条风险告警 webhook
+- `drill=true` 必须携带 `table_id`（避免一次刷新对全部表批量推送演练告警）
+- 演练仅验证通知链路，不会修改表结构缓存，也不会禁用任何规则
 
 ---
 

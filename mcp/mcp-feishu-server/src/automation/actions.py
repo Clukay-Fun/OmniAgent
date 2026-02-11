@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from src.config import Settings
@@ -236,6 +238,95 @@ class ActionExecutor:
         self._status_write_enabled = bool(settings.automation.status_write_enabled)
         self._status_field = str(settings.automation.status_field or "").strip()
         self._error_field = str(settings.automation.error_field or "").strip()
+        runtime_state_file = Path(settings.automation.schema_runtime_state_file)
+        if not runtime_state_file.is_absolute():
+            runtime_state_file = Path.cwd() / runtime_state_file
+        self._runtime_state_file = runtime_state_file
+
+    def _load_table_schema(self, app_token: str, table_id: str) -> dict[str, Any] | None:
+        if not self._runtime_state_file.exists():
+            return None
+        raw = self._runtime_state_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+
+        schema_tables = parsed.get("schema_tables")
+        if not isinstance(schema_tables, dict):
+            return None
+
+        key = f"{app_token}::{table_id}" if app_token else table_id
+        schema = schema_tables.get(key)
+        if not isinstance(schema, dict):
+            return None
+        return schema
+
+    @staticmethod
+    def _is_definitely_type_mismatch(field_type: int, value: Any) -> bool:
+        if value is None:
+            return False
+
+        if field_type == 2:
+            return not isinstance(value, (int, float)) or isinstance(value, bool)
+        if field_type == 3:
+            return isinstance(value, (list, dict))
+        if field_type == 4:
+            return not isinstance(value, list)
+        if field_type == 5:
+            if isinstance(value, (int, float, str)):
+                return False
+            if isinstance(value, dict) and value.get("timestamp") is not None:
+                return False
+            return True
+        if field_type == 7:
+            return not isinstance(value, (bool, int))
+        if field_type in (11, 1001, 1002, 22):
+            if isinstance(value, dict):
+                return not any(value.get(key) for key in ("id", "open_id", "user_id", "union_id"))
+            if isinstance(value, list):
+                for item in value:
+                    if not isinstance(item, dict):
+                        return True
+                    if not any(item.get(key) for key in ("id", "open_id", "user_id", "union_id")):
+                        return True
+                return False
+            return True
+        return False
+
+    def _filter_fields_by_schema(
+        self,
+        fields: dict[str, Any],
+        schema: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
+        field_types_raw = schema.get("field_types")
+        field_types = field_types_raw if isinstance(field_types_raw, dict) else {}
+
+        filtered: dict[str, Any] = {}
+        unknown_fields: list[str] = []
+        type_mismatch_fields: dict[str, Any] = {}
+
+        for field_name, field_value in fields.items():
+            field_type_raw = field_types.get(field_name)
+            if field_type_raw is None:
+                unknown_fields.append(field_name)
+                continue
+
+            field_type = int(field_type_raw or 0)
+            if self._is_definitely_type_mismatch(field_type, field_value):
+                type_mismatch_fields[field_name] = {
+                    "type": field_type,
+                    "value": field_value,
+                }
+                continue
+
+            filtered[field_name] = field_value
+
+        return filtered, unknown_fields, type_mismatch_fields
 
     async def _run_with_retry(self, action_type: str, runner: Any) -> dict[str, Any]:
         attempts = self._max_retries + 1
@@ -468,6 +559,46 @@ class ActionExecutor:
         if not isinstance(create_fields, dict):
             create_fields = {}
 
+        schema_filtered: dict[str, list[str]] = {
+            "match_fields": [],
+            "update_fields": [],
+            "create_fields": [],
+        }
+        schema_type_warnings: dict[str, dict[str, Any]] = {
+            "match_fields": {},
+            "update_fields": {},
+            "create_fields": {},
+        }
+
+        schema = self._load_table_schema(target_app_token, target_table_id)
+        if isinstance(schema, dict):
+            match_fields, removed_match, mismatched_match = self._filter_fields_by_schema(match_fields, schema)
+            update_fields, removed_update, mismatched_update = self._filter_fields_by_schema(update_fields, schema)
+            create_fields, removed_create, mismatched_create = self._filter_fields_by_schema(create_fields, schema)
+
+            schema_filtered["match_fields"] = removed_match
+            schema_filtered["update_fields"] = removed_update
+            schema_filtered["create_fields"] = removed_create
+            schema_type_warnings["match_fields"] = mismatched_match
+            schema_type_warnings["update_fields"] = mismatched_update
+            schema_type_warnings["create_fields"] = mismatched_create
+
+            if removed_match or removed_update or removed_create:
+                LOGGER.warning(
+                    "bitable.upsert schema filtered unknown fields: table=%s removed=%s",
+                    target_table_id,
+                    schema_filtered,
+                )
+            if mismatched_match or mismatched_update or mismatched_create:
+                LOGGER.warning(
+                    "bitable.upsert schema type warnings: table=%s warnings=%s",
+                    target_table_id,
+                    schema_type_warnings,
+                )
+
+        if not match_fields:
+            raise ValueError("bitable.upsert match_fields became empty after schema filtering")
+
         page_size = max(1, min(int(self._settings.automation.scan_page_size or 100), 500))
         max_pages = max(1, int(self._settings.automation.max_scan_pages or 50))
         match_field_names = sorted([str(key) for key in match_fields.keys() if str(key).strip()])
@@ -600,6 +731,8 @@ class ActionExecutor:
                 "match_fields": match_fields,
                 "update_fields": merged_success_fields,
                 "failed_fields": merged_failed_fields,
+                "schema_filtered": schema_filtered,
+                "schema_type_warnings": schema_type_warnings,
             }
 
         merged_create_fields: dict[str, Any] = {}
@@ -657,6 +790,8 @@ class ActionExecutor:
             "update_fields": created_update_fields,
             "create_fields": create_fields,
             "failed_fields": failed_fields,
+            "schema_filtered": schema_filtered,
+            "schema_type_warnings": schema_type_warnings,
         }
 
     async def run_actions(

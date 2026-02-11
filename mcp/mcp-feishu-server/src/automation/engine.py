@@ -48,6 +48,10 @@ class AutomationEngine:
             run_log_path = Path.cwd() / run_log_path
         self._run_logs = RunLogStore(run_log_path)
 
+    @property
+    def rule_store(self) -> RuleStore:
+        return self._store
+
     def list_poll_targets(self, default_table_id: str, default_app_token: str) -> list[dict[str, str]]:
         targets: list[dict[str, str]] = []
         if default_table_id:
@@ -311,7 +315,7 @@ class AutomationEngine:
         current_fields: dict[str, Any],
         diff: dict[str, Any],
     ) -> dict[str, Any]:
-        rules = self._store.load_enabled_rules(table_id)
+        rules = self._store.load_enabled_rules(table_id, app_token=app_token)
         results: list[dict[str, Any]] = []
 
         matched_count = 0

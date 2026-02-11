@@ -47,8 +47,10 @@ temp/
 agent/workspace/
 
 # other
-docs
-scripts
+# other
+docs/
+scripts/
+tests/
 TEST.md
 
 # mcp-feishu-server runtime outputs (centralized)

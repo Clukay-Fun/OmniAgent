@@ -156,6 +156,7 @@ automation:
   schema_webhook_url: ${AUTOMATION_SCHEMA_WEBHOOK_URL:-}
   schema_webhook_secret: ${AUTOMATION_SCHEMA_WEBHOOK_SECRET:-}
   schema_webhook_timeout_seconds: ${AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS:-5}
+  schema_webhook_drill_enabled: ${AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED:-false}
   schema_policy_on_field_added: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED:-auto_map_if_same_name}
   schema_policy_on_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED:-auto_remove}
   schema_policy_on_field_renamed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED:-warn_only}

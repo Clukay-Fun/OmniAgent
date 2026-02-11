@@ -28,7 +28,7 @@
     },
     "runtime_behavior": {
       "record_changed": "processed",
-      "field_changed": "accepted_but_ignored_in_current_stage"
+      "field_changed": "processed_and_trigger_schema_refresh"
     }
   },
   "samples": {

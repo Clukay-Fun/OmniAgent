@@ -46,6 +46,15 @@
 - [x] 状态字段删除场景可运行（仅日志+死信）
 - [x] 灰度检查支持低 API：`--no-api`
 
+## 4.1 Schema Watcher（Webhook 版）
+
+- [x] schema watcher 后台任务（默认 300s）
+- [x] `drive.file.bitable_field_changed_v1` 事件触发即时刷新
+- [x] 字段快照写入 `schema_cache.json`
+- [x] 运行态状态写入 `schema_runtime_state.json`
+- [x] trigger 字段删除仅运行态禁用规则
+- [x] 风险变更 webhook（飞书机器人兼容 payload）
+
 ## 5. 回归清单
 
 - [x] 单规则命中

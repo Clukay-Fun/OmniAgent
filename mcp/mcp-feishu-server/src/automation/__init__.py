@@ -8,6 +8,8 @@ from src.automation.engine import AutomationEngine
 from src.automation.rules import RuleMatcher, RuleStore
 from src.automation.actions import ActionExecutionError, ActionExecutor
 from src.automation.poller import AutomationPoller
+from src.automation.schema import SchemaStateStore, SchemaWatcher, WebhookNotifier
+from src.automation.schema_poller import SchemaPoller
 from src.automation.deadletter import DeadLetterStore
 from src.automation.runlog import RunLogStore
 
@@ -23,6 +25,10 @@ __all__ = [
     "ActionExecutor",
     "ActionExecutionError",
     "AutomationPoller",
+    "SchemaPoller",
+    "SchemaStateStore",
+    "SchemaWatcher",
+    "WebhookNotifier",
     "DeadLetterStore",
     "RunLogStore",
 ]

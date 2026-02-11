@@ -10,6 +10,8 @@ from typing import Any, cast
 
 from src.automation.checkpoint import CheckpointStore
 from src.automation.engine import AutomationEngine
+from src.automation.runlog import RunLogStore
+from src.automation.schema import SchemaStateStore, SchemaWatcher, WebhookNotifier
 from src.automation.rules import build_business_hash_payload
 from src.automation.snapshot import SnapshotStore
 from src.automation.store import IdempotencyStore
@@ -75,6 +77,18 @@ class AutomationService:
         if not rules_file.is_absolute():
             rules_file = Path.cwd() / rules_file
 
+        runtime_state_file = Path(settings.automation.schema_runtime_state_file)
+        if not runtime_state_file.is_absolute():
+            runtime_state_file = Path.cwd() / runtime_state_file
+
+        schema_cache_file = Path(settings.automation.schema_cache_file)
+        if not schema_cache_file.is_absolute():
+            schema_cache_file = Path.cwd() / schema_cache_file
+
+        run_log_file = Path(settings.automation.run_log_file)
+        if not run_log_file.is_absolute():
+            run_log_file = Path.cwd() / run_log_file
+
         self._snapshot = SnapshotStore(storage_root / "snapshot.json")
         self._idempotency = IdempotencyStore(
             storage_root / "idempotency.json",
@@ -83,7 +97,35 @@ class AutomationService:
             max_keys=settings.automation.max_dedupe_keys,
         )
         self._checkpoint = CheckpointStore(storage_root / "checkpoint.json")
-        self._engine = AutomationEngine(settings, client, rules_file)
+        self._engine = AutomationEngine(settings, client, rules_file, runtime_state_file=runtime_state_file)
+        self._schema_watcher: SchemaWatcher | None = None
+        if bool(settings.automation.schema_sync_enabled):
+            self._schema_watcher = SchemaWatcher(
+                client=client,
+                rule_store=self._engine.rule_store,
+                state_store=SchemaStateStore(
+                    cache_file=schema_cache_file,
+                    runtime_state_file=runtime_state_file,
+                ),
+                notifier=WebhookNotifier(
+                    enabled=bool(settings.automation.schema_webhook_enabled),
+                    url=str(settings.automation.schema_webhook_url or ""),
+                    secret=str(settings.automation.schema_webhook_secret or ""),
+                    timeout_seconds=float(settings.automation.schema_webhook_timeout_seconds),
+                ),
+                run_log_store=RunLogStore(run_log_file),
+                policy={
+                    "on_field_added": str(settings.automation.schema_policy_on_field_added or "auto_map_if_same_name"),
+                    "on_field_removed": str(settings.automation.schema_policy_on_field_removed or "auto_remove"),
+                    "on_field_renamed": str(settings.automation.schema_policy_on_field_renamed or "warn_only"),
+                    "on_field_type_changed": str(
+                        settings.automation.schema_policy_on_field_type_changed or "warn_only"
+                    ),
+                    "on_trigger_field_removed": str(
+                        settings.automation.schema_policy_on_trigger_field_removed or "disable_rule"
+                    ),
+                },
+            )
         self._poller_skip_targets: set[tuple[str, str]] = set()
 
     def _ensure_enabled(self) -> None:
@@ -244,7 +286,7 @@ class AutomationService:
         if trigger_on_new_record is None:
             trigger_on_new_record = bool(self._settings.automation.trigger_on_new_record_event)
 
-        watch_plan = self._engine.get_watch_plan(table_id)
+        watch_plan = self._engine.get_watch_plan(table_id, app_token=app_token)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
         current_raw = await self._fetch_record_fields_with_watch(
             app_token,
@@ -420,12 +462,51 @@ class AutomationService:
             LOGGER.info("automation event duplicate: event_id=%s", event_id)
             return result
 
+        app_token = str(event.get("app_token") or event.get("appToken") or "").strip()
+        table_id = str(event.get("table_id") or event.get("tableId") or "").strip()
+
         if event_type == EVENT_TYPE_FIELD_CHANGED:
             self._idempotency.mark_event(event_id)
+            if not app_token or not table_id:
+                result = {
+                    "kind": "ignored",
+                    "reason": "field_changed_missing_app_or_table",
+                    "event_id": event_id,
+                }
+                LOGGER.info(
+                    "automation event ignored: event_id=%s reason=%s",
+                    event_id,
+                    result.get("reason"),
+                )
+                return result
+
+            if bool(self._settings.automation.schema_sync_event_driven):
+                schema_result = await self.refresh_schema_table(
+                    table_id=table_id,
+                    app_token=app_token,
+                    triggered_by="event",
+                )
+                result = {
+                    "kind": "schema_refreshed",
+                    "event_id": event_id,
+                    "app_token": app_token,
+                    "table_id": table_id,
+                    "schema": schema_result,
+                }
+                LOGGER.info(
+                    "automation schema event processed: event_id=%s table_id=%s changed=%s",
+                    event_id,
+                    table_id,
+                    schema_result.get("changed"),
+                )
+                return result
+
             result = {
                 "kind": "ignored",
-                "reason": "field_changed_not_handled_in_phase_a",
+                "reason": "schema_sync_event_driven_disabled",
                 "event_id": event_id,
+                "app_token": app_token,
+                "table_id": table_id,
             }
             LOGGER.info(
                 "automation event ignored: event_id=%s reason=%s",
@@ -434,8 +515,6 @@ class AutomationService:
             )
             return result
 
-        app_token = str(event.get("app_token") or event.get("appToken") or "").strip()
-        table_id = str(event.get("table_id") or event.get("tableId") or "").strip()
         record_id = str(event.get("record_id") or event.get("recordId") or "").strip()
 
         if not app_token or not table_id or not record_id:
@@ -478,11 +557,104 @@ class AutomationService:
         default_app_token = str(self._settings.bitable.default_app_token or "").strip()
         return self._engine.list_poll_targets(default_table_id, default_app_token)
 
+    async def refresh_schema_table(self, table_id: str, app_token: str, triggered_by: str) -> dict[str, Any]:
+        if self._schema_watcher is None:
+            return {
+                "status": "disabled",
+                "table_id": table_id,
+                "app_token": app_token,
+                "reason": "schema_sync_disabled",
+            }
+        return await self._schema_watcher.refresh_table(app_token=app_token, table_id=table_id, triggered_by=triggered_by)
+
+    async def refresh_schema_once_all_tables(self, triggered_by: str = "manual") -> dict[str, Any]:
+        if self._schema_watcher is None:
+            return {
+                "status": "disabled",
+                "mode": "schema_refresh",
+                "results": [],
+                "reason": "schema_sync_disabled",
+            }
+
+        targets = self.get_poll_targets()
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            table_id = str(target.get("table_id") or "").strip()
+            app_token = str(target.get("app_token") or "").strip()
+            if not table_id or not app_token:
+                continue
+            try:
+                result = await self.refresh_schema_table(table_id=table_id, app_token=app_token, triggered_by=triggered_by)
+                results.append(result)
+            except FeishuAPIError as exc:
+                LOGGER.exception("schema refresh failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": str(exc),
+                    }
+                )
+            except Exception as exc:
+                LOGGER.exception("schema refresh failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "status": "ok",
+            "mode": "schema_refresh",
+            "triggered_by": triggered_by,
+            "tables": [target.get("table_id") for target in targets],
+            "results": results,
+        }
+
+    async def trigger_schema_webhook_drill(
+        self,
+        *,
+        table_id: str,
+        app_token: str,
+        triggered_by: str = "manual",
+    ) -> dict[str, Any]:
+        if self._schema_watcher is None:
+            return {
+                "status": "disabled",
+                "reason": "schema_sync_disabled",
+                "table_id": table_id,
+                "app_token": app_token,
+            }
+        if not bool(self._settings.automation.schema_webhook_drill_enabled):
+            return {
+                "status": "disabled",
+                "reason": "schema_webhook_drill_disabled",
+                "table_id": table_id,
+                "app_token": app_token,
+            }
+
+        result = await self._schema_watcher.send_risk_drill(
+            app_token=app_token,
+            table_id=table_id,
+            triggered_by=triggered_by,
+        )
+        return {
+            "status": "ok" if result.get("status") == "sent" else "failed",
+            "table_id": table_id,
+            "app_token": app_token,
+            "drill": True,
+            "webhook": result,
+        }
+
     async def init_snapshot(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
-        watch_plan = self._engine.get_watch_plan(resolved_table_id)
+        watch_plan = self._engine.get_watch_plan(resolved_table_id, app_token=resolved_app_token)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
 
         page_token = ""
@@ -536,7 +708,7 @@ class AutomationService:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
-        watch_plan = self._engine.get_watch_plan(resolved_table_id)
+        watch_plan = self._engine.get_watch_plan(resolved_table_id, app_token=resolved_app_token)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
 
         cursor = self._checkpoint.get(resolved_table_id)
