@@ -1,3 +1,10 @@
+"""
+描述: 自动化幂等存储。
+主要功能:
+    - 管理事件级与业务级去重键
+    - 定期清理过期键并控制容量
+"""
+
 from __future__ import annotations
 
 import json

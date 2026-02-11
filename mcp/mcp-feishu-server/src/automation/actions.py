@@ -1,3 +1,10 @@
+"""
+描述: 自动化动作执行器。
+主要功能:
+    - 渲染并执行规则动作（update/upsert/calendar/log）
+    - 处理动作重试、状态回写与错误归类
+"""
+
 from __future__ import annotations
 
 import asyncio

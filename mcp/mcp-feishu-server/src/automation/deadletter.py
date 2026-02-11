@@ -1,3 +1,10 @@
+"""
+描述: 自动化死信存储。
+主要功能:
+    - 记录动作失败后的死信条目
+    - 统一保存失败上下文用于排障
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,10 @@
+"""
+描述: Schema 轮询任务。
+主要功能:
+    - 周期性触发表结构刷新
+    - 在事件驱动之外提供基线同步保障
+"""
+
 from __future__ import annotations
 
 import asyncio

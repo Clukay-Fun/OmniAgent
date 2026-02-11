@@ -1,0 +1,14 @@
+scenario_schema:
+  required_fields:
+    - scenario_id
+    - title
+    - category
+  one_of_fields:
+    - dialogue
+    - dialogue_variants
+    - trigger
+
+coverage_schema:
+  required_fields:
+    - total_scenarios
+    - categories

@@ -1,3 +1,10 @@
+"""
+描述: 自动化补偿轮询器。
+主要功能:
+    - 按固定间隔触发表扫描
+    - 在事件缺失场景下进行补偿触发
+"""
+
 from __future__ import annotations
 
 import asyncio

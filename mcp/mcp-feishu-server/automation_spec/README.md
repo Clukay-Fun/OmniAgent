@@ -184,8 +184,8 @@
 
 ## 10. 灰度建议
 
-- 有 API 压力时：`python automation_gray_check.py --no-api --strict`
-- 常规灰度：`python automation_gray_check.py --hours 24 --strict --json`
+- 有 API 压力时：`python scripts/automation_gray_check.py --no-api --strict`
+- 常规灰度：`python scripts/automation_gray_check.py --hours 24 --strict --json`
 
 ## 11. 待办
 

@@ -1,3 +1,10 @@
+"""
+描述: 自动化 HTTP 路由与生命周期管理。
+主要功能:
+    - 暴露事件接收、初始化扫描、schema 刷新接口
+    - 管理自动化轮询器与 schema 轮询器启停
+"""
+
 from __future__ import annotations
 
 from typing import Any

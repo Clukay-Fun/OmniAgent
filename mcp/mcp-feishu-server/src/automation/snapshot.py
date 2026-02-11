@@ -1,3 +1,10 @@
+"""
+描述: 自动化快照存储。
+主要功能:
+    - 记录记录级字段快照
+    - 计算变更字段与幂等哈希输入
+"""
+
 from __future__ import annotations
 
 import json

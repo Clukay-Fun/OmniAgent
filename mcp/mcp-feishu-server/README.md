@@ -2,6 +2,8 @@
 
 飞书 MCP 工具层服务，负责封装多维表格与文档检索能力，为上层 Agent 提供统一的 MCP 工具接口。
 
+统一流程（部署前/备案中/上线后）见：`../../docs/deploy/three-stage-guide.md`
+
 ---
 
 ## 📋 功能概览
@@ -16,12 +18,14 @@
 ## 🗂️ 目录说明
 
 - `src/`：服务源码（路由、自动化引擎、工具实现）
-- `tests/`：测试代码
+- `tests/`：本地测试代码（默认不入库）
+- `scripts/`：运维与修复脚本
+- `docs/`：服务级文档
 - `automation_spec/`：文档与模板（不参与运行时加载）
 - `automation_rules.yaml`：运行时规则（实际生效）
 - `automation_data/`：运行时产物（快照/日志/死信，默认已忽略）
 
-详见：`PROJECT_STRUCTURE.md`
+详见：`docs/PROJECT_STRUCTURE.md`
 
 ---
 
@@ -109,14 +113,17 @@ AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=false
 ### 4. 启动服务
 
 ```bash
-# 生产模式
-python run_server.py
+# 统一开发入口（推荐，启动 MCP + Agent）
+python ../../agent/feishu-agent/run_dev.py up
 
-# 开发模式（热重载）
-python run_dev.py
+# 在 MCP 目录下的代理入口（等价）
+python run_dev.py up
+
+# MCP 单服务模式
+python run_server.py
 ```
 
-默认端口：`8081`
+默认端口：`8081`（统一开发入口与单服务模式一致）
 
 ### 5. 实时事件订阅（推荐）
 
@@ -307,16 +314,16 @@ tools:
 
 ```bash
 # 默认检查最近 24 小时
-python automation_gray_check.py
+python scripts/automation_gray_check.py
 
 # 严格模式：发现异常返回非 0
-python automation_gray_check.py --strict
+python scripts/automation_gray_check.py --strict
 
 # JSON 输出，便于 CI 收集
-python automation_gray_check.py --json
+python scripts/automation_gray_check.py --json
 
 # 零 API 模式（只读本地 run_logs/dead_letters）
-python automation_gray_check.py --no-api --strict
+python scripts/automation_gray_check.py --no-api --strict
 ```
 
 ---

@@ -1,3 +1,10 @@
+"""
+描述: 自动化规则执行引擎。
+主要功能:
+    - 匹配规则并按优先级执行动作流水线
+    - 产出运行日志并处理重试与死信
+"""
+
 from __future__ import annotations
 
 import copy

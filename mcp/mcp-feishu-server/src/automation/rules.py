@@ -1,3 +1,10 @@
+"""
+描述: 自动化规则加载与匹配。
+主要功能:
+    - 读取/校验规则文件并构建匹配器
+    - 支持字段条件、组合条件和模板渲染
+"""
+
 from __future__ import annotations
 
 import json

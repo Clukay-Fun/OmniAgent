@@ -22,6 +22,10 @@ htmlcov/
 .env.*
 !.env.example
 
+# local config copies (templates are tracked)
+agent/feishu-agent/config.yaml
+mcp/mcp-feishu-server/config.yaml
+
 # IDE
 .vscode/
 .idea/
@@ -44,14 +48,20 @@ uploads/
 temp/
 
 # Workspace (local runtime)
-agent/workspace/
+agent/workspace/*
+agent/feishu-agent/workspace/*
 
-# other
-# other
-docs/
-scripts/
-tests/
-TEST.md
+# local runtime directories
+runtime/
+deploy/runtime/
+
+# service test code is local-only by default
+agent/feishu-agent/tests/
+mcp/mcp-feishu-server/tests/
+
+# keep docs test handbook tracked
+!docs/tests/
+!docs/tests/**
 
 # mcp-feishu-server runtime outputs (centralized)
 mcp/mcp-feishu-server/automation_data/*

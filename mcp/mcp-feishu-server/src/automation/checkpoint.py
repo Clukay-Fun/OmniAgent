@@ -1,3 +1,10 @@
+"""
+描述: 自动化扫描游标存储。
+主要功能:
+    - 持久化表级扫描检查点
+    - 为补偿轮询提供续扫位置
+"""
+
 from __future__ import annotations
 
 import json

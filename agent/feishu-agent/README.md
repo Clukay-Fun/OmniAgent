@@ -2,6 +2,8 @@
 
 飞书私聊案件助手服务，负责接收飞书事件回调、识别意图、调用业务技能，并返回可读结果。
 
+统一流程（部署前/备案中/上线后）见：`../../docs/deploy/three-stage-guide.md`
+
 ---
 
 ## 📋 功能概览
@@ -78,7 +80,7 @@ pip install -r requirements.txt
 ### 2. 准备配置
 
 ```bash
-cp config.yaml.example config/config.yaml
+cp config.yaml.example config.yaml
 cp .env.example .env
 ```
 
@@ -109,16 +111,17 @@ USER_IDENTITY_AUTO_MATCH=false
 ### 4. 启动服务
 
 ```bash
-# 生产模式
-python run_server.py
-
-# 开发模式（热重载）
+# 统一开发入口（推荐，从仓库任意目录都可执行）
 python run_dev.py
+
+# 本地单服务模式（仅 Agent）
+python run_server.py
 ```
 
 默认端口：
-- `run_server.py` / `run_dev.py` 默认监听 `8088`
-- 如需通过 ngrok 接入飞书回调，请使用 `ngrok http 8088`
+- `run_dev.py`（统一开发入口）走 Docker，Agent 暴露 `8080`
+- `run_server.py`（本地单服务模式）监听 `8088`
+- 如需 ngrok 测试回调：统一开发入口用 `ngrok http 8080`，单服务模式用 `ngrok http 8088`
 
 双组织说明：
 - Agent 仅使用组织B机器人凭证（`FEISHU_BOT_*`）
@@ -126,14 +129,16 @@ python run_dev.py
 
 ### 5. 运行场景回归
 
+> 说明：`tests/` 目录默认按本地开发产物管理（仓库默认忽略），如需回归请在本地保留测试文件。
+
 ```bash
 python tests/scenarios/runner.py
 ```
 
-包含 docs 投影校验（读取仓库根目录 `docs/scenarios.yaml`）：
+包含 docs 投影校验（读取仓库根目录 `docs/scenarios/scenarios.yaml`）：
 
 ```bash
-python tests/scenarios/runner.py --docs-file ../../docs/scenarios.yaml
+python tests/scenarios/runner.py --docs-file ../../docs/scenarios/scenarios.yaml
 ```
 
 阈值门禁示例（适合 CI）：
@@ -151,20 +156,18 @@ python tests/scenarios/runner.py \
 Runner 当前包含：
 - Planner 回归（`tests/scenarios/*.test.yaml`）
 - L0 规则回归（`tests/scenarios/l0.test.yaml`）
-- Docs 场景投影校验（从 `../../docs/scenarios.yaml` 自动抽取可映射场景）
+- Docs 场景投影校验（从 `../../docs/scenarios/scenarios.yaml` 自动抽取可映射场景）
 - Error/Security 守卫校验（批量删除拦截、注入类输入、空输入等）
 - Skill 行为回归（当前包含 Reminder 的时间澄清/过去时间校验）
 
-开发启动前自动执行场景回归（可选）：
+本地单服务启动前自动执行场景回归（可选）：
 
 ```bash
 # Windows PowerShell
 $env:AGENT_SCENARIO_CHECK="1"
-python run_dev.py
 python run_server.py
 
 # Linux/macOS
-AGENT_SCENARIO_CHECK=1 python run_dev.py
 AGENT_SCENARIO_CHECK=1 python run_server.py
 ```
 
@@ -174,12 +177,12 @@ AGENT_SCENARIO_CHECK=1 python run_server.py
 # PowerShell
 $env:AGENT_SCENARIO_CHECK="1"
 $env:AGENT_SCENARIO_CHECK_ARGS="--min-planner-pass 20 --min-docs-pass 40 --max-docs-skip 25"
-python run_dev.py
+python run_server.py
 
 # Linux/macOS
 AGENT_SCENARIO_CHECK=1 \
 AGENT_SCENARIO_CHECK_ARGS="--min-planner-pass 20 --min-docs-pass 40 --max-docs-skip 25" \
-python run_dev.py
+python run_server.py
 ```
 
 说明：

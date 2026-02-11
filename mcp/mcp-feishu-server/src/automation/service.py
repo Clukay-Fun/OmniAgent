@@ -1,3 +1,10 @@
+"""
+描述: 自动化服务编排层。
+主要功能:
+    - 处理飞书事件、初始化扫描与补偿扫描
+    - 协调引擎、幂等、快照与 schema 刷新链路
+"""
+
 from __future__ import annotations
 
 import base64

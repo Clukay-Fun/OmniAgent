@@ -1,3 +1,10 @@
+"""
+描述: Schema 监听与策略执行模块。
+主要功能:
+    - 刷新表字段元数据并计算变更差异
+    - 应用运行态策略并触发风险告警 webhook
+"""
+
 from __future__ import annotations
 
 import asyncio

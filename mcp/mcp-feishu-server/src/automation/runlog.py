@@ -1,3 +1,10 @@
+"""
+描述: 自动化运行日志存储。
+主要功能:
+    - 以 JSONL 方式持久化执行日志
+    - 提供统一时间戳补全
+"""
+
 from __future__ import annotations
 
 import json
