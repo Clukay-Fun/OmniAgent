@@ -1,0 +1,78 @@
+# 三阶段文档（部署前 / 备案中 / 上线后）
+
+本文件是当前仓库的统一流程口径。根 README 与两个子 README 只保留服务说明，阶段流程以此为准。
+
+## 阶段一：部署前（本地开发联调）
+
+目标：在本地完成 MCP + Agent 功能联调，不对公网提供正式回调。
+
+### 1) 准备配置
+
+- 复制并填写：`mcp/mcp-feishu-server/.env`
+- 复制并填写：`agent/feishu-agent/.env`
+- 复制模板：`mcp/mcp-feishu-server/config.yaml.example` -> `mcp/mcp-feishu-server/config.yaml`
+- 复制模板：`agent/feishu-agent/config.yaml.example` -> `agent/feishu-agent/config.yaml`
+
+### 2) 统一开发入口（推荐）
+
+```bash
+python agent/feishu-agent/run_dev.py up
+```
+
+常用命令：
+
+```bash
+python agent/feishu-agent/run_dev.py logs --follow
+python agent/feishu-agent/run_dev.py ps
+python agent/feishu-agent/run_dev.py down
+```
+
+### 3) 本地验证
+
+- MCP：`http://localhost:8081/health`
+- Agent：`http://localhost:8080/health`（容器开发态）
+- 工具列表：`http://localhost:8081/mcp/tools`
+
+## 阶段二：备案中（冻结公网上线）
+
+目标：保持本地可迭代，暂停公网正式发布。
+
+- 不切换生产 DNS 回调
+- 不上传正式服务器配置实值（`.env`）
+- 继续本地联调与规则验证
+- 产出并维护上传清单：`docs/deploy/upload-manifest.md`
+
+建议动作：
+
+- 每次改动后保留 `automation_rules.yaml` 版本注记
+- 定期运行场景与脚本校验
+- 在文档中记录待上线变更点
+
+## 阶段三：上线后（云服务器生产）
+
+目标：将本地通过的版本部署到云服务器并接入正式回调。
+
+### 1) 服务启动口径
+
+- Docker 主文件：`deploy/docker/compose.yml`
+- 生产核心：`mcp-feishu-server` + `feishu-agent`
+- 可选 profile：
+  - 监控：`--profile monitoring`
+  - 数据库：`--profile db`
+
+示例：
+
+```bash
+docker compose -f deploy/docker/compose.yml up -d
+docker compose -f deploy/docker/compose.yml --profile monitoring up -d
+```
+
+### 2) 公网与回调
+
+- `https://<domain>/feishu/events` -> MCP
+- `https://<domain>/feishu/webhook` -> Agent
+- 飞书后台验证通过后再切流量
+
+### 3) 上线检查
+
+完整检查项见：`docs/deploy/cloud-checklist-no-db.md`

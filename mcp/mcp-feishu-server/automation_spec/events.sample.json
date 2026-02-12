@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "version": "v1.2",
+    "status": "aligned",
+    "description": "飞书多维表格事件样例（与当前实现对齐）",
+    "purpose": "定义事件契约与样例回包，供联调/评审使用",
+    "runtime_loaded": false,
+    "source_of_truth": "生产抓包事件结构",
+    "reviewed_at": "2026-02"
+  },
+  "contracts": {
+    "required_event_types": [
+      "drive.file.bitable_record_changed_v1",
+      "drive.file.bitable_field_changed_v1"
+    ],
+    "required_header_fields": [
+      "event_id",
+      "event_type"
+    ],
+    "required_record_changed_fields": [
+      "app_token",
+      "table_id",
+      "record_id"
+    ],
+    "security": {
+      "token_verification": true,
+      "encrypt_supported": true
+    },
+    "runtime_behavior": {
+      "record_changed": "processed",
+      "field_changed": "processed_and_trigger_schema_refresh"
+    }
+  },
+  "samples": {
+    "url_verification": {
+      "request": {
+        "type": "url_verification",
+        "token": "verification_token",
+        "challenge": "abc123"
+      },
+      "response": {
+        "challenge": "abc123"
+      }
+    },
+    "record_changed": {
+      "header": {
+        "event_id": "evt_xxx",
+        "event_type": "drive.file.bitable_record_changed_v1",
+        "token": "verification_token"
+      },
+      "event": {
+        "app_token": "app_token_xxx",
+        "table_id": "tbl_xxx",
+        "record_id": "rec_xxx",
+        "action_type": "record_edited",
+        "operator_id": "ou_xxx",
+        "timestamp": "1739000000000"
+      }
+    },
+    "field_changed": {
+      "header": {
+        "event_id": "evt_xxx",
+        "event_type": "drive.file.bitable_field_changed_v1",
+        "token": "verification_token"
+      },
+      "event": {
+        "app_token": "app_token_xxx",
+        "table_id": "tbl_xxx",
+        "field_id": "fld_xxx",
+        "action_type": "field_updated",
+        "operator_id": "ou_xxx",
+        "timestamp": "1739000001000"
+      }
+    },
+    "encrypted_envelope": {
+      "encrypt": "base64_aes_cbc_payload"
+    }
+  }
+}

@@ -13,6 +13,7 @@ from typing import Any
 import ast
 import re
 
+from src.feishu.client import FeishuAPIError
 from src.tools.base import BaseTool
 from src.tools.registry import ToolRegistry
 from src.utils.cache import TTLCache
@@ -258,6 +259,15 @@ def _resolve_return_fields(
     return sorted(return_fields)
 
 
+def _resolve_view_id(params: dict[str, Any], settings: Any) -> str | None:
+    """解析视图参数，支持忽略默认视图"""
+    if bool(params.get("ignore_default_view")):
+        return params.get("view_id")
+    if "view_id" in params:
+        return params.get("view_id")
+    return settings.bitable.default_view_id
+
+
 def _parse_date_text(value: Any) -> date | None:
     """解析自然语言或格式化日期字符串"""
     if not value:
@@ -277,6 +287,241 @@ def _parse_date_text(value: Any) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def _parse_datetime_text(value: Any) -> datetime | None:
+    """解析日期时间字符串/时间戳。"""
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        tz = timezone(timedelta(hours=8))
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in (
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+        ):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        try:
+            normalized = text.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
+            return dt
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_hm(value: Any) -> int | None:
+    """解析 HH:MM 到分钟值。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{1,2})", text)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour * 60 + minute
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _extract_person_tokens(value: Any) -> tuple[set[str], set[str]]:
+    """从人员字段原始值中提取 id/name 候选。"""
+    ids: set[str] = set()
+    names: set[str] = set()
+
+    def _consume(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, dict):
+            for key in ("id", "open_id", "openId", "user_id", "userId", "union_id", "unionId"):
+                val = item.get(key)
+                if val:
+                    ids.add(str(val).strip())
+            for key in ("name", "en_name", "display_name", "displayName"):
+                val = item.get(key)
+                if val:
+                    names.add(str(val).strip())
+            return
+        if isinstance(item, str):
+            token = item.strip()
+            if not token:
+                return
+            if token.startswith("ou_") or token.startswith("on_"):
+                ids.add(token)
+            else:
+                names.add(token)
+
+    if isinstance(value, list):
+        for entry in value:
+            _consume(entry)
+    else:
+        _consume(value)
+
+    return ids, names
+
+
+def _record_matches_person(
+    record: dict[str, Any],
+    field_name: str,
+    open_id: str,
+    user_name: str | None = None,
+) -> bool:
+    raw_fields = record.get("fields") or {}
+    field_value = raw_fields.get(field_name)
+    ids, names = _extract_person_tokens(field_value)
+
+    if open_id and open_id in ids:
+        return True
+
+    expected_name = _normalize_text(user_name)
+    if expected_name and any(_normalize_text(name) == expected_name for name in names):
+        return True
+
+    fields_text = record.get("fields_text") or {}
+    text_value = fields_text.get(field_name)
+    if text_value is None:
+        text_value = fields_text.get(_normalize_field_name(field_name))
+    text_value_norm = _normalize_text(text_value)
+    if not text_value_norm:
+        return False
+
+    if expected_name and expected_name in text_value_norm:
+        return True
+    return False
+
+
+def _filter_records_by_date_range(
+    records: list[dict[str, Any]],
+    field_name: str,
+    date_from: str | None,
+    date_to: str | None,
+) -> list[dict[str, Any]]:
+    start_date = _parse_date_text(date_from)
+    end_date = _parse_date_text(date_to)
+
+    filtered: list[dict[str, Any]] = []
+    normalized_field = _normalize_field_name(field_name)
+    for record in records:
+        fields_text = record.get("fields_text") or {}
+        value = fields_text.get(field_name)
+        if value is None:
+            value = fields_text.get(normalized_field)
+
+        record_date = _parse_date_text(value)
+        if not record_date:
+            continue
+        if start_date and record_date < start_date:
+            continue
+        if end_date and record_date > end_date:
+            continue
+        filtered.append(record)
+
+    return filtered
+
+
+def _filter_records_by_time_window(
+    records: list[dict[str, Any]],
+    field_name: str,
+    time_from: str | None,
+    time_to: str | None,
+) -> list[dict[str, Any]]:
+    """在日期筛选结果上再按时段过滤。"""
+    start_minute = _parse_hm(time_from)
+    end_minute = _parse_hm(time_to)
+    if start_minute is None and end_minute is None:
+        return records
+
+    normalized_field = _normalize_field_name(field_name)
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        fields_text = record.get("fields_text") or {}
+        value = fields_text.get(field_name)
+        if value is None:
+            value = fields_text.get(normalized_field)
+        dt = _parse_datetime_text(value)
+        if dt is None:
+            continue
+        minute = dt.hour * 60 + dt.minute
+
+        if start_minute is not None and end_minute is not None and start_minute > end_minute:
+            in_window = minute >= start_minute or minute <= end_minute
+            if not in_window:
+                continue
+        else:
+            if start_minute is not None and minute < start_minute:
+                continue
+            if end_minute is not None and minute > end_minute:
+                continue
+
+        filtered.append(record)
+
+    return filtered
+
+
+def _filter_records_by_keyword(
+    records: list[dict[str, Any]],
+    keyword: str,
+    candidates: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    target = _normalize_text(keyword)
+    if not target:
+        return records
+
+    fields_to_check = [str(item).strip() for item in (candidates or []) if str(item).strip()]
+    matched: list[dict[str, Any]] = []
+    for record in records:
+        fields_text = record.get("fields_text") or {}
+        check_keys = fields_to_check or [str(k) for k in fields_text.keys()]
+
+        hit = False
+        for key in check_keys:
+            value = fields_text.get(key)
+            if value is None:
+                value = fields_text.get(_normalize_field_name(key))
+            if value is None:
+                continue
+            if target in _normalize_text(value):
+                hit = True
+                break
+
+        if hit:
+            matched.append(record)
+
+    return matched
+
+
+def _is_filter_fallback_error(exc: FeishuAPIError) -> bool:
+    """判断是否应降级为本地过滤（筛选语法兼容问题）。"""
+    message = str(exc)
+    hint_words = (
+        "InvalidFilter",
+        "Invalid request parameter",
+        "Invalid parameter type",
+        "Invalid parameter value",
+        "not support",
+        "400 Bad Request",
+    )
+    if exc.code in {1254018, 9499, 400}:
+        return True
+    if exc.code == 500 and any(word in message for word in hint_words):
+        return True
+    return any(word in message for word in hint_words)
 
 
 async def _search_records(
@@ -327,6 +572,37 @@ async def _search_records(
         "has_more": data.get("has_more", False),
         "page_token": data.get("page_token") or "",
     }
+
+
+async def _collect_records_for_local_filter(
+    tool: BaseTool,
+    app_token: str,
+    table_id: str,
+    view_id: str | None,
+    payload_base: dict[str, Any],
+    page_size: int,
+    max_pages: int = 20,
+) -> list[dict[str, Any]]:
+    """分页拉取记录，供本地过滤兜底。"""
+    all_records: list[dict[str, Any]] = []
+    page_token = ""
+
+    for _ in range(max_pages):
+        payload = dict(payload_base)
+        payload["page_size"] = page_size
+        if page_token:
+            payload["page_token"] = page_token
+
+        result = await _search_records(tool, app_token, table_id, view_id, payload)
+        all_records.extend(result.get("records", []))
+
+        has_more = bool(result.get("has_more"))
+        next_token = str(result.get("page_token") or "")
+        if not has_more or not next_token:
+            break
+        page_token = next_token
+
+    return all_records
 # endregion
 
 
@@ -396,6 +672,11 @@ class BitableSearchTool(BaseTool):
                 "description": "返回数量限制",
                 "default": 20,
             },
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
         },
         "required": [],
     }
@@ -409,7 +690,7 @@ class BitableSearchTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
 
         if not app_token or not table_id:
             return {"records": [], "total": 0}
@@ -557,6 +838,11 @@ class BitableSearchExactTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "字段名"},
             "value": {"type": "string", "description": "字段值"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
@@ -568,7 +854,7 @@ class BitableSearchExactTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         value = params.get("value")
 
@@ -586,6 +872,9 @@ class BitableSearchExactTool(BaseTool):
         if not resolved_field:
             raise ValueError(f"Field not found: {field}")
 
+        field_type = field_info.get(resolved_field, -1)
+        operator = "contains" if field_type in {1, 13, 15} else "is"
+
         limit = int(params.get("limit") or 100)
         limit = min(limit, settings.bitable.search.max_records)
 
@@ -601,7 +890,7 @@ class BitableSearchExactTool(BaseTool):
             "filter": {
                 "conjunction": "and",
                 "conditions": [
-                    {"field_name": resolved_field, "operator": "is", "value": [value]},
+                    {"field_name": resolved_field, "operator": operator, "value": [value]},
                 ],
             },
         }
@@ -610,7 +899,79 @@ class BitableSearchExactTool(BaseTool):
         if field_names:
             payload["field_names"] = field_names
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        try:
+            result = await _search_records(self, app_token, table_id, view_id, payload)
+        except FeishuAPIError as exc:
+            if not _is_filter_fallback_error(exc):
+                raise
+
+            # InvalidFilter: 尝试替换操作符
+            operators_to_try: list[str] = []
+            if operator != "is":
+                operators_to_try.append("is")
+            if operator != "contains":
+                operators_to_try.append("contains")
+
+            result = None
+            last_error: FeishuAPIError | None = exc
+            for op in operators_to_try:
+                try:
+                    payload["filter"]["conditions"][0]["operator"] = op
+                    result = await _search_records(self, app_token, table_id, view_id, payload)
+                    last_error = None
+                    break
+                except FeishuAPIError as retry_exc:
+                    last_error = retry_exc
+                    if not _is_filter_fallback_error(retry_exc):
+                        raise
+
+            # 仍然 InvalidFilter：降级为无过滤查询 + 本地精确匹配
+            if result is None:
+                fallback_payload: dict[str, Any] = {
+                    "page_size": settings.bitable.search.max_records,
+                }
+                if view_id:
+                    fallback_payload["view_id"] = view_id
+                if field_names:
+                    fallback_payload["field_names"] = field_names
+
+                fallback_page_size = min(settings.bitable.search.max_records, 100)
+                records_for_filter = await _collect_records_for_local_filter(
+                    self,
+                    app_token,
+                    table_id,
+                    view_id,
+                    fallback_payload,
+                    page_size=fallback_page_size,
+                )
+                target = str(value).strip()
+                normalized_field = _normalize_field_name(resolved_field)
+
+                matched_records: list[dict[str, Any]] = []
+                for record in records_for_filter:
+                    fields_text = record.get("fields_text") or {}
+                    field_value = fields_text.get(resolved_field)
+                    if field_value is None:
+                        field_value = fields_text.get(normalized_field)
+                    if field_value is None:
+                        continue
+                    if str(field_value).strip() == target:
+                        matched_records.append(record)
+
+                result = {
+                    "records": matched_records[:limit],
+                    "total": len(matched_records),
+                    "has_more": len(matched_records) > limit,
+                    "page_token": "",
+                }
+
+                # 保留调试线索
+                if last_error is not None:
+                    result["debug"] = {
+                        "fallback": "local_exact_match",
+                        "reason": str(last_error),
+                        "scanned_records": len(records_for_filter),
+                    }
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -627,6 +988,11 @@ class BitableSearchKeywordTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "keyword": {"type": "string", "description": "搜索关键词"},
             "fields": {
                 "type": "array",
@@ -642,7 +1008,7 @@ class BitableSearchKeywordTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         keyword = params.get("keyword")
 
         if not app_token or not table_id or not keyword:
@@ -664,8 +1030,16 @@ class BitableSearchKeywordTool(BaseTool):
                 resolved = normalized_lookup.get(_normalize_field_name(field))
                 if not resolved:
                     continue
-                if field_info.get(resolved) == 1:
-                    candidates.append(resolved)
+                candidates.append(resolved)
+        if candidates:
+            deduped: list[str] = []
+            seen: set[str] = set()
+            for field in candidates:
+                if field in seen:
+                    continue
+                seen.add(field)
+                deduped.append(field)
+            candidates = deduped
         if not candidates and field_names:
             candidates = [next(iter(field_names))]
 
@@ -682,19 +1056,47 @@ class BitableSearchKeywordTool(BaseTool):
             extra_fields=candidates,
         )
 
-        payload: dict[str, Any] = {
+        payload_base: dict[str, Any] = {
             "page_size": limit,
-            "filter": {
-                "conjunction": conjunction,
-                "conditions": keyword_conditions,
-            },
         }
         if view_id:
-            payload["view_id"] = view_id
+            payload_base["view_id"] = view_id
         if return_fields:
-            payload["field_names"] = return_fields
+            payload_base["field_names"] = return_fields
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        payload: dict[str, Any] = dict(payload_base)
+        payload["filter"] = {
+            "conjunction": conjunction,
+            "conditions": keyword_conditions,
+        }
+
+        try:
+            result = await _search_records(self, app_token, table_id, view_id, payload)
+        except FeishuAPIError as exc:
+            if not _is_filter_fallback_error(exc):
+                raise
+            fallback_page_size = min(settings.bitable.search.max_records, 100)
+            records_for_filter = await _collect_records_for_local_filter(
+                self,
+                app_token,
+                table_id,
+                view_id,
+                payload_base,
+                page_size=fallback_page_size,
+            )
+            matched_records = _filter_records_by_keyword(records_for_filter, str(keyword), candidates)
+            result = {
+                "records": matched_records[:limit],
+                "total": len(matched_records),
+                "has_more": len(matched_records) > limit,
+                "page_token": "",
+                "debug": {
+                    "fallback": "local_keyword_match",
+                    "reason": str(exc),
+                    "scanned_records": len(records_for_filter),
+                },
+            }
+
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -716,8 +1118,14 @@ class BitableSearchPersonTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "人员字段名（如：主办律师）"},
             "open_id": {"type": "string", "description": "用户 open_id"},
+            "user_name": {"type": "string", "description": "用户姓名（用于兜底匹配）"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
         },
         "required": ["field", "open_id"],
@@ -727,9 +1135,10 @@ class BitableSearchPersonTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         open_id = params.get("open_id")
+        user_name = str(params.get("user_name") or "").strip() or None
 
         if not app_token or not table_id or not field or not open_id:
             return {"records": [], "total": 0}
@@ -742,6 +1151,17 @@ class BitableSearchPersonTool(BaseTool):
         resolved_field = normalized_lookup.get(_normalize_field_name(field))
         if not resolved_field and field in field_names:
             resolved_field = field
+        if not resolved_field:
+            resolved_field = next(
+                (
+                    name
+                    for name, ftype in field_info.items()
+                    if ftype == 11 and ("主办" in name or "律师" in name)
+                ),
+                None,
+            )
+        if not resolved_field:
+            resolved_field = next((name for name, ftype in field_info.items() if ftype == 11), None)
         if not resolved_field:
             raise ValueError(f"Field not found: {field}")
 
@@ -760,26 +1180,107 @@ class BitableSearchPersonTool(BaseTool):
             extra_fields=[resolved_field],
         )
 
-        # 人员字段筛选条件：使用 contains 操作符和 open_id
-        payload: dict[str, Any] = {
+        payload_base: dict[str, Any] = {
             "page_size": limit,
-            "filter": {
+        }
+        if view_id:
+            payload_base["view_id"] = view_id
+        if return_fields:
+            payload_base["field_names"] = return_fields
+
+        filter_variants = [
+            {
                 "conjunction": "and",
                 "conditions": [
                     {
-                        "field_name": resolved_field, 
-                        "operator": "contains", 
-                        "value": [open_id]
-                    },
+                        "field_name": resolved_field,
+                        "operator": "contains",
+                        "value": [open_id],
+                    }
                 ],
             },
-        }
-        if view_id:
-            payload["view_id"] = view_id
-        if return_fields:
-            payload["field_names"] = return_fields
+            {
+                "conjunction": "and",
+                "conditions": [
+                    {
+                        "field_name": resolved_field,
+                        "operator": "is",
+                        "value": [open_id],
+                    }
+                ],
+            },
+        ]
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        result: dict[str, Any] | None = None
+        last_error: FeishuAPIError | None = None
+        for filter_payload in filter_variants:
+            try:
+                payload = dict(payload_base)
+                payload["filter"] = filter_payload
+                result = await _search_records(self, app_token, table_id, view_id, payload)
+                last_error = None
+                break
+            except FeishuAPIError as exc:
+                last_error = exc
+                if not _is_filter_fallback_error(exc):
+                    raise
+
+        if result is None:
+            # 过滤器不兼容时降级本地匹配
+            fallback_page_size = min(settings.bitable.search.max_records, 100)
+            records_for_filter = await _collect_records_for_local_filter(
+                self,
+                app_token,
+                table_id,
+                view_id,
+                payload_base,
+                page_size=fallback_page_size,
+            )
+            matched_records: list[dict[str, Any]] = []
+            for record in records_for_filter:
+                if _record_matches_person(record, resolved_field, str(open_id), user_name=user_name):
+                    matched_records.append(record)
+
+            result = {
+                "records": matched_records[:limit],
+                "total": len(matched_records),
+                "has_more": len(matched_records) > limit,
+                "page_token": "",
+                "debug": {
+                    "fallback": "local_person_match",
+                    "reason": str(last_error) if last_error else "filter_not_supported",
+                    "scanned_records": len(records_for_filter),
+                },
+            }
+        elif (result.get("total") or 0) == 0 and user_name:
+            # 服务端筛选返回空时，按姓名再做一次本地兜底
+            fallback_page_size = min(settings.bitable.search.max_records, 100)
+            records_for_filter = await _collect_records_for_local_filter(
+                self,
+                app_token,
+                table_id,
+                view_id,
+                payload_base,
+                page_size=fallback_page_size,
+            )
+            matched_records: list[dict[str, Any]] = []
+            for record in records_for_filter:
+                if _record_matches_person(record, resolved_field, "", user_name=user_name):
+                    matched_records.append(record)
+
+            if matched_records:
+                result = {
+                    "records": matched_records[:limit],
+                    "total": len(matched_records),
+                    "has_more": len(matched_records) > limit,
+                    "page_token": "",
+                    "debug": {
+                        "fallback": "local_person_name_match",
+                        "reason": "remote_person_filter_empty",
+                        "scanned_records": len(records_for_filter),
+                    },
+                }
+
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -796,9 +1297,16 @@ class BitableSearchDateRangeTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "field": {"type": "string", "description": "日期字段"},
             "date_from": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
             "date_to": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+            "time_from": {"type": "string", "description": "开始时间 HH:MM（可选）"},
+            "time_to": {"type": "string", "description": "结束时间 HH:MM（可选）"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
         },
         "required": ["field", "date_from", "date_to"],
@@ -808,10 +1316,12 @@ class BitableSearchDateRangeTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         field = params.get("field")
         date_from = params.get("date_from")
         date_to = params.get("date_to")
+        time_from = str(params.get("time_from") or "").strip() or None
+        time_to = str(params.get("time_to") or "").strip() or None
 
         if not app_token or not table_id or not field:
             return {"records": [], "total": 0}
@@ -831,8 +1341,11 @@ class BitableSearchDateRangeTool(BaseTool):
         if field_info.get(resolved_field) not in _DATE_FIELD_TYPES:
             raise ValueError(f"Field is not a date field: {resolved_field}")
 
-        limit = int(params.get("limit") or 100)
-        limit = min(limit, settings.bitable.search.max_records)
+        requested_limit = int(params.get("limit") or 100)
+        requested_limit = min(requested_limit, settings.bitable.search.max_records)
+        fetch_limit = requested_limit
+        if time_from or time_to:
+            fetch_limit = settings.bitable.search.max_records
 
         return_fields = _resolve_return_fields(
             field_names,
@@ -841,20 +1354,84 @@ class BitableSearchDateRangeTool(BaseTool):
             extra_fields=[resolved_field],
         )
 
-        payload: dict[str, Any] = {
-            "page_size": limit,
+        payload_base: dict[str, Any] = {
+            "page_size": fetch_limit,
+        }
+        if view_id:
+            payload_base["view_id"] = view_id
+        if return_fields:
+            payload_base["field_names"] = return_fields
+
+        payload: dict[str, Any] = dict(payload_base)
+        payload.update({
             "filter": {
                 "conjunction": "and",
                 "conditions": _build_date_conditions(resolved_field, date_from, date_to),
             },
             "sort": [{"field_name": resolved_field, "desc": False}],
-        }
-        if view_id:
-            payload["view_id"] = view_id
-        if return_fields:
-            payload["field_names"] = return_fields
+        })
 
-        result = await _search_records(self, app_token, table_id, view_id, payload)
+        try:
+            result = await _search_records(self, app_token, table_id, view_id, payload)
+        except FeishuAPIError as exc:
+            if not _is_filter_fallback_error(exc):
+                raise
+            fallback_page_size = min(settings.bitable.search.max_records, 100)
+            records_for_filter = await _collect_records_for_local_filter(
+                self,
+                app_token,
+                table_id,
+                view_id,
+                payload_base,
+                page_size=fallback_page_size,
+            )
+            matched_records = _filter_records_by_date_range(
+                records_for_filter,
+                resolved_field,
+                date_from,
+                date_to,
+            )
+
+            if time_from or time_to:
+                matched_records = _filter_records_by_time_window(
+                    matched_records,
+                    resolved_field,
+                    time_from,
+                    time_to,
+                )
+            result = {
+                "records": matched_records[:requested_limit],
+                "total": len(matched_records),
+                "has_more": len(matched_records) > requested_limit,
+                "page_token": "",
+                "debug": {
+                    "fallback": "local_date_range_match",
+                    "reason": str(exc),
+                    "scanned_records": len(records_for_filter),
+                },
+            }
+
+        if time_from or time_to:
+            records = result.get("records") or []
+            filtered_records = _filter_records_by_time_window(
+                records,
+                resolved_field,
+                time_from,
+                time_to,
+            )
+            result["records"] = filtered_records[:requested_limit]
+            result["total"] = len(filtered_records)
+            result["has_more"] = len(filtered_records) > requested_limit
+            result["page_token"] = ""
+            debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
+            debug.update({
+                "time_window": {
+                    "time_from": time_from,
+                    "time_to": time_to,
+                }
+            })
+            result["debug"] = debug
+
         result["schema"] = _build_schema(field_info) if field_info else []
         return result
 
@@ -871,6 +1448,11 @@ class BitableSearchAdvancedTool(BaseTool):
             "app_token": {"type": "string", "description": "Bitable app_token"},
             "table_id": {"type": "string", "description": "数据表 table_id"},
             "view_id": {"type": "string", "description": "视图 view_id"},
+            "ignore_default_view": {
+                "type": "boolean",
+                "description": "是否忽略默认 view_id（查全表时使用）",
+                "default": False,
+            },
             "conditions": {
                 "type": "array",
                 "items": {
@@ -892,7 +1474,7 @@ class BitableSearchAdvancedTool(BaseTool):
         settings = self.context.settings
         app_token = params.get("app_token") or settings.bitable.default_app_token
         table_id = params.get("table_id") or settings.bitable.default_table_id
-        view_id = params.get("view_id") or settings.bitable.default_view_id
+        view_id = _resolve_view_id(params, settings)
         conditions = params.get("conditions") or []
 
         if not app_token or not table_id or not conditions:

@@ -60,7 +60,10 @@ class TenantAccessTokenManager:
             "app_secret": self._settings.feishu.app_secret,
         }
 
-        async with httpx.AsyncClient(timeout=self._settings.feishu.request.timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=self._settings.feishu.request.timeout,
+            trust_env=False,
+        ) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()

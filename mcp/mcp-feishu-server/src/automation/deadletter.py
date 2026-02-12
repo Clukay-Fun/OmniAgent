@@ -1,0 +1,35 @@
+"""
+描述: 自动化死信存储。
+主要功能:
+    - 记录动作失败后的死信条目
+    - 统一保存失败上下文用于排障
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+
+class DeadLetterStore:
+    """死信记录：JSONL 追加写入。"""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = Lock()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(tz=timezone.utc).isoformat()
+
+    def write(self, payload: dict[str, Any]) -> None:
+        entry = dict(payload)
+        entry.setdefault("timestamp", self._utc_now_iso())
+        line = json.dumps(entry, ensure_ascii=False)
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as fp:
+                fp.write(line + "\n")

@@ -54,6 +54,11 @@ class ChitchatSkill(BaseSkill):
         "help",
     ]
 
+    DOMAIN_HINTS = [
+        "案件", "案号", "项目", "开庭", "庭审", "法院", "律师", "当事人",
+        "委托人", "主办", "协办", "进展", "待办", "提醒", "查询", "新增", "修改", "删除",
+    ]
+
     # 响应模板
     RESPONSES = {
         "greeting": "您好！我是小律，您的智能助理。有什么可以帮您的？",
@@ -125,6 +130,19 @@ class ChitchatSkill(BaseSkill):
         # 4. 检查问候
         if self._is_greeting(query):
             return self._create_result("greeting", "问候响应")
+
+        # 4.1 明显离题时收敛到业务域
+        if not self._is_domain_related(query):
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"type": "out_of_scope"},
+                message="离题请求",
+                reply_text=(
+                    "我主要支持案件台账相关操作（查询、新增、修改、删除、提醒）。"
+                    "例如：\"查案号 2024-001\"、\"今天开庭的案件\"。"
+                ),
+            )
         
         # 5. 使用 LLM 自由对话
         return await self._llm_chat(query, context)
@@ -211,6 +229,10 @@ class ChitchatSkill(BaseSkill):
             t in query or t.lower() in query_lower
             for t in self._help_triggers
         )
+
+    def _is_domain_related(self, query: str) -> bool:
+        query_lower = query.lower()
+        return any(token in query or token.lower() in query_lower for token in self.DOMAIN_HINTS)
 
     def _create_result(self, response_type: str, message: str) -> SkillResult:
         """构造模板响应结果"""

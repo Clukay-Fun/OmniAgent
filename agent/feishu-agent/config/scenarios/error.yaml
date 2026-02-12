@@ -1,0 +1,15 @@
+# Error/兜底规则（用于 L1 Planner prompt 注入）
+
+rules:
+  - name: out_of_scope
+    pattern: 与案件管理无关的开放问题
+    intent: out_of_scope
+    tool: none
+    params: {}
+
+  - name: clarify_needed
+    pattern: 信息不足、指代不清
+    intent: clarify_needed
+    tool: none
+    params: {}
+    note: 需要返回 clarify_question

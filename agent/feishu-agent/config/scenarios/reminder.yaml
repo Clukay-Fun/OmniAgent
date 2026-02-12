@@ -1,0 +1,20 @@
+# Reminder 规划规则（用于 L1 Planner prompt 注入）
+
+rules:
+  - name: create_reminder
+    pattern: 提醒我/帮我提醒/记得/别忘了
+    intent: create_reminder
+    tool: reminder.create
+    params: {}
+
+  - name: list_reminders
+    pattern: 查看提醒/提醒列表/我的提醒/待办列表
+    intent: list_reminders
+    tool: reminder.list
+    params: {}
+
+  - name: cancel_reminder
+    pattern: 取消提醒/撤销提醒
+    intent: cancel_reminder
+    tool: reminder.cancel
+    params: {}

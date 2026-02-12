@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
 
@@ -36,6 +37,7 @@ class UpdateSkill(BaseSkill):
         self,
         mcp_client: Any,
         settings: Any = None,
+        skills_config: dict[str, Any] | None = None,
     ) -> None:
         """
         初始化更新技能
@@ -46,6 +48,7 @@ class UpdateSkill(BaseSkill):
         """
         self._mcp = mcp_client
         self._settings = settings
+        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -59,32 +62,48 @@ class UpdateSkill(BaseSkill):
         """
         query = context.query.strip()
         extra = context.extra or {}
-        
-        # 从上下文获取待更新的记录
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
+        table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+
+        planner_params = planner_plan.get("params") if isinstance(planner_plan, dict) else None
+        planner_record_id = None
+        if isinstance(planner_params, dict):
+            rid = planner_params.get("record_id")
+            planner_record_id = str(rid).strip() if rid else None
+
+        # 从上下文获取待更新的记录
         records = last_result.get("records", [])
-        
+
         # 如果没有上下文记录，需要先搜索
-        if not records:
+        if not records and not planner_record_id:
             return SkillResult(
                 success=False,
                 skill_name=self.name,
                 message="需要先查询要更新的记录",
                 reply_text="请先查询要更新的案件，例如：查询案号XXX的案件",
             )
-        
+
         # 如果有多条记录，需要用户明确
-        if len(records) > 1:
+        if len(records) > 1 and not planner_record_id:
             return SkillResult(
                 success=False,
                 skill_name=self.name,
                 message="找到多条记录，无法确定更新目标",
                 reply_text=f"找到 {len(records)} 条记录，请明确要更新哪一条。",
             )
-        
+
         # 获取记录 ID
-        record = records[0]
-        record_id = record.get("record_id")
+        if planner_record_id:
+            record_id = planner_record_id
+            record = records[0] if records else {}
+        else:
+            record = records[0]
+            record_id = record.get("record_id")
+
+        record_table_id = self._table_adapter.extract_table_id_from_record(record)
+        if record_table_id and not table_ctx.table_id:
+            table_ctx.table_id = record_table_id
         if not record_id:
             return SkillResult(
                 success=False,
@@ -92,10 +111,12 @@ class UpdateSkill(BaseSkill):
                 message="记录缺少 record_id",
                 reply_text="无法获取记录 ID，更新失败。",
             )
-        
+
         # 解析更新字段（简化版：从查询中提取）
-        # TODO: 可以使用 LLM 解析更复杂的更新意图
-        fields = self._parse_update_fields(query)
+        fields = self._extract_fields_from_planner(planner_plan)
+        parsed_fields = self._parse_update_fields(query)
+        for k, v in parsed_fields.items():
+            fields.setdefault(k, v)
         if not fields:
             return SkillResult(
                 success=False,
@@ -103,15 +124,45 @@ class UpdateSkill(BaseSkill):
                 message="无法解析更新字段",
                 reply_text="请明确要更新的字段和值，例如：把开庭日改成2024-12-01",
             )
+
+        adapted_fields, unresolved, available = await self._table_adapter.adapt_fields_for_table(
+            fields,
+            table_ctx.table_id,
+        )
+        if unresolved:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={
+                    "record_id": record_id,
+                    "table_id": table_ctx.table_id,
+                    "table_name": table_ctx.table_name,
+                    "unresolved_fields": unresolved,
+                    "available_fields": available,
+                },
+                message="字段名与目标表不匹配",
+                reply_text=self._table_adapter.build_field_not_found_message(
+                    unresolved,
+                    available,
+                    table_ctx.table_name,
+                ),
+            )
+
+        if adapted_fields:
+            fields = adapted_fields
         
         # 调用 MCP 更新工具
         try:
+            params: dict[str, Any] = {
+                "record_id": record_id,
+                "fields": fields,
+            }
+            if table_ctx.table_id:
+                params["table_id"] = table_ctx.table_id
+
             result = await self._mcp.call_tool(
                 "feishu.v1.bitable.record.update",
-                {
-                    "record_id": record_id,
-                    "fields": fields,
-                }
+                params,
             )
             
             if not result.get("success"):
@@ -141,6 +192,8 @@ class UpdateSkill(BaseSkill):
                     "record_id": record_id,
                     "updated_fields": fields,
                     "record_url": record_url,
+                    "table_id": table_ctx.table_id,
+                    "table_name": table_ctx.table_name,
                 },
                 message="更新成功",
                 reply_text=reply_text,
@@ -197,5 +250,28 @@ class UpdateSkill(BaseSkill):
             fields[field_name] = field_value
             return fields
         
+        return fields
+
+    def _extract_fields_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
+        """从 planner 输出提取更新字段。"""
+        if not isinstance(planner_plan, dict):
+            return {}
+        if planner_plan.get("tool") != "record.update":
+            return {}
+
+        params = planner_plan.get("params")
+        if not isinstance(params, dict):
+            return {}
+
+        fields_raw = params.get("fields")
+        if not isinstance(fields_raw, dict):
+            return {}
+
+        fields: dict[str, Any] = {}
+        for key, value in fields_raw.items():
+            field_name = str(key).strip()
+            if not field_name:
+                continue
+            fields[field_name] = value
         return fields
 # endregion

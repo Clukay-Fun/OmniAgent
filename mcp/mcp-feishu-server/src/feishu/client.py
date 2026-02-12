@@ -84,7 +84,7 @@ class FeishuClient:
 
         for attempt in range(retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                     response = await client.request(
                         method,
                         url,
@@ -92,8 +92,29 @@ class FeishuClient:
                         json=json_body,
                         headers=request_headers,
                     )
-                response.raise_for_status()
-                payload = response.json()
+                payload: dict[str, Any] = {}
+                try:
+                    raw_payload = response.json()
+                    if isinstance(raw_payload, dict):
+                        payload = raw_payload
+                except ValueError:
+                    payload = {}
+
+                if response.status_code >= 400:
+                    code = payload.get("code")
+                    message = payload.get("msg") or payload.get("message")
+                    if code is not None:
+                        raise FeishuAPIError(
+                            code=int(code),
+                            message=message or f"HTTP {response.status_code}",
+                            detail=payload,
+                        )
+                    raise FeishuAPIError(
+                        code=int(response.status_code),
+                        message=f"HTTP {response.status_code}: {response.text}",
+                        detail=payload or response.text,
+                    )
+
                 if payload.get("code") not in (0, None):
                     raise FeishuAPIError(
                         code=int(payload.get("code")),
@@ -101,10 +122,10 @@ class FeishuClient:
                         detail=payload,
                     )
                 return payload
-            except (httpx.HTTPError, FeishuAPIError) as exc:
+            except FeishuAPIError:
+                raise
+            except httpx.HTTPError as exc:
                 if attempt >= retries:
-                    if isinstance(exc, FeishuAPIError):
-                        raise
                     raise FeishuAPIError(code=500, message=str(exc)) from exc
                 await asyncio.sleep(delay * (2 ** attempt))
 

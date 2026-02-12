@@ -13,14 +13,20 @@ import logging
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from src.utils.logger import set_request_context, clear_request_context, generate_request_id
 from src.utils.metrics import record_request, record_intent_parse, set_active_sessions
 
 from src.core.session import SessionManager
-from src.core.intent import IntentParser, load_skills_config
-from src.core.router import SkillRouter, SkillContext, ContextManager
+from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
+from src.core.router import SkillRouter, SkillContext, SkillResult, ContextManager
+from src.core.l0 import L0RuleEngine
+from src.core.planner import PlannerEngine, PlannerOutput
+from src.core.state import ConversationStateManager, MemoryStateStore
 from src.core.skills import (
     QuerySkill,
     SummarySkill,
@@ -126,6 +132,37 @@ class AgentOrchestrator:
         
         # 初始化上下文管理器
         self._context_manager = ContextManager()
+
+        # 初始化会话状态管理（内存 + TTL，可替换为 Redis）
+        self._state_manager = ConversationStateManager(
+            store=MemoryStateStore(),
+            default_ttl_seconds=max(int(settings.session.ttl_minutes * 60), 60),
+            pending_delete_ttl_seconds=300,
+            pagination_ttl_seconds=600,
+            last_result_ttl_seconds=600,
+        )
+
+        # 初始化 L0 规则层
+        l0_rules = self._load_l0_rules(skills_config_path)
+        self._l0_engine = L0RuleEngine(
+            state_manager=self._state_manager,
+            l0_rules=l0_rules,
+            skills_config=self._skills_config,
+        )
+
+        # 初始化 L1 Planner
+        planner_cfg = self._skills_config.get("planner", {}) if isinstance(self._skills_config, dict) else {}
+        planner_enabled = bool(planner_cfg.get("enabled", True))
+        self._planner_confidence_threshold = float(planner_cfg.get("confidence_threshold", 0.65))
+        scenarios_dir = self._resolve_planner_scenarios_dir(
+            skills_config_path,
+            str(planner_cfg.get("scenarios_dir", "config/scenarios")),
+        )
+        self._planner = PlannerEngine(
+            llm_client=self._llm,
+            scenarios_dir=scenarios_dir,
+            enabled=planner_enabled,
+        )
         
         # 注册技能
         self._register_skills()
@@ -139,15 +176,23 @@ class AgentOrchestrator:
                 llm_client=self._llm,
                 skills_config=self._skills_config,
             ),
-            CreateSkill(mcp_client=self._mcp, settings=self._settings),
-            UpdateSkill(mcp_client=self._mcp, settings=self._settings),
+            CreateSkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                skills_config=self._skills_config,
+            ),
+            UpdateSkill(
+                mcp_client=self._mcp,
+                settings=self._settings,
+                skills_config=self._skills_config,
+            ),
             DeleteSkill(
                 mcp_client=self._mcp,
                 settings=self._settings,
                 skills_config=self._skills_config,
             ),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
-            ReminderSkill(db_client=self._db, skills_config=self._skills_config),
+            ReminderSkill(db_client=self._db, mcp_client=self._mcp, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config, llm_client=self._llm),
         ]
         if getattr(self, "_market_skills", None):
@@ -259,6 +304,69 @@ class AgentOrchestrator:
             merged["skills"] = skills_registry
         return merged
 
+    def _load_l0_rules(self, skills_config_path: str) -> dict[str, Any]:
+        """加载 L0 规则配置。"""
+        config_path = Path(skills_config_path)
+        if not config_path.is_absolute():
+            config_path = Path.cwd() / config_path
+        l0_path = config_path.parent / "l0_rules.yaml"
+        if not l0_path.exists():
+            logger.info("L0 rules not found: %s", l0_path)
+            return {}
+        try:
+            with l0_path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("Failed to load L0 rules: %s", exc)
+            return {}
+
+    def _resolve_planner_scenarios_dir(self, skills_config_path: str, scenarios_dir: str) -> str:
+        """解析 planner 场景目录为绝对路径。"""
+        path = Path(scenarios_dir)
+        if path.is_absolute():
+            return str(path)
+
+        config_path = Path(skills_config_path)
+        if not config_path.is_absolute():
+            config_path = Path.cwd() / config_path
+        base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
+        return str((base_dir / path).resolve())
+
+    def _build_intent_from_planner(self, plan: PlannerOutput) -> IntentResult | None:
+        """将 Planner 输出映射为路由层意图结果。"""
+        intent_to_skill = {
+            "query_all": "QuerySkill",
+            "query_view": "QuerySkill",
+            "query_my_cases": "QuerySkill",
+            "query_person": "QuerySkill",
+            "query_exact": "QuerySkill",
+            "query_date_range": "QuerySkill",
+            "query_advanced": "QuerySkill",
+            "create_record": "CreateSkill",
+            "update_record": "UpdateSkill",
+            "delete_record": "DeleteSkill",
+            "create_reminder": "ReminderSkill",
+            "list_reminders": "ReminderSkill",
+            "cancel_reminder": "ReminderSkill",
+            "out_of_scope": "ChitchatSkill",
+        }
+        skill = intent_to_skill.get(plan.intent)
+        if not skill:
+            return None
+        return IntentResult(
+            skills=[
+                SkillMatch(
+                    name=skill,
+                    score=max(0.0, min(1.0, float(plan.confidence))),
+                    reason=f"planner:{plan.intent}",
+                )
+            ],
+            is_chain=False,
+            requires_llm_confirm=False,
+            method="planner",
+        )
+
     async def handle_message(
         self,
         user_id: str,
@@ -288,72 +396,159 @@ class AgentOrchestrator:
         
         start_time = time.perf_counter()
         status = "success"
+        reply: dict[str, Any] = {
+            "type": "text",
+            "text": "请稍后重试。",
+        }
         
         try:
             # 清理过期会话和上下文
             self._sessions.cleanup_expired()
             self._context_manager.cleanup_expired()
+            self._state_manager.cleanup_expired()
             
             # 更新活跃会话指标
-            set_active_sessions(self._context_manager.active_count())
+            active_count = max(self._context_manager.active_count(), self._state_manager.active_count())
+            set_active_sessions(active_count)
             
             # 记录用户消息
             self._sessions.add_message(user_id, "user", text)
-            
-            # Step 1: 构建 LLM 上下文并解析意图
-            llm_context = await self._build_llm_context(user_id, query=text)
-            intent_start = time.perf_counter()
-            intent = await self._intent_parser.parse(text, llm_context=llm_context)
-            record_intent_parse(intent.method, time.perf_counter() - intent_start)
-            
-            logger.info(
-                "Intent parsed",
-                extra={
-                    "query": text,
-                    "intent": intent.to_dict(),
-                },
-            )
-            
-            # Step 2: 构建执行上下文
-            # 尝试获取上次查询结果（用于链式调用）
-            prev_context = self._context_manager.get(user_id)
-            extra = await self._build_extra(text, user_id, llm_context)
-            extra["chat_id"] = chat_id
-            extra["chat_type"] = chat_type
-            extra["user_profile"] = user_profile  # 添加用户档案
-            
-            context = SkillContext(
-                query=text,
-                user_id=user_id,
-                last_result=prev_context.last_result if prev_context else None,
-                last_skill=prev_context.last_skill if prev_context else None,
-                extra=extra,
-            )
-            
-            # Step 3: 路由并执行技能
-            result = await self._router.route(intent, context)
-            
-            # Step 4: 更新上下文（保存结果供后续链式调用）
-            if result.success and result.data:
-                self._context_manager.update_result(user_id, result.skill_name, result.data)
-                # 更新完整上下文
-                self._context_manager.set(user_id, context.with_result(result.skill_name, result.data))
-            
-            if not result.success:
-                status = "failure"
-            
-            # Step 5: 构建回复
-            reply = result.to_reply()
 
-            # Step 6: 写入记忆（日志 + 关键偏好）
-            self._record_memory(
-                user_id,
-                text,
-                reply.get("text", ""),
-                result.skill_name,
-                result.data or {},
-                context.extra,
-            )
+            # Step 0: L0 规则硬约束
+            l0_decision = self._l0_engine.evaluate(user_id, text)
+            if l0_decision.handled:
+                reply = l0_decision.reply or {
+                    "type": "text",
+                    "text": "请换一种说法再试试。",
+                }
+                status = "success"
+            else:
+                # Step 1: L0 强制技能 或 L1 Planner/IntentParser
+                llm_context: dict[str, str] | None = None
+                planner_output: PlannerOutput | None = None
+                planner_applied = False
+                should_execute = True
+
+                if l0_decision.force_skill:
+                    intent = IntentResult(
+                        skills=[
+                            SkillMatch(
+                                name=l0_decision.force_skill,
+                                score=1.0,
+                                reason="L0 rule matched",
+                            )
+                        ],
+                        is_chain=False,
+                        requires_llm_confirm=False,
+                        method="l0",
+                    )
+                    logger.info(
+                        "Intent forced by L0",
+                        extra={
+                            "query": text,
+                            "intent": intent.to_dict(),
+                        },
+                    )
+                else:
+                    llm_context = await self._build_llm_context(user_id, query=text)
+
+                    planner_start = time.perf_counter()
+                    planner_output = await self._planner.plan(text)
+                    planner_duration = time.perf_counter() - planner_start
+
+                    if planner_output and planner_output.intent == "clarify_needed":
+                        reply = {
+                            "type": "text",
+                            "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
+                        }
+                        status = "success"
+                        intent = None
+                        should_execute = False
+                    else:
+                        intent = None
+                        if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
+                            intent = self._build_intent_from_planner(planner_output)
+                            if intent:
+                                planner_applied = True
+                                record_intent_parse("planner", planner_duration)
+                                logger.info(
+                                    "Intent parsed by planner",
+                                    extra={
+                                        "query": text,
+                                        "intent": intent.to_dict(),
+                                        "planner": planner_output.to_context(),
+                                    },
+                                )
+
+                        if intent is None:
+                            intent_start = time.perf_counter()
+                            intent = await self._intent_parser.parse(text, llm_context=llm_context)
+                            record_intent_parse(intent.method, time.perf_counter() - intent_start)
+                            logger.info(
+                                "Intent parsed",
+                                extra={
+                                    "query": text,
+                                    "intent": intent.to_dict(),
+                                },
+                            )
+
+                if should_execute:
+                    # Step 2: 构建执行上下文
+                    prev_context = self._context_manager.get(user_id)
+                    if l0_decision.force_skill:
+                        extra = dict(l0_decision.force_extra or {})
+                    else:
+                        extra = await self._build_extra(text, user_id, llm_context)
+                        if planner_applied and planner_output:
+                            extra["planner_plan"] = planner_output.to_context()
+                    extra["chat_id"] = chat_id
+                    extra["chat_type"] = chat_type
+                    extra["user_profile"] = user_profile  # 添加用户档案
+
+                    force_last_result = l0_decision.force_last_result if l0_decision.force_skill else None
+                    context = SkillContext(
+                        query=text,
+                        user_id=user_id,
+                        last_result=force_last_result if force_last_result is not None else (prev_context.last_result if prev_context else None),
+                        last_skill=prev_context.last_skill if prev_context else None,
+                        extra=extra,
+                    )
+
+                    # Step 3: 路由并执行技能
+                    if intent is None:
+                        result = SkillResult(
+                            success=False,
+                            skill_name="fallback",
+                            message="未能识别意图",
+                            reply_text="抱歉，我没理解您的意思。您可以试试：查所有案件、我的案件、查案号 XXX。",
+                        )
+                    else:
+                        assert intent is not None
+                        result = await self._router.route(intent, context)
+
+                    # Step 4: 更新上下文（保存结果供后续链式调用）
+                    if result.success and result.data:
+                        self._context_manager.update_result(user_id, result.skill_name, result.data)
+                        self._context_manager.set(user_id, context.with_result(result.skill_name, result.data))
+
+                    # Step 4.1: 同步会话状态机（L0 使用）
+                    self._sync_state_after_result(user_id, text, result)
+
+                    if not result.success:
+                        status = "failure"
+
+                    # Step 5: 构建回复
+                    reply = result.to_reply()
+
+                    # Step 6: 写入记忆（日志 + 关键偏好）
+                    self._record_memory(
+                        user_id,
+                        text,
+                        reply.get("text", ""),
+                        result.skill_name,
+                        result.data or {},
+                        context.extra,
+                    )
             
         except asyncio.TimeoutError:
             status = "timeout"
@@ -431,6 +626,10 @@ class AgentOrchestrator:
         if date_range:
             extra["date_from"] = date_range.get("date_from")
             extra["date_to"] = date_range.get("date_to")
+            if date_range.get("time_from"):
+                extra["time_from"] = date_range.get("time_from")
+            if date_range.get("time_to"):
+                extra["time_to"] = date_range.get("time_to")
         
         return extra
 
@@ -481,79 +680,126 @@ class AgentOrchestrator:
             records = result_data.get("records", []) if result_data else []
             total = result_data.get("total") if result_data else None
             count = total if isinstance(total, int) else len(records)
-            if count <= 0:
-                return
-
-            date_from = extra.get("date_from")
-            date_to = extra.get("date_to")
-            date_hint = ""
-            if date_from or date_to:
-                date_hint = f"（时间范围：{date_from or '-'} ~ {date_to or '-'}）"
-            event_text = f"事件: 查询案件共 {count} 条{date_hint}"
-            self._memory_manager.append_daily_log(
-                user_id,
-                event_text,
-                vectorize=True,
-                metadata={
-                    "type": "auto",
-                    "created_at": datetime.now().isoformat(),
-                    "source": "event",
-                    "tags": f"skill:{skill_name}" if skill_name else "event",
-                },
-            )
+            if count > 0:
+                date_from = extra.get("date_from")
+                date_to = extra.get("date_to")
+                date_hint = ""
+                if date_from or date_to:
+                    date_hint = f"（时间范围：{date_from or '-'} ~ {date_to or '-'}）"
+                event_text = f"事件: 查询案件共 {count} 条{date_hint}"
+                self._memory_manager.append_daily_log(
+                    user_id,
+                    event_text,
+                    vectorize=True,
+                    metadata={
+                        "type": "auto",
+                        "created_at": datetime.now().isoformat(),
+                        "source": "event",
+                        "tags": f"skill:{skill_name}" if skill_name else "event",
+                    },
+                )
 
         if skill_name == "ReminderSkill":
             content = result_data.get("content") if result_data else None
             remind_time = result_data.get("remind_time") if result_data else None
-            if not content and not remind_time:
-                return
-            event_text = f"事件: 创建提醒 {content or ''} {remind_time or ''}".strip()
-            self._memory_manager.append_daily_log(
-                user_id,
-                event_text,
-                vectorize=True,
-                metadata={
-                    "type": "auto",
-                    "created_at": datetime.now().isoformat(),
-                    "source": "event",
-                    "tags": f"skill:{skill_name}" if skill_name else "event",
-                },
-            )
+            if content or remind_time:
+                event_text = f"事件: 创建提醒 {content or ''} {remind_time or ''}".strip()
+                self._memory_manager.append_daily_log(
+                    user_id,
+                    event_text,
+                    vectorize=True,
+                    metadata={
+                        "type": "auto",
+                        "created_at": datetime.now().isoformat(),
+                        "source": "event",
+                        "tags": f"skill:{skill_name}" if skill_name else "event",
+                    },
+                )
 
         if skill_name == "SummarySkill":
             total = result_data.get("total") if result_data else None
             count = total if isinstance(total, int) else 0
-            if count <= 0:
-                return
-            event_text = f"事件: 已生成汇总（共 {count} 条）"
-            self._memory_manager.append_daily_log(
-                user_id,
-                event_text,
-                vectorize=True,
-                metadata={
-                    "type": "auto",
-                    "created_at": datetime.now().isoformat(),
-                    "source": "event",
-                    "tags": f"skill:{skill_name}" if skill_name else "event",
-                },
-            )
+            if count > 0:
+                event_text = f"事件: 已生成汇总（共 {count} 条）"
+                self._memory_manager.append_daily_log(
+                    user_id,
+                    event_text,
+                    vectorize=True,
+                    metadata={
+                        "type": "auto",
+                        "created_at": datetime.now().isoformat(),
+                        "source": "event",
+                        "tags": f"skill:{skill_name}" if skill_name else "event",
+                    },
+                )
 
         if skill_name == "ChitchatSkill":
             response_type = result_data.get("type") if result_data else None
-            if not response_type:
-                return
-            event_text = f"事件: 闲聊响应（{response_type}）"
-            self._memory_manager.append_daily_log(
-                user_id,
-                event_text,
-                vectorize=True,
-                metadata={
-                    "type": "auto",
-                    "created_at": datetime.now().isoformat(),
-                    "source": "event",
-                    "tags": f"skill:{skill_name}" if skill_name else "event",
-                },
-            )
+            if response_type:
+                event_text = f"事件: 闲聊响应（{response_type}）"
+                self._memory_manager.append_daily_log(
+                    user_id,
+                    event_text,
+                    vectorize=True,
+                    metadata={
+                        "type": "auto",
+                        "created_at": datetime.now().isoformat(),
+                        "source": "event",
+                        "tags": f"skill:{skill_name}" if skill_name else "event",
+                    },
+                )
+
+    def _sync_state_after_result(self, user_id: str, query: str, result: Any) -> None:
+        """将技能执行结果同步到会话状态机。"""
+        try:
+            data = result.data or {}
+            skill_name = result.skill_name
+
+            if skill_name == "DeleteSkill":
+                pending = data.get("pending_delete") if isinstance(data, dict) else None
+                if isinstance(pending, dict) and pending.get("record_id"):
+                    record_id = str(pending.get("record_id"))
+                    summary = str(pending.get("case_no") or pending.get("record_summary") or "")
+                    table_id = str(pending.get("table_id") or "").strip() or None
+                    self._state_manager.set_pending_delete(user_id, record_id, summary, table_id=table_id)
+                elif result.success:
+                    self._state_manager.clear_pending_delete(user_id)
+
+            if skill_name == "QuerySkill" and result.success:
+                records = data.get("records") if isinstance(data, dict) else None
+                if isinstance(records, list):
+                    self._state_manager.set_last_result(user_id, records, query)
+
+                pagination = data.get("pagination") if isinstance(data, dict) else None
+                query_meta = data.get("query_meta") if isinstance(data, dict) else None
+                if isinstance(pagination, dict) and isinstance(query_meta, dict):
+                    has_more = bool(pagination.get("has_more", False))
+                    if has_more:
+                        tool = str(query_meta.get("tool") or "")
+                        params_raw = query_meta.get("params")
+                        params: dict[str, Any] = params_raw if isinstance(params_raw, dict) else {}
+                        page_token = pagination.get("page_token")
+                        current_page = int(pagination.get("current_page") or 1)
+                        total = pagination.get("total")
+                        total_num = int(total) if isinstance(total, int) else None
+                        self._state_manager.set_pagination(
+                            user_id=user_id,
+                            tool=tool,
+                            params=params,
+                            page_token=str(page_token) if page_token else None,
+                            current_page=current_page,
+                            total=total_num,
+                        )
+                    else:
+                        self._state_manager.clear_pagination(user_id)
+                else:
+                    # 查询结果未携带分页信息时，清空旧分页状态
+                    self._state_manager.clear_pagination(user_id)
+            elif skill_name != "QuerySkill":
+                # 非查询请求会使分页上下文失效
+                self._state_manager.clear_pagination(user_id)
+        except Exception as exc:
+            logger.warning("Failed to sync state: %s", exc)
 
     async def _build_llm_context(self, user_id: str, query: str | None = None) -> dict[str, str]:
         context: dict[str, str] = {
@@ -631,7 +877,12 @@ class AgentOrchestrator:
         # 优先使用规则解析
         parsed = parse_time_range(text)
         if parsed:
-            return {"date_from": parsed.date_from, "date_to": parsed.date_to}
+            result = {"date_from": parsed.date_from, "date_to": parsed.date_to}
+            if parsed.time_from:
+                result["time_from"] = parsed.time_from
+            if parsed.time_to:
+                result["time_to"] = parsed.time_to
+            return result
         
         # 检查是否有时间相关词
         if not self._has_time_hint(text):
@@ -654,10 +905,18 @@ class AgentOrchestrator:
 
     def _has_time_hint(self, text: str) -> bool:
         """检查是否包含时间相关词"""
-        keywords = ["今天", "明天", "本周", "这周", "下周", "本月", "这个月"]
+        keywords = [
+            "今天", "明天", "后天", "本周", "这周", "下周", "本月", "这个月",
+            "上午", "下午", "中午", "晚上", "今早", "明早", "今晚", "明晚", "凌晨", "傍晚",
+        ]
         if any(keyword in text for keyword in keywords):
             return True
-        return bool(re.search(r"\d{1,2}月\d{1,2}[日号]?|\d{4}-\d{1,2}-\d{1,2}", text))
+        return bool(
+            re.search(
+                r"\d{1,2}月\d{1,2}[日号]?|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|\d{1,2}[-/\.]\d{1,2}|\d{1,2}[:：]\d{1,2}|\d{1,2}点(?:\d{1,2}分?|半)?",
+                text,
+            )
+        )
 
     def reload_config(self, config_path: str = "config/skills.yaml") -> None:
         """
@@ -685,6 +944,14 @@ class AgentOrchestrator:
         )
 
         self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
+
+        # 重新加载 L0 规则
+        l0_rules = self._load_l0_rules(config_path)
+        self._l0_engine = L0RuleEngine(
+            state_manager=self._state_manager,
+            l0_rules=l0_rules,
+            skills_config=self._skills_config,
+        )
         
         # 重新注册技能
         self._register_skills()

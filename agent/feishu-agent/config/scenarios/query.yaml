@@ -1,0 +1,45 @@
+# Query 规划规则（用于 L1 Planner prompt 注入）
+
+rules:
+  - name: all_cases
+    pattern: 查所有/全部/列表
+    intent: query_all
+    tool: search
+    params:
+      ignore_default_view: true
+    note: 默认忽略 view_id，查全表
+
+  - name: view_cases
+    pattern: 按视图/当前视图/仅视图
+    intent: query_view
+    tool: search
+    params: {}
+    note: 保留默认 view_id
+
+  - name: my_cases
+    pattern: 我的案件/我负责
+    intent: query_my_cases
+    tool: search_person
+    params:
+      field: 主办律师
+
+  - name: exact_case_no
+    pattern: 案号 XXX
+    intent: query_exact
+    tool: search_exact
+    params:
+      field: 案号
+
+  - name: exact_project_id
+    pattern: 项目ID/项目编号 XXX
+    intent: query_exact
+    tool: search_exact
+    params:
+      field: 项目ID
+
+  - name: date_range
+    pattern: 今天/本周 + 开庭
+    intent: query_date_range
+    tool: search_date_range
+    params:
+      field: 开庭日

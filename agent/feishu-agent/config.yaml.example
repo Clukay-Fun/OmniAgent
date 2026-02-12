@@ -21,12 +21,12 @@ server:
 # ------------------------------------------------------------
 feishu:
   # 应用凭证（必填）
-  app_id: ${FEISHU_APP_ID}
-  app_secret: ${FEISHU_APP_SECRET}
+  app_id: ${FEISHU_BOT_APP_ID}
+  app_secret: ${FEISHU_BOT_APP_SECRET}
 
   # Webhook 验证配置
-  verification_token: ${FEISHU_VERIFICATION_TOKEN}
-  encrypt_key: ${FEISHU_ENCRYPT_KEY:-}    # 可选，启用消息加密时需要
+  verification_token: ${FEISHU_BOT_VERIFICATION_TOKEN}
+  encrypt_key: ${FEISHU_BOT_ENCRYPT_KEY:-}    # 可选，启用消息加密时需要
 
   # API 基础地址
   api_base: "https://open.feishu.cn/open-apis"

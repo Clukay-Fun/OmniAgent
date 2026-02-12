@@ -59,7 +59,10 @@ class TokenManager:
             "app_id": self._settings.feishu.app_id,
             "app_secret": self._settings.feishu.app_secret,
         }
-        async with httpx.AsyncClient(timeout=self._settings.feishu.message.reply_timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=self._settings.feishu.message.reply_timeout,
+            trust_env=False,
+        ) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -118,7 +121,10 @@ async def send_message(
     if settings.feishu.message.use_reply_mode and reply_message_id:
         payload["reply_message_id"] = reply_message_id
 
-    async with httpx.AsyncClient(timeout=settings.feishu.message.reply_timeout) as client:
+    async with httpx.AsyncClient(
+        timeout=settings.feishu.message.reply_timeout,
+        trust_env=False,
+    ) as client:
         response = await client.post(
             url,
             params=params,
@@ -185,7 +191,10 @@ async def update_message(
         "content": json.dumps(content, ensure_ascii=False),
     }
 
-    async with httpx.AsyncClient(timeout=settings.feishu.message.reply_timeout) as client:
+    async with httpx.AsyncClient(
+        timeout=settings.feishu.message.reply_timeout,
+        trust_env=False,
+    ) as client:
         response = await client.patch(
             url,
             headers={"Authorization": f"Bearer {token}"},

@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
+from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
 
@@ -49,10 +51,13 @@ class DeleteSkill(BaseSkill):
         self._mcp = mcp_client
         self._settings = settings
         self._skills_config = skills_config or {}
+        self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
-        self._confirm_phrases = set(delete_cfg.get("confirm_phrases", [
+        self._confirm_phrases = {
+            str(x).strip().lower()
+            for x in delete_cfg.get("confirm_phrases", [
             "确认删除",
             "确认",
             "是的",
@@ -60,7 +65,9 @@ class DeleteSkill(BaseSkill):
             "删除",
             "ok",
             "yes",
-        ]))
+        ])
+            if str(x).strip()
+        }
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -74,15 +81,43 @@ class DeleteSkill(BaseSkill):
         """
         query = context.query.strip()
         extra = context.extra or {}
+        planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
+        last_result = context.last_result or {}
+        table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
         
         # 检查是否为确认回复
         if self._is_confirmation(query):
             return await self._execute_delete(context)
         
         # 首次删除请求：需要确认
-        last_result = context.last_result or {}
         records = last_result.get("records", [])
-        
+
+        # Planner 直接给 record_id 时，直接进入确认
+        planner_pending = self._extract_pending_from_planner(planner_plan)
+        if planner_pending:
+            if table_ctx.table_id and not planner_pending.get("table_id"):
+                planner_pending["table_id"] = table_ctx.table_id
+            if table_ctx.table_name and not planner_pending.get("table_name"):
+                planner_pending["table_name"] = table_ctx.table_name
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={
+                    "pending_delete": planner_pending,
+                    "records": records,
+                },
+                message="等待用户确认删除",
+                reply_text=(
+                    f"⚠️ 确认删除\n\n"
+                    f"您即将删除案件：{planner_pending.get('case_no', '未知案号')}\n\n"
+                    f"此操作不可撤销，请回复'确认删除'以继续。"
+                ),
+            )
+
+        # 如果没有上下文记录，尝试按案号/项目ID快速定位
+        if not records:
+            records = await self._search_records_by_query(query, table_ctx.table_id)
+
         # 如果没有上下文记录，需要先搜索
         if not records:
             return SkillResult(
@@ -104,6 +139,9 @@ class DeleteSkill(BaseSkill):
         # 获取记录信息
         record = records[0]
         record_id = record.get("record_id")
+        record_table_id = self._table_adapter.extract_table_id_from_record(record)
+        if record_table_id and not table_ctx.table_id:
+            table_ctx.table_id = record_table_id
         if not record_id:
             return SkillResult(
                 success=False,
@@ -130,6 +168,8 @@ class DeleteSkill(BaseSkill):
                 "pending_delete": {
                     "record_id": record_id,
                     "case_no": case_no,
+                    "table_id": table_ctx.table_id,
+                    "table_name": table_ctx.table_name,
                 },
                 "records": records,  # 保留记录供确认后使用
             },
@@ -161,14 +201,26 @@ class DeleteSkill(BaseSkill):
         
         record_id = pending.get("record_id")
         case_no = pending.get("case_no", "未知案号")
+        table_id = pending.get("table_id")
+        if not table_id:
+            table_ctx = await self._table_adapter.resolve_table_context(
+                context.query,
+                context.extra or {},
+                last_result,
+            )
+            table_id = table_ctx.table_id
         
         # 调用 MCP 删除工具
         try:
+            params: dict[str, Any] = {
+                "record_id": record_id,
+            }
+            if table_id:
+                params["table_id"] = table_id
+
             result = await self._mcp.call_tool(
                 "feishu.v1.bitable.record.delete",
-                {
-                    "record_id": record_id,
-                }
+                params,
             )
             
             if not result.get("success"):
@@ -188,6 +240,7 @@ class DeleteSkill(BaseSkill):
                 data={
                     "record_id": record_id,
                     "case_no": case_no,
+                    "table_id": table_id,
                 },
                 message="删除成功",
                 reply_text=reply_text,
@@ -212,6 +265,59 @@ class DeleteSkill(BaseSkill):
         返回:
             是否为确认
         """
-        normalized = query.strip().lower()
+        normalized = query.strip().lower().strip("，。！？!?,. ")
         return normalized in self._confirm_phrases
+
+    def _extract_pending_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any] | None:
+        """从 planner 输出提取待删除目标。"""
+        if not isinstance(planner_plan, dict):
+            return None
+        if planner_plan.get("tool") != "record.delete":
+            return None
+        params = planner_plan.get("params")
+        if not isinstance(params, dict):
+            return None
+
+        record_id = str(params.get("record_id") or "").strip()
+        case_no = str(params.get("case_no") or params.get("value") or "未知案号").strip()
+        table_id = str(params.get("table_id") or "").strip() or None
+        table_name = str(params.get("table_name") or "").strip() or None
+        if not record_id:
+            return None
+        return {
+            "record_id": record_id,
+            "case_no": case_no,
+            "table_id": table_id,
+            "table_name": table_name,
+        }
+
+    async def _search_records_by_query(self, query: str, table_id: str | None = None) -> list[dict[str, Any]]:
+        """根据查询文本尝试搜索待删除记录。"""
+        exact_case = re.search(r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+        exact_project = re.search(r"(?:项目ID|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+
+        tool_name = None
+        params: dict[str, Any] = {}
+        if exact_case:
+            tool_name = "feishu.v1.bitable.search_exact"
+            params = {"field": "案号", "value": exact_case.group(1).strip()}
+        elif exact_project:
+            tool_name = "feishu.v1.bitable.search_exact"
+            params = {"field": "项目ID", "value": exact_project.group(1).strip()}
+
+        if table_id:
+            params["table_id"] = table_id
+
+        if not tool_name:
+            return []
+
+        try:
+            result = await self._mcp.call_tool(tool_name, params)
+            records = result.get("records", [])
+            if isinstance(records, list):
+                return records
+            return []
+        except Exception as exc:
+            logger.warning("DeleteSkill pre-search failed: %s", exc)
+            return []
 # endregion

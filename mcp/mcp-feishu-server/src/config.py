@@ -76,6 +76,13 @@ class DocSettings(BaseModel):
     search: DocSearchSettings = Field(default_factory=DocSearchSettings)
 
 
+class CalendarSettings(BaseModel):
+    """飞书日历配置"""
+    default_calendar_id: str = ""
+    timezone: str = "Asia/Shanghai"
+    default_duration_minutes: int = 30
+
+
 class ToolsSettings(BaseModel):
     enabled: list[str] = Field(default_factory=list)
 
@@ -104,15 +111,60 @@ class SecuritySettings(BaseModel):
     allowed_ips: list[str] = Field(default_factory=list)
 
 
+class AutomationSettings(BaseModel):
+    """自动化模块配置"""
+
+    enabled: bool = False
+    verification_token: str = ""
+    encrypt_key: str = ""
+    storage_dir: str = "automation_data"
+    rules_file: str = "automation_rules.yaml"
+    event_ttl_seconds: int = 604800
+    business_ttl_seconds: int = 604800
+    max_dedupe_keys: int = 50000
+    scan_page_size: int = 100
+    max_scan_pages: int = 50
+    trigger_on_new_record_event: bool = False
+    trigger_on_new_record_scan: bool = True
+    trigger_on_new_record_scan_requires_checkpoint: bool = True
+    new_record_scan_max_trigger_per_run: int = 50
+    poller_enabled: bool = False
+    poller_interval_seconds: float = 60.0
+    action_max_retries: int = 1
+    action_retry_delay_seconds: float = 0.5
+    dead_letter_file: str = "automation_data/dead_letters.jsonl"
+    run_log_file: str = "automation_data/run_logs.jsonl"
+    schema_sync_enabled: bool = True
+    schema_sync_interval_seconds: float = 300.0
+    schema_sync_event_driven: bool = True
+    schema_cache_file: str = "automation_data/schema_cache.json"
+    schema_runtime_state_file: str = "automation_data/schema_runtime_state.json"
+    schema_webhook_enabled: bool = False
+    schema_webhook_url: str = ""
+    schema_webhook_secret: str = ""
+    schema_webhook_timeout_seconds: float = 5.0
+    schema_webhook_drill_enabled: bool = False
+    schema_policy_on_field_added: str = "auto_map_if_same_name"
+    schema_policy_on_field_removed: str = "auto_remove"
+    schema_policy_on_field_renamed: str = "warn_only"
+    schema_policy_on_field_type_changed: str = "warn_only"
+    schema_policy_on_trigger_field_removed: str = "disable_rule"
+    status_write_enabled: bool = False
+    status_field: str = "自动化_执行状态"
+    error_field: str = "自动化_最近错误"
+
+
 class Settings(BaseModel):
     """MCP Server 配置聚合根"""
     server: ServerSettings = Field(default_factory=ServerSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     bitable: BitableSettings = Field(default_factory=BitableSettings)
     doc: DocSettings = Field(default_factory=DocSettings)
+    calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    automation: AutomationSettings = Field(default_factory=AutomationSettings)
 # endregion
 
 
@@ -159,6 +211,56 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "BITABLE_TABLE_ID": ["bitable", "default_table_id"],
         "BITABLE_VIEW_ID": ["bitable", "default_view_id"],
         "DOC_FOLDER_TOKEN": ["doc", "search", "default_folder_token"],
+        "FEISHU_CALENDAR_ID": ["calendar", "default_calendar_id"],
+        "FEISHU_CALENDAR_TIMEZONE": ["calendar", "timezone"],
+        "FEISHU_CALENDAR_DEFAULT_DURATION_MINUTES": ["calendar", "default_duration_minutes"],
+        "AUTOMATION_ENABLED": ["automation", "enabled"],
+        "FEISHU_EVENT_VERIFY_TOKEN": ["automation", "verification_token"],
+        "FEISHU_EVENT_ENCRYPT_KEY": ["automation", "encrypt_key"],
+        "AUTOMATION_STORAGE_DIR": ["automation", "storage_dir"],
+        "AUTOMATION_RULES_FILE": ["automation", "rules_file"],
+        "AUTOMATION_EVENT_TTL_SECONDS": ["automation", "event_ttl_seconds"],
+        "AUTOMATION_BUSINESS_TTL_SECONDS": ["automation", "business_ttl_seconds"],
+        "AUTOMATION_MAX_DEDUPE_KEYS": ["automation", "max_dedupe_keys"],
+        "AUTOMATION_SCAN_PAGE_SIZE": ["automation", "scan_page_size"],
+        "AUTOMATION_MAX_SCAN_PAGES": ["automation", "max_scan_pages"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT": ["automation", "trigger_on_new_record_event"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN": ["automation", "trigger_on_new_record_scan"],
+        "AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT": [
+            "automation",
+            "trigger_on_new_record_scan_requires_checkpoint",
+        ],
+        "AUTOMATION_NEW_RECORD_SCAN_MAX_TRIGGER_PER_RUN": [
+            "automation",
+            "new_record_scan_max_trigger_per_run",
+        ],
+        "AUTOMATION_POLLER_ENABLED": ["automation", "poller_enabled"],
+        "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
+        "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
+        "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
+        "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
+        "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
+        "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
+        "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],
+        "AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN": ["automation", "schema_sync_event_driven"],
+        "AUTOMATION_SCHEMA_CACHE_FILE": ["automation", "schema_cache_file"],
+        "AUTOMATION_SCHEMA_RUNTIME_STATE_FILE": ["automation", "schema_runtime_state_file"],
+        "AUTOMATION_SCHEMA_WEBHOOK_ENABLED": ["automation", "schema_webhook_enabled"],
+        "AUTOMATION_SCHEMA_WEBHOOK_URL": ["automation", "schema_webhook_url"],
+        "AUTOMATION_SCHEMA_WEBHOOK_SECRET": ["automation", "schema_webhook_secret"],
+        "AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS": ["automation", "schema_webhook_timeout_seconds"],
+        "AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED": ["automation", "schema_webhook_drill_enabled"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED": ["automation", "schema_policy_on_field_added"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED": ["automation", "schema_policy_on_field_removed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED": ["automation", "schema_policy_on_field_renamed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_FIELD_TYPE_CHANGED": ["automation", "schema_policy_on_field_type_changed"],
+        "AUTOMATION_SCHEMA_POLICY_ON_TRIGGER_FIELD_REMOVED": [
+            "automation",
+            "schema_policy_on_trigger_field_removed",
+        ],
+        "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
+        "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
+        "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

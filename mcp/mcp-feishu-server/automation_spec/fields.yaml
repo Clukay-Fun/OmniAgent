@@ -1,0 +1,104 @@
+# 表字段约定 v1.2（与当前实现对齐）
+# 用途：定义业务字段与自动化字段契约、校验规则。
+# 运行时加载：否（文档/模板文件，不直接驱动服务逻辑）。
+# 关联文件：rules.template.yaml、../automation_rules.yaml。
+# 备注：状态字段在 status_write_enabled=false 时可缺省。
+
+meta:
+  version: "v1.2"
+  status: aligned
+  owner: automation
+  reviewed_at: "2026-02"
+
+conventions:
+  field_type_enum:
+    text: 文本
+    datetime: 日期时间
+    single_select: 单选
+    multi_select: 多选
+    person: 人员
+    number: 数字
+    link: 关联记录
+
+  # 状态字段可选：仅当 status_write_enabled=true 时启用
+  optional_status_fields:
+    - 自动化_执行状态
+    - 自动化_最近错误
+
+  status_values:
+    - 处理中
+    - 成功
+    - 失败
+
+  watch_strategy:
+    default: auto_from_rules
+    fallback_on_any_field_changed: full
+
+tables:
+  - table_name: 案件项目总库
+    table_id: tblDTbRZRB89q8GJ
+    purpose: 案件主台账
+    keys:
+      primary_hint: 项目ID
+      business_hints: [案号, 委托人]
+
+    # 业务字段（示例）
+    fields:
+      - name: 案件分类
+        type: single_select
+        required: false
+        options: [劳动争议, 民商事, 刑事, 行政, 非诉]
+        used_by_rules: [R001]
+
+      - name: 案号
+        type: text
+        required: false
+        used_by_rules: [R001]
+
+      - name: 开庭日
+        type: datetime
+        required: false
+        used_by_rules: [R001]
+
+      - name: 委托人
+        type: text
+        required: false
+        used_by_rules: [R001]
+
+    # 状态字段（可选）
+    optional_automation_fields:
+      - name: 自动化_执行状态
+        type: single_select
+        required: false
+        options: [处理中, 成功, 失败]
+        writable_by_automation_when_enabled: true
+
+      - name: 自动化_最近错误
+        type: text
+        required: false
+        max_length_hint: 500
+        writable_by_automation_when_enabled: true
+
+validation:
+  - rule_id: V001
+    description: status_write_enabled=false 时，允许不存在状态字段
+    checks:
+      - condition: status_write_enabled == false
+        table: 案件项目总库
+        allow_missing_fields: [自动化_执行状态, 自动化_最近错误]
+
+  - rule_id: V002
+    description: status_write_enabled=true 时，状态字段必须存在且枚举合法
+    checks:
+      - condition: status_write_enabled == true
+        table: 案件项目总库
+        must_have_fields: [自动化_执行状态, 自动化_最近错误]
+        field_value_constraints:
+          自动化_执行状态: [处理中, 成功, 失败]
+
+  - rule_id: V003
+    description: watch 模式由规则自动提取；any_field_changed 回退全字段
+    checks:
+      - table: 案件项目总库
+        watch_mode: auto
+        fallback_mode: full_when_any_field_changed

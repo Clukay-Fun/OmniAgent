@@ -1,0 +1,155 @@
+# 自动化规则模板 v1.2（与当前实现对齐）
+# 用途：给新规则提供统一写法模板（trigger/guard/pipeline）。
+# 运行时加载：否（仅模板）；真正生效文件是 ../automation_rules.yaml。
+# 关联文件：README.md（流程说明）、fields.yaml（字段契约）。
+# 说明：默认推荐日志优先，状态字段回写按 status_write_enabled 决定。
+# 当前动作类型：log.write / bitable.update / bitable.upsert / calendar.create
+
+meta:
+  version: "v1.2"
+  status: aligned
+  owner: automation
+  reviewed_at: "2026-02"
+  notes:
+    - "运行时默认 status_write_enabled=false（仅日志）"
+    - "watched_fields 默认可自动从 rules 提取"
+
+# 可选手工 watched_fields（不配也可）
+watched_fields:
+  tbl_xxx:
+    - 案件分类
+    - 开庭日
+    - 委托人
+
+rules:
+  - rule_id: R001
+    name: "示例-案件分类改为劳动争议"
+    enabled: false
+    priority: 100
+
+    table:
+      table_id: tbl_xxx
+      table_name: 案件项目总库
+      # 可选：当该表不在默认 BITABLE_APP_TOKEN 下时填写
+      app_token: app_token_xxx
+
+    trigger:
+      field: 案件分类
+      condition:
+        changed: true
+        equals: 劳动争议
+        old_not_equals_new: true
+
+    guard:
+      idempotency_scope: business
+      dedupe_keys: [record_id, table_id, field_hash]
+      cooldown_seconds: 0
+
+    pipeline:
+      actions:
+        - type: log.write
+          level: info
+          message: "规则命中：{record_id} 案件分类={案件分类}"
+
+        # 可选：需要建日历时启用
+        # - type: calendar.create
+        #   summary_template: "劳动争议案件跟进：{案号}"
+        #   description_template: "委托人：{委托人}"
+        #   start_field: 开庭日
+        #   duration_minutes: 30
+
+      # 可选：仅当 status_write_enabled=true 时建议配置
+      # before_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 处理中
+      #       自动化_最近错误: ""
+      # success_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 成功
+      #       自动化_最近错误: ""
+      # error_actions:
+      #   - type: bitable.update
+      #     fields:
+      #       自动化_执行状态: 失败
+      #       自动化_最近错误: "{error}"
+
+    observability:
+      run_log_enabled: true
+      dead_letter_on_failure: true
+      log_fields:
+        - event_id
+        - rule_id
+        - table_id
+        - record_id
+        - trigger_field
+        - result
+        - retry_count
+        - duration_ms
+
+  - rule_id: R002
+    name: "示例-任意字段变更（排除字段）"
+    enabled: false
+    priority: 10
+
+    table:
+      table_id: tbl_xxx
+      table_name: 案件项目总库
+      app_token: app_token_xxx
+
+    trigger:
+      any_field_changed: true
+      exclude_fields:
+        - 自动化_执行状态
+        - 自动化_最近错误
+        - 自动化_最后触发时间
+
+    pipeline:
+      actions:
+        - type: log.write
+          level: info
+          message: "任意字段变更：{record_id}"
+
+  - rule_id: R003
+    name: "示例-工作台同步到总览（upsert）"
+    enabled: false
+    priority: 120
+
+    table:
+      table_id: tbl_source
+      app_token: app_token_source
+
+    trigger:
+      all:
+        - field: 协作类型
+          condition:
+            in: [需要协助, 分派给他人, 团队共享]
+        - field: 已同步到总览
+          condition:
+            equals: false
+
+    pipeline:
+      actions:
+        - type: bitable.upsert
+          target_table_id: tbl_overview
+          update_all_matches: true   # 可选：命中多条重复记录时全部更新
+          match_fields:
+            任务ID: "{record_id}"
+            发起人: "{发起人}"
+          update_fields:
+            任务ID: "{record_id}"
+            待办事项: "{待办事项}"
+            任务状态: "{任务状态}"
+            截止时间: "{截止时间}"
+        - type: bitable.update
+          fields:
+            已同步到总览: true
+            任务ID: "{record_id}"
+        - type: log.write
+          level: info
+          message: "同步到总览：{record_id}"
+
+# 说明：若后续配置“已同步后更新”规则，建议 any_field_changed.exclude_fields 至少包含：
+# - 已同步到总览
+# - 任务ID

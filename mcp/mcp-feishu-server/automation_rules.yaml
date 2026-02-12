@@ -1,0 +1,125 @@
+meta:
+  version: "v1.2"
+  status: runtime
+  notes:
+    - "当前仅灰度：房怡康工作台 -> 团队成员工作总览"
+    - "首次同步：协作类型（必填）!=仅自己 且 已同步到总览=false"
+    - "后续同步：已同步到总览=true 且业务字段变更"
+
+watched_fields:
+  tblnKgT7iNOQwN7J:
+    - 记录ID
+    - 协作类型（必填）
+    - 任务描述
+    - 任务类型
+    - 重要紧急程度
+    - 任务状态
+    - 进度
+    - 发起人
+    - 协助人
+    - 附件
+    - 关联案件项目
+    - 创建时间
+    - 截止时间
+    - 完成时间
+    - 父记录 2
+    - 是否截止
+    - 已同步到总览
+
+rules:
+  - rule_id: R_WORKBENCH_CREATE_FYK
+    name: "房怡康工作台-首次同步到总览"
+    enabled: true
+    priority: 120
+    table:
+      table_id: tblnKgT7iNOQwN7J
+      app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+
+    trigger:
+      all:
+        - field: 协作类型（必填）
+          condition:
+            in: [需要协助, 分派给他人, 团队共享]
+        - field: 已同步到总览
+          condition:
+            in: [false, null]
+
+    pipeline:
+      actions:
+        - type: bitable.upsert
+          target_table_id: tblDM7BJ8nMoIZzV
+          target_app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+          update_all_matches: true
+          match_fields:
+            源记录ID: "{record_id}"
+          update_fields:
+            源记录ID: "{record_id}"
+            源表ID: "{table_id}"
+            任务描述: "{任务描述}"
+            任务类型: "{任务类型}"
+            重要紧急程度: "{重要紧急程度}"
+            任务状态: "{任务状态}"
+            进度: "{进度}"
+            发起人: "{发起人}"
+            请求协助人: "{协助人}"
+            附件: "{附件}"
+            关联案件项目: "{关联案件项目}"
+            创建时间: "{创建时间}"
+            截止时间: "{截止时间}"
+            完成时间: "{完成时间}"
+            父记录 2: "{父记录 2}"
+            是否截止: "{是否截止}"
+        - type: bitable.update
+          fields:
+            已同步到总览: true
+        - type: log.write
+          level: info
+          message: "首次同步成功：{record_id} -> 总览"
+
+  - rule_id: R_WORKBENCH_UPDATE_FYK
+    name: "房怡康工作台-已同步记录更新总览"
+    enabled: true
+    priority: 110
+    table:
+      table_id: tblnKgT7iNOQwN7J
+      app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+
+    trigger:
+      all:
+        - any_field_changed: true
+          exclude_fields: [已同步到总览, 记录ID]
+        - field: 已同步到总览
+          condition:
+            equals: true
+        - field: 协作类型（必填）
+          condition:
+            in: [需要协助, 分派给他人, 团队共享]
+
+    pipeline:
+      actions:
+        - type: bitable.upsert
+          target_table_id: tblDM7BJ8nMoIZzV
+          target_app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+          update_all_matches: true
+          match_fields:
+            源记录ID: "{record_id}"
+          update_fields:
+            源记录ID: "{record_id}"
+            源表ID: "{table_id}"
+            任务描述: "{任务描述}"
+            任务类型: "{任务类型}"
+            重要紧急程度: "{重要紧急程度}"
+            任务状态: "{任务状态}"
+            进度: "{进度}"
+            发起人: "{发起人}"
+            请求协助人: "{协助人}"
+            附件: "{附件}"
+            关联案件项目: "{关联案件项目}"
+            创建时间: "{创建时间}"
+            截止时间: "{截止时间}"
+            完成时间: "{完成时间}"
+            父记录 2: "{父记录 2}"
+            是否截止: "{是否截止}"
+        - type: log.write
+          level: info
+          message: "更新同步成功：{record_id} -> 总览"

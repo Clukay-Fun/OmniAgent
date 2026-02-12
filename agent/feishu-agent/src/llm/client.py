@@ -42,7 +42,11 @@ class LLMClient:
         """
         self._settings = settings
         self._logger = logging.getLogger(__name__)
-        self._http_client = httpx.AsyncClient(event_hooks={"response": [self._log_response]})
+        self._http_client = httpx.AsyncClient(
+            timeout=settings.timeout,
+            trust_env=False,
+            event_hooks={"response": [self._log_response]},
+        )
         self._client = AsyncOpenAI(
             api_key=settings.api_key,
             base_url=settings.api_base or None,
