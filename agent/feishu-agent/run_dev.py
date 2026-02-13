@@ -9,8 +9,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 
@@ -76,6 +80,78 @@ def _cleanup_legacy_containers(repo_root: Path) -> int:
     return 0
 
 
+def _refresh_schema(
+    endpoint: str,
+    table_id: str,
+    app_token: str,
+    drill: bool,
+) -> int:
+    """调用 MCP 手动 schema 刷新接口。"""
+    base = endpoint.rstrip("/")
+    query: dict[str, str] = {}
+    if table_id:
+        query["table_id"] = table_id
+    if app_token:
+        query["app_token"] = app_token
+    if drill:
+        query["drill"] = "true"
+
+    url = f"{base}/automation/schema/refresh"
+    if query:
+        url = f"{url}?{urllib.parse.urlencode(query)}"
+
+    request = urllib.request.Request(url=url, method="POST", data=b"")
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = response.read().decode("utf-8")
+            try:
+                parsed = json.loads(body)
+                print(json.dumps(parsed, ensure_ascii=False, indent=2))
+            except json.JSONDecodeError:
+                print(body)
+        return 0
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="ignore")
+        print(f"[error] refresh schema failed: HTTP {exc.code} {payload}")
+        return 1
+    except Exception as exc:
+        print(f"[error] refresh schema failed: {exc}")
+        return 1
+
+
+def _scan_automation(endpoint: str, table_id: str, app_token: str, route: str = "/automation/scan") -> int:
+    """调用 MCP 手动补偿扫描接口。"""
+    base = endpoint.rstrip("/")
+    query: dict[str, str] = {}
+    if table_id:
+        query["table_id"] = table_id
+    if app_token:
+        query["app_token"] = app_token
+
+    route_path = route if route.startswith("/") else f"/{route}"
+    url = f"{base}{route_path}"
+    if query:
+        url = f"{url}?{urllib.parse.urlencode(query)}"
+
+    request = urllib.request.Request(url=url, method="POST", data=b"")
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = response.read().decode("utf-8")
+            try:
+                parsed = json.loads(body)
+                print(json.dumps(parsed, ensure_ascii=False, indent=2))
+            except json.JSONDecodeError:
+                print(body)
+        return 0
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="ignore")
+        print(f"[error] automation scan failed: HTTP {exc.code} {payload}")
+        return 1
+    except Exception as exc:
+        print(f"[error] automation scan failed: {exc}")
+        return 1
+
+
 def _parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(description="OmniAgent 开发栈统一入口")
@@ -83,7 +159,7 @@ def _parse_args() -> argparse.Namespace:
         "action",
         nargs="?",
         default="up",
-        choices=["up", "down", "restart", "logs", "ps", "clean"],
+        choices=["up", "down", "restart", "logs", "ps", "clean", "refresh-schema", "scan", "sync"],
         help="执行动作，默认 up",
     )
     parser.add_argument("--build", action="store_true", help="up/restart 时强制重建镜像")
@@ -93,6 +169,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--with-monitoring", action="store_true", help="启用 monitoring profile")
     parser.add_argument("--with-db", action="store_true", help="启用 db profile")
     parser.add_argument("--all", action="store_true", help="等价于 --with-monitoring --with-db")
+    parser.add_argument("--endpoint", default="http://localhost:8081", help="MCP 地址（refresh-schema/scan/sync 使用）")
+    parser.add_argument("--table-id", default="", help="指定目标表 ID（refresh-schema/scan 使用）")
+    parser.add_argument("--app-token", default="", help="指定 app_token（refresh-schema/scan 使用）")
+    parser.add_argument("--drill", action="store_true", help="refresh-schema 时触发风险演练")
     return parser.parse_args()
 
 
@@ -132,6 +212,31 @@ def main() -> int:
         _cleanup_legacy_containers(repo_root)
         down_profile_flags = _profile_flags(args, include_all=True)
         return _run_command([*base, *down_profile_flags, "down", "--remove-orphans"], repo_root)
+
+    if action == "refresh-schema":
+        table_id = str(args.table_id or "").strip()
+        app_token = str(args.app_token or "").strip()
+        return _refresh_schema(
+            endpoint=str(args.endpoint),
+            table_id=table_id,
+            app_token=app_token,
+            drill=bool(args.drill),
+        )
+
+    if action in {"scan", "sync"}:
+        table_id = str(args.table_id or "").strip()
+        app_token = str(args.app_token or "").strip()
+        route = "/automation/scan"
+        if action == "sync":
+            table_id = ""
+            app_token = ""
+            route = "/automation/sync"
+        return _scan_automation(
+            endpoint=str(args.endpoint),
+            table_id=table_id,
+            app_token=app_token,
+            route=route,
+        )
 
     if action == "logs":
         cmd = [*base, *profile_flags, "logs"]

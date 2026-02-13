@@ -60,6 +60,9 @@ postgres:
   max_size: 5
   timeout: 10
 
+# 提醒调度轮询（默认关闭，减少开发态噪音与 DB 依赖）
+reminder_scheduler_enabled: ${REMINDER_SCHEDULER_ENABLED:-false}
+
 # ------------------------------------------------------------
 # LLM 配置
 # ------------------------------------------------------------

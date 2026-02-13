@@ -259,6 +259,7 @@ class Settings(BaseModel):
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
+    reminder_scheduler_enabled: bool = False
     llm: LLMSettings = Field(default_factory=LLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     user: UserSettings = Field(default_factory=UserSettings)
@@ -323,6 +324,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_BOT_ENCRYPT_KEY": ["feishu", "encrypt_key"],
         "MCP_SERVER_BASE": ["mcp", "base_url"],
         "POSTGRES_DSN": ["postgres", "dsn"],
+        "REMINDER_SCHEDULER_ENABLED": ["reminder_scheduler_enabled"],
         "POSTGRES_MIN_SIZE": ["postgres", "min_size"],
         "POSTGRES_MAX_SIZE": ["postgres", "max_size"],
         "POSTGRES_TIMEOUT": ["postgres", "timeout"],

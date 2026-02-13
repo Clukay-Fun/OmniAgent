@@ -468,14 +468,14 @@ class SchemaWatcher:
         cache = self._state_store.load_cache()
         old_table = (cache.get("tables") or {}).get(key) if isinstance(cache.get("tables"), dict) else None
         old_fields_by_id = {}
+        has_previous_snapshot = False
         if isinstance(old_table, dict):
             old_fields = old_table.get("fields_by_id")
             if isinstance(old_fields, dict):
                 old_fields_by_id = old_fields
+                has_previous_snapshot = True
 
         new_fields_by_id = self._normalize_fields(items)
-        diff = self._diff_fields(old_fields_by_id, new_fields_by_id)
-        alias_conflicts = self._detect_alias_conflicts(new_fields_by_id)
 
         tables = cache.setdefault("tables", {})
         if not isinstance(tables, dict):
@@ -499,6 +499,37 @@ class SchemaWatcher:
             "table_id": table_id,
             **self._build_runtime_schema(new_fields_by_id),
         }
+
+        if not has_previous_snapshot:
+            self._state_store.save_runtime_state(runtime_state)
+            self._write_schema_log(
+                result="schema_bootstrap",
+                app_token=app_token,
+                table_id=table_id,
+                changed={
+                    "field_count": len(new_fields_by_id),
+                    "field_names": sorted(
+                        {
+                            str(meta.get("name") or "").strip()
+                            for meta in new_fields_by_id.values()
+                            if str(meta.get("name") or "").strip()
+                        }
+                    ),
+                },
+                actions_executed=["schema.bootstrap"],
+                extra={"schema_triggered_by": triggered_by},
+            )
+            return {
+                "status": "ok",
+                "table_id": table_id,
+                "app_token": app_token,
+                "changed": False,
+                "bootstrap": True,
+                "field_count": len(new_fields_by_id),
+            }
+
+        diff = self._diff_fields(old_fields_by_id, new_fields_by_id)
+        alias_conflicts = self._detect_alias_conflicts(new_fields_by_id)
 
         removed_fields = set([str(name) for name in diff.get("removed") or [] if str(name).strip()])
         table_rules = self._rules_for_table(app_token, table_id)
@@ -534,6 +565,21 @@ class SchemaWatcher:
             or disabled_rules_now
         )
         if not changed:
+            self._write_schema_log(
+                result="schema_refresh_noop",
+                app_token=app_token,
+                table_id=table_id,
+                changed={
+                    "added": [],
+                    "removed": [],
+                    "renamed": [],
+                    "type_changed": [],
+                    "alias_conflicts": [],
+                    "disabled_rules": [],
+                },
+                actions_executed=["schema.refresh"],
+                extra={"schema_triggered_by": triggered_by},
+            )
             return {
                 "status": "ok",
                 "table_id": table_id,

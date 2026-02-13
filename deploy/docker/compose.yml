@@ -14,6 +14,8 @@ services:
     env_file:
       - ../../mcp/mcp-feishu-server/.env
     restart: unless-stopped
+    volumes:
+      - ../../mcp/mcp-feishu-server/automation_data:/app/automation_data
     deploy:
       resources:
         limits:

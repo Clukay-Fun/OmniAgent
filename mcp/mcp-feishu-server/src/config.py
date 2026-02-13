@@ -128,6 +128,8 @@ class AutomationSettings(BaseModel):
     trigger_on_new_record_scan: bool = True
     trigger_on_new_record_scan_requires_checkpoint: bool = True
     new_record_scan_max_trigger_per_run: int = 50
+    sync_deletions_enabled: bool = True
+    sync_deletions_max_per_run: int = 200
     poller_enabled: bool = False
     poller_interval_seconds: float = 60.0
     action_max_retries: int = 1
@@ -135,6 +137,7 @@ class AutomationSettings(BaseModel):
     dead_letter_file: str = "automation_data/dead_letters.jsonl"
     run_log_file: str = "automation_data/run_logs.jsonl"
     schema_sync_enabled: bool = True
+    schema_poller_enabled: bool = False
     schema_sync_interval_seconds: float = 300.0
     schema_sync_event_driven: bool = True
     schema_cache_file: str = "automation_data/schema_cache.json"
@@ -234,6 +237,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             "automation",
             "new_record_scan_max_trigger_per_run",
         ],
+        "AUTOMATION_SYNC_DELETIONS_ENABLED": ["automation", "sync_deletions_enabled"],
+        "AUTOMATION_SYNC_DELETIONS_MAX_PER_RUN": ["automation", "sync_deletions_max_per_run"],
         "AUTOMATION_POLLER_ENABLED": ["automation", "poller_enabled"],
         "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
         "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
@@ -241,6 +246,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
         "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
         "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
+        "AUTOMATION_SCHEMA_POLLER_ENABLED": ["automation", "schema_poller_enabled"],
         "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],
         "AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN": ["automation", "schema_sync_event_driven"],
         "AUTOMATION_SCHEMA_CACHE_FILE": ["automation", "schema_cache_file"],

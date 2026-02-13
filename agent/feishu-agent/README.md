@@ -103,10 +103,15 @@ MCP_SERVER_BASE=http://localhost:8081
 
 # PostgreSQL 数据库（提醒功能需要）
 POSTGRES_DSN=postgresql://user:pass@localhost:5432/omniagent
+REMINDER_SCHEDULER_ENABLED=false
 
 # 用户身份管理
 USER_IDENTITY_AUTO_MATCH=false
 ```
+
+说明：
+- 默认建议 `REMINDER_SCHEDULER_ENABLED=false`（开发态减少轮询噪音）
+- 只有在同时满足 `REMINDER_SCHEDULER_ENABLED=true` 且配置 `POSTGRES_DSN` 时，Reminder 轮询才会启动
 
 ### 4. 启动服务
 
@@ -123,6 +128,11 @@ python run_dev.py up --all
 # 冲突清理（容器名/历史残留）
 python run_dev.py clean
 
+# 自动化全量补偿同步（新增 + 修改）
+python run_dev.py sync
+
+# 说明：sync 会对 upsert 目标表做删除对账
+
 # 本地单服务模式（仅 Agent）
 python run_server.py
 ```
@@ -130,7 +140,9 @@ python run_server.py
 默认端口：
 - `run_dev.py`（统一开发入口）走 Docker，Agent 暴露 `8080`
 - `run_server.py`（本地单服务模式）监听 `8088`
-- 如需 ngrok 测试回调：统一开发入口用 `ngrok http 8080`，单服务模式用 `ngrok http 8088`
+- 如需固定 `ngrok 8088`：先启动 `python ../../tools/dev/ngrok_mux.py --port 8088`，再执行 `ngrok http 8088`
+  - `/feishu/webhook` -> Agent(8080)
+  - `/feishu/events` -> MCP(8081)
 
 双组织说明：
 - Agent 仅使用组织B机器人凭证（`FEISHU_BOT_*`）

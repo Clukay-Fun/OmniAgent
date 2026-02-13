@@ -59,7 +59,7 @@ def get_schema_poller(settings: Settings) -> SchemaPoller:
     if _schema_poller is None:
         _schema_poller = SchemaPoller(
             service=get_automation_service(settings),
-            enabled=bool(settings.automation.schema_sync_enabled),
+            enabled=bool(settings.automation.schema_sync_enabled and settings.automation.schema_poller_enabled),
             interval_seconds=float(settings.automation.schema_sync_interval_seconds),
         )
     return _schema_poller
@@ -133,7 +133,26 @@ async def automation_scan(
     settings = get_settings()
     service = get_automation_service(settings)
     try:
+        if not str(table_id or "").strip() and not str(app_token or "").strip():
+            return await service.scan_once_all_tables()
         return await service.scan_table(table_id=table_id, app_token=app_token)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FeishuAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/automation/sync")
+async def automation_sync(
+    table_id: str | None = Query(default=None),
+    app_token: str | None = Query(default=None),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    try:
+        if not str(table_id or "").strip() and not str(app_token or "").strip():
+            return await service.sync_once_all_tables()
+        return await service.sync_table(table_id=table_id, app_token=app_token)
     except AutomationValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FeishuAPIError as exc:

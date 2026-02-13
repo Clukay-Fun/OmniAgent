@@ -102,11 +102,12 @@
 - `POST /feishu/events`：事件入口（已实现）
 - `POST /automation/init`：初始化快照（已实现）
 - `POST /automation/scan`：手动补偿扫描（已实现）
+- `POST /automation/sync`：手动全量同步（新增+修改+删除对账）
 
 字段结构同步：
 
 - `drive.file.bitable_field_changed_v1` 到达后立即刷新对应表 schema
-- 后台轮询按 `AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS` 执行全量刷新
+- 后台轮询按 `AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS` 执行全量刷新（需 `AUTOMATION_SCHEMA_POLLER_ENABLED=true`）
 - trigger 字段被删除时，规则仅运行态禁用（不改 `automation_rules.yaml`）
 
 表来源说明：
@@ -133,12 +134,21 @@
 - `AUTOMATION_DEAD_LETTER_FILE`
 - `AUTOMATION_ACTION_MAX_RETRIES`
 - `AUTOMATION_ACTION_RETRY_DELAY_SECONDS`
+- `AUTOMATION_SYNC_DELETIONS_ENABLED`
+- `AUTOMATION_SYNC_DELETIONS_MAX_PER_RUN`
 - `AUTOMATION_SCHEMA_SYNC_ENABLED`
+- `AUTOMATION_SCHEMA_POLLER_ENABLED`
 - `AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS`
 - `AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN`
 - `AUTOMATION_SCHEMA_WEBHOOK_ENABLED`
 - `AUTOMATION_SCHEMA_WEBHOOK_URL`
 - `AUTOMATION_SCHEMA_WEBHOOK_SECRET`
+
+Schema 日志说明：
+
+- 首次基线：写入 `schema_bootstrap`
+- 有差异：写入 `schema_changed` / `schema_policy_applied`
+- 无差异：写入 `schema_refresh_noop`
 
 ## 9. run_logs 单条结构（固定）
 

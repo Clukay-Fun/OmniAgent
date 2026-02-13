@@ -1,6 +1,7 @@
 meta:
   version: "v1.2"
   status: runtime
+  automation_name: "工作台→总览全量同步（新增/修改/删除对账）"
   notes:
     - "当前仅灰度：房怡康工作台 -> 团队成员工作总览"
     - "首次同步：协作类型（必填）!=仅自己 且 已同步到总览=false"

@@ -10,5 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY config.yaml.example ./config.yaml
+COPY automation_rules.yaml ./automation_rules.yaml
 
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8081"]

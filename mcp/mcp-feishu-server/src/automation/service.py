@@ -711,14 +711,239 @@ class AutomationService:
             "mode": "initialized",
         }
 
-    async def scan_table(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _to_scalar_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, dict):
+            for key in ("text", "id", "name"):
+                candidate = value.get(key)
+                if isinstance(candidate, (str, int, float, bool)):
+                    return str(candidate).strip()
+            nested = value.get("value")
+            return AutomationService._to_scalar_text(nested)
+        if isinstance(value, list):
+            for item in value:
+                normalized = AutomationService._to_scalar_text(item)
+                if normalized:
+                    return normalized
+            return ""
+        return str(value).strip()
+
+    def _extract_sync_delete_targets(self, source_table_id: str, source_app_token: str) -> list[dict[str, str]]:
+        rules = self._engine.rule_store.load_enabled_rules(source_table_id, app_token=source_app_token)
+        targets: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+
+        for rule in rules:
+            pipeline = rule.get("pipeline") or {}
+            if not isinstance(pipeline, dict):
+                continue
+            actions = pipeline.get("actions") or []
+            if not isinstance(actions, list):
+                continue
+
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                if str(action.get("type") or "").strip() != "bitable.upsert":
+                    continue
+
+                target_table_id = str(action.get("target_table_id") or "").strip()
+                target_app_token = str(action.get("target_app_token") or source_app_token or "").strip()
+                if not target_table_id or not target_app_token:
+                    continue
+
+                match_fields = action.get("match_fields")
+                if not isinstance(match_fields, dict):
+                    continue
+
+                source_record_field = ""
+                for field_name, template in match_fields.items():
+                    if str(template or "").strip() == "{record_id}":
+                        source_record_field = str(field_name or "").strip()
+                        break
+                if not source_record_field:
+                    continue
+
+                source_table_field = ""
+                for key in ("update_fields", "create_fields"):
+                    mapping = action.get(key)
+                    if not isinstance(mapping, dict):
+                        continue
+                    for field_name, template in mapping.items():
+                        if str(template or "").strip() == "{table_id}":
+                            source_table_field = str(field_name or "").strip()
+                            break
+                    if source_table_field:
+                        break
+
+                dedupe_key = (target_app_token, target_table_id, source_record_field, source_table_field)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                targets.append(
+                    {
+                        "target_app_token": target_app_token,
+                        "target_table_id": target_table_id,
+                        "source_record_field": source_record_field,
+                        "source_table_field": source_table_field,
+                    }
+                )
+
+        return targets
+
+    async def _reconcile_target_deletions(
+        self,
+        *,
+        source_table_id: str,
+        source_app_token: str,
+        source_record_ids: set[str],
+        scan_truncated: bool,
+    ) -> dict[str, Any]:
+        if not bool(self._settings.automation.sync_deletions_enabled):
+            return {"status": "disabled", "deleted": 0, "failed": 0, "targets": []}
+
+        if scan_truncated:
+            return {
+                "status": "skipped",
+                "reason": "scan_truncated",
+                "deleted": 0,
+                "failed": 0,
+                "targets": [],
+            }
+
+        targets = self._extract_sync_delete_targets(source_table_id, source_app_token)
+        if not targets:
+            return {"status": "skipped", "reason": "no_upsert_target", "deleted": 0, "failed": 0, "targets": []}
+
+        page_size = max(1, min(self._settings.automation.scan_page_size, 500))
+        max_pages = max(1, self._settings.automation.max_scan_pages)
+        max_deletes = max(0, int(self._settings.automation.sync_deletions_max_per_run or 0))
+        remaining = max_deletes if max_deletes > 0 else 10_000_000
+
+        deleted = 0
+        failed = 0
+        target_summaries: list[dict[str, Any]] = []
+        delete_limit_hit = False
+
+        for target in targets:
+            if remaining <= 0:
+                delete_limit_hit = True
+                break
+
+            target_app_token = str(target.get("target_app_token") or "").strip()
+            target_table_id = str(target.get("target_table_id") or "").strip()
+            source_record_field = str(target.get("source_record_field") or "").strip()
+            source_table_field = str(target.get("source_table_field") or "").strip()
+            if not target_app_token or not target_table_id or not source_record_field:
+                continue
+
+            target_deleted = 0
+            target_failed = 0
+            page_token = ""
+            pages = 0
+            field_names = [source_record_field]
+            if source_table_field:
+                field_names.append(source_table_field)
+
+            while pages < max_pages:
+                page = await self._list_records_page(
+                    target_app_token,
+                    target_table_id,
+                    page_token,
+                    page_size,
+                    field_names=field_names,
+                )
+                pages += 1
+                items = page.get("items") or []
+                for item in items:
+                    if remaining <= 0:
+                        delete_limit_hit = True
+                        break
+                    if not isinstance(item, dict):
+                        continue
+
+                    target_record_id, fields, _ = self._extract_record_meta(item)
+                    if not target_record_id:
+                        continue
+
+                    source_record_value = self._to_scalar_text(fields.get(source_record_field))
+                    if not source_record_value:
+                        continue
+
+                    if source_table_field:
+                        source_table_value = self._to_scalar_text(fields.get(source_table_field))
+                        if source_table_value and source_table_value != source_table_id:
+                            continue
+
+                    if source_record_value in source_record_ids:
+                        continue
+
+                    try:
+                        await self._client.request(
+                            "DELETE",
+                            (
+                                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}"
+                                f"/records/{target_record_id}"
+                            ),
+                        )
+                        deleted += 1
+                        target_deleted += 1
+                        remaining -= 1
+                    except FeishuAPIError as exc:
+                        failed += 1
+                        target_failed += 1
+                        LOGGER.error("delete sync failed for target record %s: %s", target_record_id, exc)
+                    except Exception as exc:
+                        failed += 1
+                        target_failed += 1
+                        LOGGER.exception("delete sync failed for target record %s: %s", target_record_id, exc)
+
+                if delete_limit_hit:
+                    break
+                if not page.get("has_more"):
+                    break
+                page_token = str(page.get("page_token") or "")
+                if not page_token:
+                    break
+
+            target_summaries.append(
+                {
+                    "target_app_token": target_app_token,
+                    "target_table_id": target_table_id,
+                    "deleted": target_deleted,
+                    "failed": target_failed,
+                }
+            )
+
+        return {
+            "status": "ok",
+            "deleted": deleted,
+            "failed": failed,
+            "delete_limit_hit": delete_limit_hit,
+            "targets": target_summaries,
+        }
+
+    async def scan_table(
+        self,
+        table_id: str | None = None,
+        app_token: str | None = None,
+        *,
+        force_full: bool = False,
+        reconcile_deletions: bool = False,
+    ) -> dict[str, Any]:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
         watch_plan = self._engine.get_watch_plan(resolved_table_id, app_token=resolved_app_token)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
 
-        cursor = self._checkpoint.get(resolved_table_id)
+        cursor = 0 if force_full else self._checkpoint.get(resolved_table_id)
         max_seen_cursor = cursor
         page_token = ""
         page_size = max(1, min(self._settings.automation.scan_page_size, 500))
@@ -732,17 +957,22 @@ class AutomationService:
             "duplicate_business": 0,
             "failed": 0,
             "scanned": 0,
+            "deleted_synced": 0,
+            "delete_failed": 0,
         }
 
         allow_new_record_trigger = bool(self._settings.automation.trigger_on_new_record_scan)
         require_checkpoint = bool(self._settings.automation.trigger_on_new_record_scan_requires_checkpoint)
-        if allow_new_record_trigger and require_checkpoint and cursor <= 0:
+        if not force_full and allow_new_record_trigger and require_checkpoint and cursor <= 0:
             allow_new_record_trigger = False
 
         max_new_record_triggers = max(0, int(self._settings.automation.new_record_scan_max_trigger_per_run or 0))
         new_record_triggered_count = 0
+        source_record_ids: set[str] = set()
+        scan_truncated = False
 
         pages = 0
+        last_page_has_more = False
         while pages < max_pages:
             page = await self._list_records_page(
                 resolved_app_token,
@@ -751,6 +981,7 @@ class AutomationService:
                 page_size,
                 field_names=watch_fields,
             )
+            last_page_has_more = bool(page.get("has_more"))
             pages += 1
             items = page.get("items") or []
 
@@ -761,6 +992,8 @@ class AutomationService:
                 record_id, fields, modified_time = self._extract_record_meta(item)
                 if not record_id:
                     continue
+                if force_full:
+                    source_record_ids.add(record_id)
                 if modified_time and modified_time <= cursor:
                     continue
                 if modified_time > max_seen_cursor:
@@ -818,18 +1051,46 @@ class AutomationService:
             if not page_token:
                 break
 
+        if pages >= max_pages and last_page_has_more:
+            scan_truncated = True
+
         if max_seen_cursor > cursor:
             self._checkpoint.set(resolved_table_id, max_seen_cursor)
 
-        return {
+        deletion_result: dict[str, Any] | None = None
+        if force_full and reconcile_deletions:
+            deletion_result = await self._reconcile_target_deletions(
+                source_table_id=resolved_table_id,
+                source_app_token=resolved_app_token,
+                source_record_ids=source_record_ids,
+                scan_truncated=scan_truncated,
+            )
+            counters["deleted_synced"] = int(deletion_result.get("deleted") or 0)
+            counters["delete_failed"] = int(deletion_result.get("failed") or 0)
+
+        result: dict[str, Any] = {
             "status": "ok",
             "table_id": resolved_table_id,
             "from_cursor": cursor,
             "to_cursor": max_seen_cursor,
             "pages": pages,
             "counters": counters,
-            "mode": "scan",
+            "mode": "sync_scan" if force_full else "scan",
+            "force_full": force_full,
+            "scan_truncated": scan_truncated,
         }
+        if deletion_result is not None:
+            result["deletion_sync"] = deletion_result
+        return result
+
+    async def sync_table(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
+        self._ensure_enabled()
+        return await self.scan_table(
+            table_id=table_id,
+            app_token=app_token,
+            force_full=True,
+            reconcile_deletions=True,
+        )
 
     async def scan_once_all_tables(self) -> dict[str, Any]:
         self._ensure_enabled()
@@ -889,6 +1150,49 @@ class AutomationService:
         return {
             "status": "ok",
             "mode": "poller_scan",
+            "tables": [target.get("table_id") for target in targets],
+            "results": results,
+        }
+
+    async def sync_once_all_tables(self) -> dict[str, Any]:
+        self._ensure_enabled()
+
+        targets = self.get_poll_targets()
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            table_id = str(target.get("table_id") or "").strip()
+            app_token = str(target.get("app_token") or "").strip()
+            if not table_id or not app_token:
+                continue
+
+            try:
+                result = await self.sync_table(table_id=table_id, app_token=app_token)
+                result["app_token"] = app_token
+                results.append(result)
+            except FeishuAPIError as exc:
+                LOGGER.exception("sync scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": str(exc),
+                    }
+                )
+            except Exception as exc:
+                LOGGER.exception("sync scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "status": "ok",
+            "mode": "manual_sync",
             "tables": [target.get("table_id") for target in targets],
             "results": results,
         }

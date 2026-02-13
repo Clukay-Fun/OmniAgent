@@ -2,7 +2,8 @@
 Single-domain path router for ngrok.
 
 Routes:
-- /feishu/webhook -> feishu-agent (default: http://127.0.0.1:8088)
+- /feishu/webhook -> feishu-agent (default: http://127.0.0.1:8080)
+- /feishu/events -> mcp-feishu-server (default: http://127.0.0.1:8081)
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from fastapi.responses import JSONResponse, Response
 import uvicorn
 
 
-WEBHOOK_TARGET = os.getenv("MUX_WEBHOOK_TARGET", "http://127.0.0.1:8088")
+WEBHOOK_TARGET = os.getenv("MUX_WEBHOOK_TARGET", "http://127.0.0.1:8080")
+EVENTS_TARGET = os.getenv("MUX_EVENTS_TARGET", "http://127.0.0.1:8081")
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("MUX_UPSTREAM_TIMEOUT_SECONDS", "2.5"))
 
 logger = logging.getLogger("ngrok_mux")
@@ -59,6 +61,8 @@ def _filter_response_headers(headers: Iterable[tuple[bytes, bytes]]) -> dict[str
 def _pick_target(path: str) -> str | None:
     if path.startswith("/feishu/webhook"):
         return WEBHOOK_TARGET
+    if path.startswith("/feishu/events"):
+        return EVENTS_TARGET
     return None
 
 
@@ -81,6 +85,7 @@ async def proxy(path: str, request: Request) -> Response:
                 "path": raw_path,
                 "routes": {
                     "/feishu/webhook": WEBHOOK_TARGET,
+                    "/feishu/events": EVENTS_TARGET,
                 },
             },
             status_code=404,
@@ -128,7 +133,7 @@ async def proxy(path: str, request: Request) -> Response:
 def main() -> None:
     parser = argparse.ArgumentParser(description="ngrok single-domain path mux")
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8090)
+    parser.add_argument("--port", type=int, default=8088)
     args = parser.parse_args()
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
