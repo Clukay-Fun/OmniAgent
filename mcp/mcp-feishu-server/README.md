@@ -113,11 +113,14 @@ AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=false
 ### 4. 启动服务
 
 ```bash
-# 统一开发入口（推荐，启动 MCP + Agent）
-python ../../agent/feishu-agent/run_dev.py up
-
-# 在 MCP 目录下的代理入口（等价）
+# 统一开发入口（推荐，当前目录代理）
 python run_dev.py up
+
+# 一键拉起全部（含 monitoring + db）
+python run_dev.py up --all
+
+# 冲突清理（容器名/历史残留）
+python run_dev.py clean
 
 # MCP 单服务模式
 python run_server.py

@@ -111,8 +111,17 @@ USER_IDENTITY_AUTO_MATCH=false
 ### 4. 启动服务
 
 ```bash
-# 统一开发入口（推荐，从仓库任意目录都可执行）
-python run_dev.py
+# 统一开发入口（推荐，当前目录）
+python run_dev.py up
+
+# 或从仓库根目录执行
+# python run_dev.py up
+
+# 一键拉起全部（含 monitoring + db）
+python run_dev.py up --all
+
+# 冲突清理（容器名/历史残留）
+python run_dev.py clean
 
 # 本地单服务模式（仅 Agent）
 python run_server.py

@@ -16,15 +16,19 @@
 ### 2) 统一开发入口（推荐）
 
 ```bash
-python agent/feishu-agent/run_dev.py up
+python run_dev.py up
 ```
 
 常用命令：
 
 ```bash
-python agent/feishu-agent/run_dev.py logs --follow
-python agent/feishu-agent/run_dev.py ps
-python agent/feishu-agent/run_dev.py down
+python run_dev.py logs --follow
+python run_dev.py ps
+python run_dev.py down
+python run_dev.py clean
+
+# 一键拉起全部（含 monitoring + db）
+python run_dev.py up --all
 ```
 
 ### 3) 本地验证

@@ -52,16 +52,22 @@ OmniAgent/
 统一开发入口（推荐）：
 
 ```bash
-python agent/feishu-agent/run_dev.py up
+python run_dev.py up
 ```
 
 常用操作：
 
 ```bash
-python agent/feishu-agent/run_dev.py logs --follow
-python agent/feishu-agent/run_dev.py ps
-python agent/feishu-agent/run_dev.py down
+python run_dev.py logs --follow
+python run_dev.py ps
+python run_dev.py down
+python run_dev.py clean
+
+# 一键拉起全部（MCP + Agent + Monitoring + DB）
+python run_dev.py up --all
 ```
+
+容器名冲突或历史残留时，先执行 `python run_dev.py clean` 再 `up`。
 
 默认端口：
 
