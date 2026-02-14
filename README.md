@@ -64,6 +64,7 @@ python run_dev.py down
 python run_dev.py clean
 python run_dev.py refresh-schema
 python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
+python run_dev.py auth-health
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 

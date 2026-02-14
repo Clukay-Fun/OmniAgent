@@ -1,12 +1,60 @@
+# ============================================
+# region 元数据
+# ============================================
 meta:
-  version: "v1.2"
+  version: "v1.3"
   status: runtime
   automation_name: "工作台→总览全量同步（新增/修改/删除对账）"
+  description: "源=各工作台多维表格, 目标=团队成员工作总览, 支持首次同步与增量更新"
   notes:
     - "当前仅灰度：房怡康工作台 -> 团队成员工作总览"
     - "首次同步：协作类型（必填）!=仅自己 且 已同步到总览=false"
     - "后续同步：已同步到总览=true 且业务字段变更"
+# endregion
+# ============================================
 
+# ============================================
+# region 锚点定义 (Anchors) — 消除规则间的重复配置
+# ============================================
+anchors:
+  # --- 源表：房怡康工作台 ---
+  source_table_fyk: &source_table_fyk
+    table_id: tblnKgT7iNOQwN7J
+    app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+
+  # --- 目标表：团队成员工作总览 ---
+  target_overview: &target_overview
+    target_table_id: tblDM7BJ8nMoIZzV
+    target_app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+
+  # --- 协作类型白名单 ---
+  collab_whitelist: &collab_whitelist
+    in: [需要协助, 分派给他人, 团队共享]
+
+  # --- 通用字段映射（源→总览）---
+  common_update_fields: &common_update_fields
+    源记录ID: "{record_id}"
+    源表ID: "{table_id}"
+    任务描述: "{任务描述}"
+    任务类型: "{任务类型}"
+    重要紧急程度: "{重要紧急程度}"
+    任务状态: "{任务状态}"
+    进度: "{进度}"
+    发起人: "{发起人}"
+    请求协助人: "{协助人}"
+    附件: "{附件}"
+    关联案件项目: "{关联案件项目}"
+    创建时间: "{创建时间}"
+    截止时间: "{截止时间}"
+    完成时间: "{完成时间}"
+    父记录 2: "{父记录 2}"
+    是否截止: "{是否截止}"
+# endregion
+# ============================================
+
+# ============================================
+# region 监听字段 — 用于 poller 精确过滤变更，引擎也会从模板自动推导
+# ============================================
 watched_fields:
   tblnKgT7iNOQwN7J:
     - 记录ID
@@ -26,21 +74,28 @@ watched_fields:
     - 父记录 2
     - 是否截止
     - 已同步到总览
+# endregion
+# ============================================
 
+# ============================================
+# region 规则列表
+# ============================================
 rules:
+  # ------------------------------------------
+  # R_WORKBENCH_CREATE_FYK — 首次同步
+  # ------------------------------------------
   - rule_id: R_WORKBENCH_CREATE_FYK
+    group: "FYK_WORKBENCH"
     name: "房怡康工作台-首次同步到总览"
+    description: "协作类型!=仅自己 且 未同步到总览 → 创建/更新总览记录并标记已同步"
     enabled: true
     priority: 120
-    table:
-      table_id: tblnKgT7iNOQwN7J
-      app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+    table: *source_table_fyk
 
     trigger:
       all:
         - field: 协作类型（必填）
-          condition:
-            in: [需要协助, 分派给他人, 团队共享]
+          condition: *collab_whitelist
         - field: 已同步到总览
           condition:
             in: [false, null]
@@ -48,28 +103,11 @@ rules:
     pipeline:
       actions:
         - type: bitable.upsert
-          target_table_id: tblDM7BJ8nMoIZzV
-          target_app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+          <<: *target_overview
           update_all_matches: true
           match_fields:
             源记录ID: "{record_id}"
-          update_fields:
-            源记录ID: "{record_id}"
-            源表ID: "{table_id}"
-            任务描述: "{任务描述}"
-            任务类型: "{任务类型}"
-            重要紧急程度: "{重要紧急程度}"
-            任务状态: "{任务状态}"
-            进度: "{进度}"
-            发起人: "{发起人}"
-            请求协助人: "{协助人}"
-            附件: "{附件}"
-            关联案件项目: "{关联案件项目}"
-            创建时间: "{创建时间}"
-            截止时间: "{截止时间}"
-            完成时间: "{完成时间}"
-            父记录 2: "{父记录 2}"
-            是否截止: "{是否截止}"
+          update_fields: *common_update_fields
         - type: bitable.update
           fields:
             已同步到总览: true
@@ -77,13 +115,16 @@ rules:
           level: info
           message: "首次同步成功：{record_id} -> 总览"
 
+  # ------------------------------------------
+  # R_WORKBENCH_UPDATE_FYK — 增量更新
+  # ------------------------------------------
   - rule_id: R_WORKBENCH_UPDATE_FYK
+    group: "FYK_WORKBENCH"
     name: "房怡康工作台-已同步记录更新总览"
+    description: "已同步记录的业务字段变更 → 同步更新总览对应行"
     enabled: true
     priority: 110
-    table:
-      table_id: tblnKgT7iNOQwN7J
-      app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+    table: *source_table_fyk
 
     trigger:
       all:
@@ -93,34 +134,18 @@ rules:
           condition:
             equals: true
         - field: 协作类型（必填）
-          condition:
-            in: [需要协助, 分派给他人, 团队共享]
+          condition: *collab_whitelist
 
     pipeline:
       actions:
         - type: bitable.upsert
-          target_table_id: tblDM7BJ8nMoIZzV
-          target_app_token: OOvBbsaxtaKRwzsofiPcHNArn1d
+          <<: *target_overview
           update_all_matches: true
           match_fields:
             源记录ID: "{record_id}"
-          update_fields:
-            源记录ID: "{record_id}"
-            源表ID: "{table_id}"
-            任务描述: "{任务描述}"
-            任务类型: "{任务类型}"
-            重要紧急程度: "{重要紧急程度}"
-            任务状态: "{任务状态}"
-            进度: "{进度}"
-            发起人: "{发起人}"
-            请求协助人: "{协助人}"
-            附件: "{附件}"
-            关联案件项目: "{关联案件项目}"
-            创建时间: "{创建时间}"
-            截止时间: "{截止时间}"
-            完成时间: "{完成时间}"
-            父记录 2: "{父记录 2}"
-            是否截止: "{是否截止}"
+          update_fields: *common_update_fields
         - type: log.write
           level: info
           message: "更新同步成功：{record_id} -> 总览"
+# endregion
+# ============================================

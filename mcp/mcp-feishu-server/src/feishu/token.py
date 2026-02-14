@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 import httpx
 
@@ -49,6 +50,18 @@ class TenantAccessTokenManager:
             self._expires_at = now + expires_in
             return token
 
+    async def cache_snapshot(self) -> dict[str, int | bool]:
+        """返回 token 缓存状态快照。"""
+        async with self._lock:
+            now = time.time()
+            expires_in_seconds = 0
+            if self._token and self._expires_at > now:
+                expires_in_seconds = max(0, int(self._expires_at - now))
+            return {
+                "cached": bool(self._token),
+                "expires_in_seconds": expires_in_seconds,
+            }
+
     async def _fetch_token(self) -> tuple[str, int]:
         """请求飞书接口获取新 Token"""
         if not self._settings.feishu.app_id or not self._settings.feishu.app_secret:
@@ -60,13 +73,37 @@ class TenantAccessTokenManager:
             "app_secret": self._settings.feishu.app_secret,
         }
 
-        async with httpx.AsyncClient(
-            timeout=self._settings.feishu.request.timeout,
-            trust_env=False,
-        ) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        retries = max(0, int(self._settings.feishu.request.max_retries))
+        delay = max(0.0, float(self._settings.feishu.request.retry_delay))
+        timeout = self._settings.feishu.request.timeout
+
+        data: dict[str, Any] = {}
+        fetched = False
+        for attempt in range(retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    raw_data = response.json()
+                    if not isinstance(raw_data, dict):
+                        raise FeishuAuthError("Invalid tenant token response")
+                    data = raw_data
+                    fetched = True
+                break
+            except (httpx.HTTPError, ValueError) as exc:
+                if attempt >= retries:
+                    error_message = str(exc).strip()
+                    if error_message:
+                        raise FeishuAuthError(
+                            f"Failed to fetch tenant token: {exc.__class__.__name__}: {error_message}"
+                        ) from exc
+                    raise FeishuAuthError(
+                        f"Failed to fetch tenant token: {exc.__class__.__name__}"
+                    ) from exc
+                await asyncio.sleep(delay * (2 ** attempt))
+
+        if not fetched:
+            raise FeishuAuthError("Failed to fetch tenant token")
 
         if data.get("code") != 0:
             raise FeishuAuthError(data.get("msg") or "Failed to fetch tenant token")

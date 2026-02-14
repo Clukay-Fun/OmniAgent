@@ -127,6 +127,9 @@ python run_dev.py clean
 python run_dev.py refresh-schema
 python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
 
+# 鉴权健康检查（排查 token/网络）
+python run_dev.py auth-health
+
 # 手动补偿扫描（验证新增记录是否触发同步）
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
@@ -191,6 +194,7 @@ python run_server.py
 | `/automation/scan` | POST | 手动补偿扫描 |
 | `/automation/sync` | POST | 手动全量同步（新增+修改+删除对账） |
 | `/automation/schema/refresh` | POST | 手动刷新表结构（支持全量/单表，支持风险演练） |
+| `/automation/auth/health` | GET | 鉴权健康检查（token 获取与网络连通性） |
 
 ### 示例请求
 
@@ -219,6 +223,9 @@ curl -X POST http://localhost:8081/automation/schema/refresh
 
 # 手动全量同步（新增+修改+删除对账）
 curl -X POST http://localhost:8081/automation/sync
+
+# 鉴权健康检查（token + 网络）
+curl http://localhost:8081/automation/auth/health
 
 # 手动刷新单表 schema
 curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx"

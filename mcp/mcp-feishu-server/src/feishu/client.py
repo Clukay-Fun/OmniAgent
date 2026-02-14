@@ -48,6 +48,45 @@ class FeishuClient:
         self._settings = settings
         self._token_manager = TenantAccessTokenManager(settings)
 
+    @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return f"{exc.__class__.__name__}: {message}"
+        return exc.__class__.__name__
+
+    @staticmethod
+    def _to_int(value: Any, default: int) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float, str)):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+        return default
+
+    async def auth_health(self) -> dict[str, Any]:
+        """执行鉴权健康检查并返回可读诊断信息。"""
+        try:
+            token = await self._token_manager.get_token()
+            snapshot = await self._token_manager.cache_snapshot()
+            raw_expires = snapshot.get("expires_in_seconds", 0)
+            expires_in_seconds = int(raw_expires) if isinstance(raw_expires, (int, float, bool)) else 0
+            return {
+                "status": "ok",
+                "auth": "healthy",
+                "token_prefix": f"{token[:6]}***" if token else "",
+                "token_cached": bool(snapshot.get("cached")),
+                "token_expires_in_seconds": expires_in_seconds,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "auth": "unreachable",
+                "error": self._format_exception(exc),
+            }
+
     async def request(
         self,
         method: str,
@@ -105,7 +144,7 @@ class FeishuClient:
                     message = payload.get("msg") or payload.get("message")
                     if code is not None:
                         raise FeishuAPIError(
-                            code=int(code),
+                            code=self._to_int(code, response.status_code),
                             message=message or f"HTTP {response.status_code}",
                             detail=payload,
                         )
@@ -115,9 +154,10 @@ class FeishuClient:
                         detail=payload or response.text,
                     )
 
-                if payload.get("code") not in (0, None):
+                payload_code = payload.get("code")
+                if payload_code not in (0, None):
                     raise FeishuAPIError(
-                        code=int(payload.get("code")),
+                        code=self._to_int(payload_code, 500),
                         message=payload.get("msg") or "Feishu API error",
                         detail=payload,
                     )

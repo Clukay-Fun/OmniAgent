@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from string import Formatter
@@ -136,6 +137,71 @@ class RuleStore:
             return {}
         return parsed
 
+    @staticmethod
+    def _collect_defaults(parsed: dict[str, Any]) -> dict[str, Any]:
+        defaults: dict[str, Any] = {}
+        global_defaults = parsed.get("global")
+        if isinstance(global_defaults, dict):
+            defaults.update(global_defaults)
+        explicit_defaults = parsed.get("defaults")
+        if isinstance(explicit_defaults, dict):
+            defaults.update(explicit_defaults)
+        return defaults
+
+    @staticmethod
+    def _apply_defaults_to_rule(rule: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+        if not defaults:
+            return dict(rule)
+
+        resolved = copy.deepcopy(rule)
+
+        default_source_app_token = str(
+            defaults.get("source_app_token")
+            or defaults.get("default_app_token")
+            or defaults.get("app_token")
+            or ""
+        ).strip()
+        default_source_table_id = str(
+            defaults.get("source_table_id")
+            or defaults.get("default_table_id")
+            or defaults.get("table_id")
+            or ""
+        ).strip()
+
+        rule_table = resolved.get("table")
+        if not isinstance(rule_table, dict):
+            rule_table = {}
+        if default_source_app_token and not str(rule_table.get("app_token") or "").strip():
+            rule_table["app_token"] = default_source_app_token
+        if default_source_table_id and not str(rule_table.get("table_id") or "").strip():
+            rule_table["table_id"] = default_source_table_id
+        if rule_table:
+            resolved["table"] = rule_table
+
+        default_target_app_token = str(
+            defaults.get("target_app_token") or default_source_app_token or ""
+        ).strip()
+        default_target_table_id = str(defaults.get("target_table_id") or "").strip()
+
+        pipeline = resolved.get("pipeline")
+        if isinstance(pipeline, dict):
+            for key in ("before_actions", "actions", "success_actions", "error_actions"):
+                actions = pipeline.get(key)
+                if not isinstance(actions, list):
+                    continue
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    action_type = str(action.get("type") or "").strip()
+                    if action_type != "bitable.upsert":
+                        continue
+                    if default_target_app_token and not str(action.get("target_app_token") or "").strip():
+                        action["target_app_token"] = default_target_app_token
+                    if default_target_table_id and not str(action.get("target_table_id") or "").strip():
+                        action["target_table_id"] = default_target_table_id
+
+        return resolved
+
     def load_enabled_rules(self, table_id: str, app_token: str = "") -> list[dict[str, Any]]:
         disabled_ids = self._disabled_rule_ids()
         enabled_rules: list[dict[str, Any]] = []
@@ -164,6 +230,7 @@ class RuleStore:
 
     def load_all_enabled_rules(self) -> list[dict[str, Any]]:
         parsed = self._load_raw()
+        defaults = self._collect_defaults(parsed)
         rules = parsed.get("rules")
         if not isinstance(rules, list):
             return []
@@ -174,15 +241,16 @@ class RuleStore:
                 continue
             if not bool(rule.get("enabled")):
                 continue
-            enabled_rules.append(rule)
+            enabled_rules.append(self._apply_defaults_to_rule(rule, defaults))
         return enabled_rules
 
     def load_all_rules(self) -> list[dict[str, Any]]:
         parsed = self._load_raw()
+        defaults = self._collect_defaults(parsed)
         rules = parsed.get("rules")
         if not isinstance(rules, list):
             return []
-        return [rule for rule in rules if isinstance(rule, dict)]
+        return [self._apply_defaults_to_rule(rule, defaults) for rule in rules if isinstance(rule, dict)]
 
     def _manual_watch_fields(self, table_id: str) -> set[str]:
         parsed = self._load_raw()

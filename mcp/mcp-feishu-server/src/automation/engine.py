@@ -163,6 +163,7 @@ class AutomationEngine:
         *,
         event_id: str,
         rule_id: str | None,
+        group: str | None,
         record_id: str,
         table_id: str,
         trigger_field: str | None,
@@ -184,6 +185,7 @@ class AutomationEngine:
             {
                 "event_id": event_id,
                 "rule_id": rule_id,
+                "group": group,
                 "record_id": record_id,
                 "table_id": table_id,
                 "trigger_field": trigger_field,
@@ -227,6 +229,7 @@ class AutomationEngine:
         all_action_results: list[dict[str, Any]] = []
         started_at = time.perf_counter()
         trigger_field, changed = self._extract_trigger_change(rule, context.get("diff") or {})
+        group = str(rule.get("group") or "").strip() or None
         try:
             all_action_results.extend(
                 await self._executor.run_actions(before_actions, context, app_token, table_id, record_id)
@@ -244,6 +247,7 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=str(context.get("event_id") or ""),
                 rule_id=str(rule.get("rule_id") or "") or None,
+                group=group,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=trigger_field,
@@ -292,6 +296,7 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=str(context.get("event_id") or ""),
                 rule_id=str(rule.get("rule_id") or "") or None,
+                group=group,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=trigger_field,
@@ -374,6 +379,7 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=event_id,
                 rule_id=None,
+                group=None,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=None,

@@ -87,6 +87,28 @@ class AgentOrchestrator:
         self._sessions = session_manager
         self._mcp = mcp_client
         self._llm = llm_client
+
+        # ============================================
+        # region 任务模型初始化（意图识别/工具调用专用）
+        # ============================================
+        if settings.task_llm.enabled and settings.task_llm.api_key:
+            from src.config import LLMSettings as _LLMSettings
+            _task_llm_cfg = _LLMSettings(
+                provider=settings.task_llm.provider,
+                model=settings.task_llm.model,
+                api_key=settings.task_llm.api_key,
+                api_base=settings.task_llm.api_base,
+                temperature=settings.task_llm.temperature,
+                max_tokens=settings.task_llm.max_tokens,
+                timeout=settings.task_llm.timeout,
+            )
+            self._task_llm = LLMClient(_task_llm_cfg)
+            logger.info("Task LLM enabled: %s", settings.task_llm.model)
+        else:
+            self._task_llm = self._llm
+            logger.info("Task LLM disabled, using default LLM for all")
+        # endregion
+        # ============================================
         
         self._skills_config_path = skills_config_path
 
@@ -117,7 +139,7 @@ class AgentOrchestrator:
         # 初始化意图解析器
         self._intent_parser = IntentParser(
             skills_config=self._skills_config,
-            llm_client=llm_client,
+            llm_client=self._task_llm,
         )
         
         # 初始化技能路由器
@@ -159,7 +181,7 @@ class AgentOrchestrator:
             str(planner_cfg.get("scenarios_dir", "config/scenarios")),
         )
         self._planner = PlannerEngine(
-            llm_client=self._llm,
+            llm_client=self._task_llm,
             scenarios_dir=scenarios_dir,
             enabled=planner_enabled,
         )
@@ -173,7 +195,7 @@ class AgentOrchestrator:
             QuerySkill(
                 mcp_client=self._mcp,
                 settings=self._settings,
-                llm_client=self._llm,
+                llm_client=self._task_llm,
                 skills_config=self._skills_config,
             ),
             CreateSkill(

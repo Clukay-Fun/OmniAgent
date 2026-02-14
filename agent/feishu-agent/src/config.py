@@ -86,6 +86,23 @@ class LLMSettings(BaseModel):
     fallback: LLMFallbackSettings = Field(default_factory=LLMFallbackSettings)
 
 
+# ============================================
+# region 任务模型配置
+# ============================================
+class TaskLLMSettings(BaseModel):
+    """任务模型配置（意图识别/工具调用专用）"""
+    enabled: bool = False
+    provider: str = "minimax"
+    model: str = "MiniMax-M2.5"
+    api_key: str = ""
+    api_base: str | None = None
+    temperature: float = 0.1
+    max_tokens: int = 1000
+    timeout: int = 30
+# endregion
+# ============================================
+
+
 class PromptSettings(BaseModel):
     role: str = ""
     capabilities: str = ""
@@ -261,6 +278,7 @@ class Settings(BaseModel):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     reminder_scheduler_enabled: bool = False
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    task_llm: TaskLLMSettings = Field(default_factory=TaskLLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     user: UserSettings = Field(default_factory=UserSettings)
     hearing_reminder: HearingReminderSettings = Field(default_factory=HearingReminderSettings)
@@ -337,6 +355,10 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "LLM_API_KEY": ["llm", "api_key"],
         "LLM_API_BASE": ["llm", "api_base"],
         "LLM_FALLBACK_API_KEY": ["llm", "fallback", "api_key"],
+        "TASK_LLM_ENABLED": ["task_llm", "enabled"],
+        "TASK_LLM_MODEL": ["task_llm", "model"],
+        "TASK_LLM_API_KEY": ["task_llm", "api_key"],
+        "TASK_LLM_API_BASE": ["task_llm", "api_base"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

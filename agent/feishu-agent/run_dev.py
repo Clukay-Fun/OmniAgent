@@ -152,6 +152,32 @@ def _scan_automation(endpoint: str, table_id: str, app_token: str, route: str = 
         return 1
 
 
+def _auth_health(endpoint: str) -> int:
+    """调用 MCP 鉴权健康检查接口。"""
+    base = endpoint.rstrip("/")
+    url = f"{base}/automation/auth/health"
+
+    request = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = response.read().decode("utf-8")
+            parsed = json.loads(body)
+            print(json.dumps(parsed, ensure_ascii=False, indent=2))
+            if str(parsed.get("status") or "") != "ok":
+                return 1
+            result = parsed.get("result")
+            if isinstance(result, dict) and str(result.get("status") or "") != "ok":
+                return 1
+        return 0
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="ignore")
+        print(f"[error] auth health failed: HTTP {exc.code} {payload}")
+        return 1
+    except Exception as exc:
+        print(f"[error] auth health failed: {exc}")
+        return 1
+
+
 def _parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(description="OmniAgent 开发栈统一入口")
@@ -159,7 +185,18 @@ def _parse_args() -> argparse.Namespace:
         "action",
         nargs="?",
         default="up",
-        choices=["up", "down", "restart", "logs", "ps", "clean", "refresh-schema", "scan", "sync"],
+        choices=[
+            "up",
+            "down",
+            "restart",
+            "logs",
+            "ps",
+            "clean",
+            "refresh-schema",
+            "scan",
+            "sync",
+            "auth-health",
+        ],
         help="执行动作，默认 up",
     )
     parser.add_argument("--build", action="store_true", help="up/restart 时强制重建镜像")
@@ -237,6 +274,9 @@ def main() -> int:
             app_token=app_token,
             route=route,
         )
+
+    if action == "auth-health":
+        return _auth_health(endpoint=str(args.endpoint))
 
     if action == "logs":
         cmd = [*base, *profile_flags, "logs"]

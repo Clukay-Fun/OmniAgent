@@ -139,6 +139,13 @@ class AutomationService:
         if not self._settings.automation.enabled:
             raise AutomationValidationError("automation is disabled, set automation.enabled=true")
 
+    @staticmethod
+    def _format_error(exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return message
+        return exc.__class__.__name__
+
     def _verify_token(self, token: str | None) -> None:
         expected = str(self._settings.automation.verification_token or "").strip()
         if not expected:
@@ -600,7 +607,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
             except Exception as exc:
@@ -610,7 +617,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
 
@@ -1133,7 +1140,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
             except Exception as exc:
@@ -1143,7 +1150,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
 
@@ -1176,7 +1183,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
             except Exception as exc:
@@ -1186,7 +1193,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
 

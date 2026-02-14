@@ -103,6 +103,7 @@
 - `POST /automation/init`：初始化快照（已实现）
 - `POST /automation/scan`：手动补偿扫描（已实现）
 - `POST /automation/sync`：手动全量同步（新增+修改+删除对账）
+- `GET /automation/auth/health`：鉴权健康检查（token 获取与网络连通性）
 
 字段结构同步：
 

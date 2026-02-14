@@ -205,3 +205,16 @@ async def automation_schema_refresh(
         raise HTTPException(status_code=400, detail=str(exc))
     except FeishuAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/automation/auth/health")
+async def automation_auth_health() -> dict[str, Any]:
+    settings = get_settings()
+    client = get_feishu_client(settings)
+    result = await client.auth_health()
+    return {
+        "status": result.get("status"),
+        "result": result,
+        "automation_enabled": bool(settings.automation.enabled),
+        "api_base": str(settings.feishu.api_base or ""),
+    }
