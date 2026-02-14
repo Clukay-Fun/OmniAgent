@@ -664,7 +664,7 @@ class AgentOrchestrator:
         result_data: dict[str, Any],
         extra: dict[str, Any],
     ) -> None:
-        """写入对话日志与用户记忆（长期记忆 + 自动事件）"""
+        """写入对话日志与用户记忆（长期记忆 + 自动事件 + 偏好提取）"""
         try:
             self._memory_manager.append_daily_log(user_id, f"用户: {user_text}")
             self._memory_manager.append_daily_log(user_id, f"助手({skill_name}): {reply_text}")
@@ -676,7 +676,21 @@ class AgentOrchestrator:
             if remembered:
                 self._memory_manager.remember_user(user_id, remembered)
         except Exception:
-            return
+            pass
+
+        # ============================================
+        # region 自动偏好提取
+        # ============================================
+        try:
+            if self._has_preference_signal(user_text):
+                pref = self._extract_preference(user_text)
+                if pref:
+                    self._memory_manager.remember_user(user_id, f"[偏好] {pref}")
+                    logger.info("Auto-preference captured for %s: %s", user_id, pref)
+        except Exception:
+            pass
+        # endregion
+        # ============================================
 
         self._record_event(user_id, skill_name, result_data, extra)
 
@@ -689,6 +703,46 @@ class AgentOrchestrator:
                 content = content.strip("，。！？：； ")
                 return content or None
         return None
+
+    # ============================================
+    # region 偏好信号检测与提取
+    # ============================================
+    _PREFERENCE_SIGNALS: list[tuple[str, str]] = [
+        # (关键词/短语, 对应偏好描述)
+        ("太长了", "偏好简洁回复"),
+        ("简单点", "偏好简洁回复"),
+        ("简短", "偏好简洁回复"),
+        ("别啰嗦", "偏好简洁回复"),
+        ("详细点", "偏好详细回复"),
+        ("详细说", "偏好详细回复"),
+        ("展开说", "偏好详细回复"),
+        ("多说点", "偏好详细回复"),
+        ("别加emoji", "不喜欢 emoji"),
+        ("不要emoji", "不喜欢 emoji"),
+        ("不要表情", "不喜欢 emoji"),
+        ("加点表情", "喜欢 emoji 装饰"),
+        ("说中文", "偏好中文回复"),
+        ("用英文", "偏好英文回复"),
+        ("每次都问", "希望减少重复确认"),
+        ("不用确认", "希望跳过二次确认"),
+        ("默认查", "常用默认表查询"),
+    ]
+
+    def _has_preference_signal(self, text: str) -> bool:
+        """零成本关键词检测：用户文本是否包含偏好信号"""
+        text_lower = text.lower()
+        return any(signal in text_lower for signal, _ in self._PREFERENCE_SIGNALS)
+
+    def _extract_preference(self, text: str) -> str | None:
+        """从用户文本中提取偏好描述（规则匹配，无需 LLM）"""
+        text_lower = text.lower()
+        matched: list[str] = []
+        for signal, pref in self._PREFERENCE_SIGNALS:
+            if signal in text_lower and pref not in matched:
+                matched.append(pref)
+        return "；".join(matched) if matched else None
+    # endregion
+    # ============================================
 
     def _record_event(
         self,

@@ -14,6 +14,7 @@ from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ class CreateSkill(BaseSkill):
                     success=False,
                     skill_name=self.name,
                     message=result.get("error", "创建失败"),
-                    reply_text="创建记录失败，请稍后重试。",
+                    reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
                 )
             
             record_url = result.get("record_url", "")
@@ -152,8 +153,9 @@ class CreateSkill(BaseSkill):
             # 格式化已创建的字段
             fields_text = "\n".join([f"• {k}：{v}" for k, v in fields.items()])
             
+            opener = pool.pick("create_success", "✅ 创建成功！")
             reply_text = (
-                f"✅ 案件记录已创建！\n\n"
+                f"{opener}\n\n"
                 f"{fields_text}\n\n"
             )
             if record_url:
@@ -179,7 +181,7 @@ class CreateSkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message=str(e),
-                reply_text="创建记录失败，请稍后重试。",
+                reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
             )
 
     def _parse_fields(self, query: str) -> dict[str, Any]:

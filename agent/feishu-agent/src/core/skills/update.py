@@ -12,6 +12,7 @@ from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -178,9 +179,10 @@ class UpdateSkill(BaseSkill):
             updated_fields = result.get("fields", {})
             
             # 构建回复
+            opener = pool.pick("update_success", "✅ 更新成功！")
             field_list = "\n".join([f"  • {k}: {v}" for k, v in fields.items()])
             reply_text = (
-                f"✅ 更新成功！\n\n"
+                f"{opener}\n\n"
                 f"已更新字段：\n{field_list}\n\n"
                 f"🔗 查看详情：{record_url}"
             )
@@ -205,7 +207,7 @@ class UpdateSkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message=str(e),
-                reply_text="更新失败，请稍后重试。",
+                reply_text=pool.pick("error", "更新失败，请稍后重试。"),
             )
     
     def _parse_update_fields(self, query: str) -> dict[str, Any]:

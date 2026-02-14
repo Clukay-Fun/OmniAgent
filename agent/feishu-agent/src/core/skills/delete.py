@@ -13,6 +13,7 @@ from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class DeleteSkill(BaseSkill):
                     reply_text=f"删除失败：{error}",
                 )
             
-            reply_text = f"✅ 已成功删除案件：{case_no}"
+            reply_text = f"{pool.pick('delete_success', '✅ 已删除')}\n案件：{case_no}"
             
             return SkillResult(
                 success=True,
@@ -252,7 +253,7 @@ class DeleteSkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message=str(e),
-                reply_text="删除失败，请稍后重试。",
+                reply_text=pool.pick("error", "删除失败，请稍后重试。"),
             )
     
     def _is_confirmation(self, query: str) -> bool:
