@@ -17,6 +17,9 @@
 - ✅ Prometheus 指标输出
 - ✅ 配置热更新（skills/prompts）
 - ✅ 本地技能市场动态加载
+- ✅ **多模型路由**（任务模型 + 对话模型分离）
+- ✅ **人格化回复**（模板随机池 + 时间感知问候 + 柔性拒绝）
+- ✅ **回复模板外置**（`config/responses.yaml` 集中管理）
 
 ---
 
@@ -27,18 +30,25 @@ flowchart LR
     Feishu[Feishu 用户/客户端] --> Webhook[Webhook /feishu/webhook]
     Webhook --> Orchestrator[AgentOrchestrator]
     Orchestrator --> Intent[IntentParser]
+    Orchestrator --> Planner[PlannerEngine]
     Orchestrator --> Router[SkillRouter]
     Router --> Query[QuerySkill]
     Router --> Summary[SummarySkill]
     Router --> Reminder[ReminderSkill]
     Router --> Chitchat[ChitchatSkill]
+    Intent --> TaskLLM["Task LLM\n(MiniMax M2.5)"]
+    Planner --> TaskLLM
+    Query --> TaskLLM
     Query --> MCP[MCP Feishu Server]
-    Summary --> LLM[LLM Client]
-    Chitchat --> LLM
+    Summary --> ChatLLM["Chat LLM\n(Qwen3-8B)"]
+    Chitchat --> ChatLLM
     Reminder --> DB[(PostgreSQL)]
     Scheduler[ReminderScheduler] --> DB
     Scheduler --> FeishuAPI[Feishu API 发送]
     Orchestrator --> FeishuAPI
+
+    style TaskLLM fill:#e8d44d,color:#000
+    style ChatLLM fill:#4da6e8,color:#fff
 ```
 
 ## 📊 数据流图
@@ -66,6 +76,48 @@ sequenceDiagram
     S-->>O: SkillResult
     O->>F: 发送回复
 ```
+
+---
+
+## 🧠 多模型路由
+
+采用**单 Agent + 多模型**策略，按任务类型路由到不同 LLM，兼顾准确率和成本：
+
+| 模型角色 | 模型 | 用途 | 计费 |
+|----------|------|------|------|
+| **Task LLM** | MiniMax M2.5 | 意图识别、工具参数提取、表名匹配 | 按量付费 |
+| **Chat LLM** | Qwen3-8B | 闲聊、摘要、自由对话 | 免费 |
+
+路由逻辑（`orchestrator.py`）：
+- `IntentParser` → Task LLM
+- `PlannerEngine` → Task LLM
+- `QuerySkill._llm_pick_table` → Task LLM
+- `ChitchatSkill` / `SummarySkill` → Chat LLM
+
+启用方式：在 `config.yaml` 中配置 `task_llm` 段或设置环境变量：
+
+```env
+TASK_LLM_ENABLED=true
+TASK_LLM_MODEL=MiniMax-M2.5
+TASK_LLM_API_KEY=your-api-key
+TASK_LLM_API_BASE=https://api.minimax.chat/v1
+```
+
+> 未启用时所有环节共享主 LLM，行为不变（零影响）。
+
+## 🎭 人格化回复
+
+通过**模板随机池 + 时间感知**提升交互自然度：
+
+| 特性 | 说明 |
+|------|------|
+| 随机池 | 每种回复类型配多条变体，`random.choice` 选取，避免千篇一律 |
+| 时间感知 | 早间（<11:00）/ 晚间（≥18:00）自动切换问候语风格 |
+| 柔性拒绝 | 离题请求用轻松语气引导回业务域，而非生硬拒绝 |
+| 业务开场白 | 查询结果前随机加"查到啦~"等开场白 |
+| 空结果软化 | "没找到"用多种温和表达轮替 |
+
+所有回复模板集中在 **`config/responses.yaml`**，修改文案无需改代码。
 
 ---
 
@@ -259,7 +311,11 @@ python run_server.py
 - **`src/core/skills/query.py`** - 案件查询
 - **`src/core/skills/summary.py`** - 结果汇总
 - **`src/core/skills/reminder.py`** - 提醒 CRUD
-- **`src/core/skills/chitchat.py`** - 闲聊与问候
+- **`src/core/skills/chitchat.py`** - 闲聊与问候（随机池 + 时间感知）
+
+### 配置文件
+
+- **`config/responses.yaml`** - 回复模板随机池（集中管理所有文案）
 
 ### 用户身份
 
@@ -311,6 +367,30 @@ table_recognition:
   confidence_threshold: 0.65
   auto_confirm_threshold: 0.85
   max_candidates: 3
+```
+
+### config/responses.yaml
+
+回复模板随机池（集中管理所有 Agent 回复文案）：
+
+```yaml
+# 日间通用问候
+greeting:
+  - "您好！有什么可以帮您的？"
+  - "来啦~ 有什么事找我？"
+
+# 早间 / 晚间问候
+greeting_morning:
+  - "早上好！今天有什么需要处理的吗？"
+greeting_evening:
+  - "晚上好！还有什么需要处理的吗？"
+
+# 业务回复包装
+result_opener:
+  - "查到啦~ "
+  - "找到了！"
+empty_result:
+  - "嗯...没找到相关记录 🤔 试试换个关键词？"
 ```
 
 ### config/prompts.yaml
