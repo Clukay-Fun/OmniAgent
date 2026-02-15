@@ -9,11 +9,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
-from src.config import get_settings
+from src.config import check_tool_config_consistency, get_settings
 from src.server.automation import (
     router as automation_router,
     start_automation_poller,
@@ -28,13 +29,30 @@ from src.utils.logger import setup_logging
 load_dotenv()
 settings = get_settings()
 setup_logging(settings.logging)
-print(f"=== MCP Server Config ===")
-print(f"App ID: {settings.feishu.app_id}")
-print(f"Bitable App Token: {settings.bitable.default_app_token}")
-print(f"Bitable Table ID: {settings.bitable.default_table_id}")
-print(f"Bitable View ID: {settings.bitable.default_view_id}")
-print(f"Calendar ID: {settings.calendar.default_calendar_id}")
-print(f"=========================")
+logger = logging.getLogger(__name__)
+
+tool_consistency = check_tool_config_consistency(settings)
+if tool_consistency["runtime_missing"]:
+    missing = ", ".join(tool_consistency["runtime_missing"])
+    raise RuntimeError(
+        f"MCP runtime config missing required tools: {missing} "
+        f"(config: {tool_consistency['runtime_config_path']})"
+    )
+if tool_consistency["example_exists"] and tool_consistency["example_missing"]:
+    logger.warning(
+        "MCP example config missing required tools: %s (config: %s)",
+        ", ".join(tool_consistency["example_missing"]),
+        tool_consistency["example_config_path"],
+    )
+
+logger.info(
+    "MCP server config loaded",
+    extra={
+        "automation_enabled": bool(settings.automation.enabled),
+        "schema_sync_enabled": bool(settings.automation.schema_sync_enabled),
+        "tools_enabled_count": len(settings.tools.enabled),
+    },
+)
 # endregion
 
 # region FastAPI 应用

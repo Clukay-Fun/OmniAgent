@@ -327,6 +327,23 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
     current[keys[-1]] = value
 
 
+def _parse_env_override(env_key: str, env_value: str) -> Any:
+    """按变量名解析环境变量覆盖值。"""
+    if env_key == "HEARING_REMINDER_OFFSETS":
+        parts = [item.strip() for item in env_value.split(",") if item.strip()]
+        offsets: list[int] = []
+        for item in parts:
+            try:
+                offsets.append(int(item))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid HEARING_REMINDER_OFFSETS item: {item!r}. "
+                    "Expected comma-separated integers, e.g. 7,3,1,0"
+                ) from exc
+        return offsets
+    return env_value
+
+
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     """
     应用环境变量覆盖
@@ -359,11 +376,16 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "TASK_LLM_MODEL": ["task_llm", "model"],
         "TASK_LLM_API_KEY": ["task_llm", "api_key"],
         "TASK_LLM_API_BASE": ["task_llm", "api_base"],
+        "HEARING_REMINDER_ENABLED": ["hearing_reminder", "enabled"],
+        "HEARING_REMINDER_CHAT_ID": ["hearing_reminder", "reminder_chat_id"],
+        "HEARING_REMINDER_OFFSETS": ["hearing_reminder", "reminder_offsets"],
+        "HEARING_REMINDER_SCAN_HOUR": ["hearing_reminder", "scan_hour"],
+        "HEARING_REMINDER_SCAN_MINUTE": ["hearing_reminder", "scan_minute"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)
         if env_value is not None and env_value != "":
-            _set_nested(data, path, env_value)
+            _set_nested(data, path, _parse_env_override(env_key, env_value))
     return data
 
 

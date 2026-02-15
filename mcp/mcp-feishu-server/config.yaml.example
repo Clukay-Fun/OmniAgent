@@ -100,9 +100,19 @@ doc:
 tools:
   # 启用的工具列表
   enabled:
+    - "feishu.v1.bitable.list_tables"     # 列出表格
     - "feishu.v1.bitable.search"
+    - "feishu.v1.bitable.search_exact"
+    - "feishu.v1.bitable.search_keyword"
+    - "feishu.v1.bitable.search_person"
+    - "feishu.v1.bitable.search_date_range"
+    - "feishu.v1.bitable.search_advanced"
     - "feishu.v1.bitable.record.get"
+    - "feishu.v1.bitable.record.create"
+    - "feishu.v1.bitable.record.update"
+    - "feishu.v1.bitable.record.delete"
     - "feishu.v1.doc.search"
+    - "feishu.v1.calendar.event.create"
     # Phase 2
     # - "feishu.v1.file.upload"
     # - "feishu.v1.file.download"

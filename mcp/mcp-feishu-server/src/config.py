@@ -20,6 +20,21 @@ from pydantic import BaseModel, Field
 
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
+REQUIRED_AGENT_MCP_TOOLS: tuple[str, ...] = (
+    "feishu.v1.bitable.list_tables",
+    "feishu.v1.bitable.search",
+    "feishu.v1.bitable.search_exact",
+    "feishu.v1.bitable.search_keyword",
+    "feishu.v1.bitable.search_person",
+    "feishu.v1.bitable.search_date_range",
+    "feishu.v1.bitable.search_advanced",
+    "feishu.v1.bitable.record.get",
+    "feishu.v1.bitable.record.create",
+    "feishu.v1.bitable.record.update",
+    "feishu.v1.bitable.record.delete",
+    "feishu.v1.doc.search",
+)
+
 
 # region 基础配置模型
 class ServerSettings(BaseModel):
@@ -198,6 +213,16 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return _expand_env(data)
 
 
+def _extract_enabled_tools(config_data: dict[str, Any]) -> set[str]:
+    tools_data = config_data.get("tools")
+    if not isinstance(tools_data, dict):
+        return set()
+    enabled = tools_data.get("enabled")
+    if not isinstance(enabled, list):
+        return set()
+    return {str(name).strip() for name in enabled if str(name).strip()}
+
+
 def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
     current = data
     for key in keys[:-1]:
@@ -273,6 +298,36 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         if env_value is not None and env_value != "":
             _set_nested(data, path, env_value)
     return data
+
+
+def check_tool_config_consistency(
+    settings: Settings,
+    runtime_config_path: str | None = None,
+    example_config_path: str | None = None,
+    required_tools: set[str] | None = None,
+) -> dict[str, Any]:
+    required = set(required_tools or REQUIRED_AGENT_MCP_TOOLS)
+    runtime_tools = {str(name).strip() for name in settings.tools.enabled if str(name).strip()}
+    runtime_missing = sorted(required - runtime_tools)
+
+    runtime_path = Path(runtime_config_path or os.getenv("CONFIG_PATH", "config.yaml"))
+    example_path = Path(example_config_path or "config.yaml.example")
+
+    example_exists = example_path.exists()
+    example_tools = _extract_enabled_tools(_load_yaml(example_path)) if example_exists else set()
+    example_missing = sorted(required - example_tools) if example_exists else []
+
+    return {
+        "required_tools": sorted(required),
+        "runtime_config_path": str(runtime_path),
+        "runtime_enabled": sorted(runtime_tools),
+        "runtime_missing": runtime_missing,
+        "example_config_path": str(example_path),
+        "example_exists": example_exists,
+        "example_enabled": sorted(example_tools),
+        "example_missing": example_missing,
+        "ok": not runtime_missing and (not example_exists or not example_missing),
+    }
 
 
 def load_settings(config_path: str | None = None) -> Settings:
