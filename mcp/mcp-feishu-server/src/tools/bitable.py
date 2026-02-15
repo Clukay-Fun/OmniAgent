@@ -46,6 +46,8 @@ _FIELD_TYPE_NAMES = {
 }
 
 _DATE_FIELD_TYPES = {5, 6, 7}
+_LOCAL_TZ = timezone(timedelta(hours=8))
+_WEEKDAY_MAP = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
 
 
 # region 辅助函数
@@ -319,6 +321,158 @@ def _parse_datetime_text(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _parse_relative_cn_date(text: str) -> date | None:
+    """解析常见中文相对日期（如：下周五、明天）。"""
+    if not text:
+        return None
+
+    normalized = str(text).strip().replace("礼拜", "周").replace("星期", "周")
+    if not normalized:
+        return None
+
+    today = datetime.now(tz=_LOCAL_TZ).date()
+    day_alias = {
+        "今天": 0,
+        "今日": 0,
+        "明天": 1,
+        "后天": 2,
+        "大后天": 3,
+        "昨天": -1,
+        "前天": -2,
+    }
+    if normalized in day_alias:
+        return today + timedelta(days=day_alias[normalized])
+
+    match = re.fullmatch(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})(?:日|号)?", normalized)
+    if match:
+        year = int(match.group(1)) if match.group(1) else today.year
+        month = int(match.group(2))
+        day = int(match.group(3))
+        try:
+            parsed = date(year, month, day)
+            if not match.group(1) and parsed < today - timedelta(days=180):
+                return date(today.year + 1, month, day)
+            return parsed
+        except ValueError:
+            return None
+
+    match = re.fullmatch(r"(下下|下|本|这|上)?周([一二三四五六日天])", normalized)
+    if not match:
+        return None
+
+    prefix = match.group(1) or ""
+    weekday = _WEEKDAY_MAP[match.group(2)]
+    week_start = today - timedelta(days=today.weekday())
+
+    if prefix in {"本", "这"}:
+        week_offset = 0
+    elif prefix == "下":
+        week_offset = 1
+    elif prefix == "下下":
+        week_offset = 2
+    elif prefix == "上":
+        week_offset = -1
+    else:
+        candidate = week_start + timedelta(days=weekday)
+        if candidate < today:
+            candidate += timedelta(days=7)
+        return candidate
+
+    return week_start + timedelta(days=weekday + week_offset * 7)
+
+
+def _to_timestamp_ms(value: datetime) -> int:
+    if value.tzinfo is None:
+        aware = value.replace(tzinfo=_LOCAL_TZ)
+    else:
+        aware = value.astimezone(_LOCAL_TZ)
+    return int(aware.timestamp() * 1000)
+
+
+def _coerce_date_field_value(value: Any) -> Any:
+    """将日期字段值统一转换为飞书可识别的毫秒时间戳。"""
+    if value is None:
+        return value
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if abs(numeric) >= 1_000_000_000_000:
+            return int(numeric)
+        if abs(numeric) >= 1_000_000_000:
+            return int(numeric * 1000)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return value
+        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+            try:
+                return _coerce_date_field_value(float(text))
+            except ValueError:
+                return value
+
+        relative = _parse_relative_cn_date(text)
+        if relative is not None:
+            dt = datetime.combine(relative, datetime.min.time())
+            return _to_timestamp_ms(dt)
+
+    dt = _parse_datetime_text(value)
+    if dt is not None:
+        return _to_timestamp_ms(dt)
+
+    parsed_date = _parse_date_text(value)
+    if parsed_date is not None:
+        dt = datetime.combine(parsed_date, datetime.min.time())
+        return _to_timestamp_ms(dt)
+
+    return value
+
+
+def _normalize_write_fields(fields: dict[str, Any], field_types: dict[str, int]) -> dict[str, Any]:
+    """按表结构归一化写入字段，并对日期字段做值转换。"""
+    if not fields:
+        return {}
+    def _looks_like_date_field(field_name: str) -> bool:
+        normalized = str(field_name).strip().lower()
+        if not normalized:
+            return False
+        hints = ("日期", "时间", "开庭", "截止", "到期", "deadline", "date", "time")
+        if any(hint in normalized for hint in hints):
+            return True
+        return normalized.endswith("日")
+
+    if not field_types:
+        guessed: dict[str, Any] = {}
+        for raw_name, raw_value in fields.items():
+            name = str(raw_name).strip()
+            if not name:
+                continue
+            value = _coerce_date_field_value(raw_value) if _looks_like_date_field(name) else raw_value
+            guessed[name] = value
+        return guessed
+
+    normalized_lookup = {_normalize_field_name(name): name for name in field_types}
+    normalized: dict[str, Any] = {}
+
+    for raw_name, raw_value in fields.items():
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        resolved_name = name
+        if name not in field_types:
+            resolved_name = normalized_lookup.get(_normalize_field_name(name), name)
+
+        field_type = field_types.get(resolved_name, -1)
+        value = raw_value
+        if field_type == 5 or (field_type == -1 and _looks_like_date_field(resolved_name)):
+            value = _coerce_date_field_value(raw_value)
+        normalized[resolved_name] = value
+
+    return normalized
 
 
 def _parse_hm(value: Any) -> int | None:
@@ -1646,7 +1800,9 @@ class BitableRecordCreateTool(BaseTool):
         if not app_token or not table_id:
             return {"success": False, "error": "Bitable not configured"}
 
-        payload = {"fields": fields}
+        field_info = await _fetch_fields_info(self, app_token, table_id)
+        normalized_fields = _normalize_write_fields(fields, field_info)
+        payload = {"fields": normalized_fields}
 
         response = await self.context.client.request(
             "POST",
@@ -1715,7 +1871,9 @@ class BitableRecordUpdateTool(BaseTool):
         if not app_token or not table_id:
             return {"success": False, "error": "Bitable not configured"}
 
-        payload = {"fields": fields}
+        field_info = await _fetch_fields_info(self, app_token, table_id)
+        normalized_fields = _normalize_write_fields(fields, field_info)
+        payload = {"fields": normalized_fields}
 
         response = await self.context.client.request(
             "PUT",

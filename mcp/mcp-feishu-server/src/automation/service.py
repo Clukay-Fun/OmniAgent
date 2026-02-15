@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -139,12 +140,193 @@ class AutomationService:
         if not self._settings.automation.enabled:
             raise AutomationValidationError("automation is disabled, set automation.enabled=true")
 
+    @staticmethod
+    def _format_error(exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return message
+        return exc.__class__.__name__
+
     def _verify_token(self, token: str | None) -> None:
         expected = str(self._settings.automation.verification_token or "").strip()
         if not expected:
             return
         if token != expected:
             raise AutomationValidationError("invalid verification token")
+
+    def _find_enabled_rule(self, rule_id: str) -> dict[str, Any] | None:
+        normalized_rule_id = str(rule_id or "").strip()
+        if not normalized_rule_id:
+            return None
+
+        for rule in self._engine.rule_store.load_all_enabled_rules():
+            current_rule_id = str(rule.get("rule_id") or "").strip()
+            if current_rule_id == normalized_rule_id:
+                return rule
+        return None
+
+    def _verify_webhook_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
+        if not bool(self._settings.automation.webhook_enabled):
+            raise AutomationValidationError("automation webhook is disabled")
+
+        configured_key = str(self._settings.automation.webhook_api_key or "").strip()
+        signature_secret = str(self._settings.automation.webhook_signature_secret or "").strip()
+        if not configured_key and not signature_secret:
+            raise AutomationValidationError(
+                "automation webhook auth is not configured, set AUTOMATION_WEBHOOK_API_KEY "
+                "or AUTOMATION_WEBHOOK_SIGNATURE_SECRET"
+            )
+
+        header_map = {str(key).lower(): str(value) for key, value in headers.items()}
+
+        if configured_key:
+            provided_key = str(header_map.get("x-automation-key") or "").strip()
+            if not provided_key or not hmac.compare_digest(provided_key, configured_key):
+                raise AutomationValidationError("invalid webhook api key")
+
+        if signature_secret:
+            timestamp_text = str(header_map.get("x-automation-timestamp") or "").strip()
+            signature_text = str(header_map.get("x-automation-signature") or "").strip()
+            if not timestamp_text or not signature_text:
+                raise AutomationValidationError(
+                    "missing webhook signature headers: x-automation-timestamp / x-automation-signature"
+                )
+
+            try:
+                timestamp = int(timestamp_text)
+            except ValueError as exc:
+                raise AutomationValidationError("invalid x-automation-timestamp") from exc
+
+            now = int(time.time())
+            tolerance = max(1, int(self._settings.automation.webhook_timestamp_tolerance_seconds or 300))
+            if abs(now - timestamp) > tolerance:
+                raise AutomationValidationError("webhook signature timestamp expired")
+
+            normalized_signature = signature_text
+            if normalized_signature.lower().startswith("sha256="):
+                normalized_signature = normalized_signature.split("=", 1)[1].strip()
+
+            signed_payload = f"{timestamp}".encode("utf-8") + b"." + raw_body
+            expected_signature = hmac.new(
+                signature_secret.encode("utf-8"),
+                signed_payload,
+                hashlib.sha256,
+            ).hexdigest()
+
+            if not hmac.compare_digest(normalized_signature, expected_signature):
+                raise AutomationValidationError("invalid webhook signature")
+
+    @staticmethod
+    def _extract_webhook_fields(payload: dict[str, Any]) -> dict[str, Any]:
+        fields = payload.get("fields")
+        if isinstance(fields, dict):
+            return fields
+
+        reserved = {
+            "event_id",
+            "record_id",
+            "table_id",
+            "app_token",
+            "event_kind",
+            "old_fields",
+            "diff",
+            "force",
+            "triggered_by",
+        }
+        result: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key in reserved:
+                continue
+            result[str(key)] = value
+        return result
+
+    async def trigger_rule_webhook(
+        self,
+        *,
+        rule_id: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        raw_body: bytes,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        self._ensure_enabled()
+        self._verify_webhook_auth(headers, raw_body)
+
+        normalized_rule_id = str(rule_id or "").strip()
+        if not normalized_rule_id:
+            raise AutomationValidationError("rule_id is required")
+
+        rule = self._find_enabled_rule(normalized_rule_id)
+        if rule is None:
+            raise AutomationValidationError(f"rule not found or disabled: {normalized_rule_id}")
+
+        if not isinstance(payload, dict):
+            raise AutomationValidationError("webhook payload must be object")
+
+        rule_table = rule.get("table") or {}
+        if not isinstance(rule_table, dict):
+            rule_table = {}
+
+        app_token = str(
+            payload.get("app_token")
+            or rule_table.get("app_token")
+            or self._settings.bitable.default_app_token
+            or ""
+        ).strip()
+        table_id = str(
+            payload.get("table_id")
+            or rule_table.get("table_id")
+            or self._settings.bitable.default_table_id
+            or ""
+        ).strip()
+
+        event_id = str(payload.get("event_id") or "").strip()
+        if not event_id:
+            event_id = f"manual_webhook:{normalized_rule_id}:{int(time.time() * 1000)}"
+
+        record_id = str(payload.get("record_id") or "").strip()
+        if not record_id:
+            record_id = f"manual:{int(time.time() * 1000)}"
+
+        old_fields_raw = payload.get("old_fields")
+        old_fields = old_fields_raw if isinstance(old_fields_raw, dict) else {}
+        current_fields = self._extract_webhook_fields(payload)
+
+        diff_raw = payload.get("diff")
+        if isinstance(diff_raw, dict):
+            diff = diff_raw
+        else:
+            diff = self._snapshot.diff(old_fields, current_fields)
+
+        event_kind = str(payload.get("event_kind") or "").strip().lower()
+        if not event_kind:
+            event_kind = "updated" if old_fields else "created"
+
+        rule_execution = await self._engine.execute(
+            app_token=app_token,
+            table_id=table_id,
+            record_id=record_id,
+            event_id=event_id,
+            old_fields=old_fields,
+            current_fields=current_fields,
+            diff=diff,
+            event_kind=event_kind,
+            rule_id_filter=normalized_rule_id,
+            force_match=bool(force),
+        )
+
+        return {
+            "status": "ok",
+            "kind": "webhook_rule_triggered",
+            "rule_id": normalized_rule_id,
+            "event_id": event_id,
+            "event_kind": event_kind,
+            "app_token": app_token,
+            "table_id": table_id,
+            "record_id": record_id,
+            "force": bool(force),
+            "rules": rule_execution,
+        }
 
     def _decrypt_envelope_if_needed(self, payload: dict[str, Any]) -> dict[str, Any]:
         encrypted = payload.get("encrypt")
@@ -362,6 +544,7 @@ class AutomationService:
                 old_fields={},
                 current_fields=current_fields,
                 diff=diff,
+                event_kind="created",
             )
             self._snapshot.save(table_id, record_id, current_fields)
             changed = diff.get("changed") or {}
@@ -405,6 +588,7 @@ class AutomationService:
             old_fields=old_fields,
             current_fields=current_fields,
             diff=diff,
+            event_kind="updated",
         )
         self._snapshot.save(table_id, record_id, current_fields)
         changed = diff.get("changed") or {}
@@ -600,7 +784,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
             except Exception as exc:
@@ -610,7 +794,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
 
@@ -711,14 +895,239 @@ class AutomationService:
             "mode": "initialized",
         }
 
-    async def scan_table(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _to_scalar_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, dict):
+            for key in ("text", "id", "name"):
+                candidate = value.get(key)
+                if isinstance(candidate, (str, int, float, bool)):
+                    return str(candidate).strip()
+            nested = value.get("value")
+            return AutomationService._to_scalar_text(nested)
+        if isinstance(value, list):
+            for item in value:
+                normalized = AutomationService._to_scalar_text(item)
+                if normalized:
+                    return normalized
+            return ""
+        return str(value).strip()
+
+    def _extract_sync_delete_targets(self, source_table_id: str, source_app_token: str) -> list[dict[str, str]]:
+        rules = self._engine.rule_store.load_enabled_rules(source_table_id, app_token=source_app_token)
+        targets: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+
+        for rule in rules:
+            pipeline = rule.get("pipeline") or {}
+            if not isinstance(pipeline, dict):
+                continue
+            actions = pipeline.get("actions") or []
+            if not isinstance(actions, list):
+                continue
+
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                if str(action.get("type") or "").strip() != "bitable.upsert":
+                    continue
+
+                target_table_id = str(action.get("target_table_id") or "").strip()
+                target_app_token = str(action.get("target_app_token") or source_app_token or "").strip()
+                if not target_table_id or not target_app_token:
+                    continue
+
+                match_fields = action.get("match_fields")
+                if not isinstance(match_fields, dict):
+                    continue
+
+                source_record_field = ""
+                for field_name, template in match_fields.items():
+                    if str(template or "").strip() == "{record_id}":
+                        source_record_field = str(field_name or "").strip()
+                        break
+                if not source_record_field:
+                    continue
+
+                source_table_field = ""
+                for key in ("update_fields", "create_fields"):
+                    mapping = action.get(key)
+                    if not isinstance(mapping, dict):
+                        continue
+                    for field_name, template in mapping.items():
+                        if str(template or "").strip() == "{table_id}":
+                            source_table_field = str(field_name or "").strip()
+                            break
+                    if source_table_field:
+                        break
+
+                dedupe_key = (target_app_token, target_table_id, source_record_field, source_table_field)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                targets.append(
+                    {
+                        "target_app_token": target_app_token,
+                        "target_table_id": target_table_id,
+                        "source_record_field": source_record_field,
+                        "source_table_field": source_table_field,
+                    }
+                )
+
+        return targets
+
+    async def _reconcile_target_deletions(
+        self,
+        *,
+        source_table_id: str,
+        source_app_token: str,
+        source_record_ids: set[str],
+        scan_truncated: bool,
+    ) -> dict[str, Any]:
+        if not bool(self._settings.automation.sync_deletions_enabled):
+            return {"status": "disabled", "deleted": 0, "failed": 0, "targets": []}
+
+        if scan_truncated:
+            return {
+                "status": "skipped",
+                "reason": "scan_truncated",
+                "deleted": 0,
+                "failed": 0,
+                "targets": [],
+            }
+
+        targets = self._extract_sync_delete_targets(source_table_id, source_app_token)
+        if not targets:
+            return {"status": "skipped", "reason": "no_upsert_target", "deleted": 0, "failed": 0, "targets": []}
+
+        page_size = max(1, min(self._settings.automation.scan_page_size, 500))
+        max_pages = max(1, self._settings.automation.max_scan_pages)
+        max_deletes = max(0, int(self._settings.automation.sync_deletions_max_per_run or 0))
+        remaining = max_deletes if max_deletes > 0 else 10_000_000
+
+        deleted = 0
+        failed = 0
+        target_summaries: list[dict[str, Any]] = []
+        delete_limit_hit = False
+
+        for target in targets:
+            if remaining <= 0:
+                delete_limit_hit = True
+                break
+
+            target_app_token = str(target.get("target_app_token") or "").strip()
+            target_table_id = str(target.get("target_table_id") or "").strip()
+            source_record_field = str(target.get("source_record_field") or "").strip()
+            source_table_field = str(target.get("source_table_field") or "").strip()
+            if not target_app_token or not target_table_id or not source_record_field:
+                continue
+
+            target_deleted = 0
+            target_failed = 0
+            page_token = ""
+            pages = 0
+            field_names = [source_record_field]
+            if source_table_field:
+                field_names.append(source_table_field)
+
+            while pages < max_pages:
+                page = await self._list_records_page(
+                    target_app_token,
+                    target_table_id,
+                    page_token,
+                    page_size,
+                    field_names=field_names,
+                )
+                pages += 1
+                items = page.get("items") or []
+                for item in items:
+                    if remaining <= 0:
+                        delete_limit_hit = True
+                        break
+                    if not isinstance(item, dict):
+                        continue
+
+                    target_record_id, fields, _ = self._extract_record_meta(item)
+                    if not target_record_id:
+                        continue
+
+                    source_record_value = self._to_scalar_text(fields.get(source_record_field))
+                    if not source_record_value:
+                        continue
+
+                    if source_table_field:
+                        source_table_value = self._to_scalar_text(fields.get(source_table_field))
+                        if source_table_value and source_table_value != source_table_id:
+                            continue
+
+                    if source_record_value in source_record_ids:
+                        continue
+
+                    try:
+                        await self._client.request(
+                            "DELETE",
+                            (
+                                f"/bitable/v1/apps/{target_app_token}/tables/{target_table_id}"
+                                f"/records/{target_record_id}"
+                            ),
+                        )
+                        deleted += 1
+                        target_deleted += 1
+                        remaining -= 1
+                    except FeishuAPIError as exc:
+                        failed += 1
+                        target_failed += 1
+                        LOGGER.error("delete sync failed for target record %s: %s", target_record_id, exc)
+                    except Exception as exc:
+                        failed += 1
+                        target_failed += 1
+                        LOGGER.exception("delete sync failed for target record %s: %s", target_record_id, exc)
+
+                if delete_limit_hit:
+                    break
+                if not page.get("has_more"):
+                    break
+                page_token = str(page.get("page_token") or "")
+                if not page_token:
+                    break
+
+            target_summaries.append(
+                {
+                    "target_app_token": target_app_token,
+                    "target_table_id": target_table_id,
+                    "deleted": target_deleted,
+                    "failed": target_failed,
+                }
+            )
+
+        return {
+            "status": "ok",
+            "deleted": deleted,
+            "failed": failed,
+            "delete_limit_hit": delete_limit_hit,
+            "targets": target_summaries,
+        }
+
+    async def scan_table(
+        self,
+        table_id: str | None = None,
+        app_token: str | None = None,
+        *,
+        force_full: bool = False,
+        reconcile_deletions: bool = False,
+    ) -> dict[str, Any]:
         self._ensure_enabled()
         resolved_table_id, resolved_app_token = self._resolve_table_params(table_id, app_token)
 
         watch_plan = self._engine.get_watch_plan(resolved_table_id, app_token=resolved_app_token)
         watch_fields = None if _is_watch_mode_full(watch_plan) else _watch_fields(watch_plan)
 
-        cursor = self._checkpoint.get(resolved_table_id)
+        cursor = 0 if force_full else self._checkpoint.get(resolved_table_id)
         max_seen_cursor = cursor
         page_token = ""
         page_size = max(1, min(self._settings.automation.scan_page_size, 500))
@@ -732,17 +1141,22 @@ class AutomationService:
             "duplicate_business": 0,
             "failed": 0,
             "scanned": 0,
+            "deleted_synced": 0,
+            "delete_failed": 0,
         }
 
         allow_new_record_trigger = bool(self._settings.automation.trigger_on_new_record_scan)
         require_checkpoint = bool(self._settings.automation.trigger_on_new_record_scan_requires_checkpoint)
-        if allow_new_record_trigger and require_checkpoint and cursor <= 0:
+        if not force_full and allow_new_record_trigger and require_checkpoint and cursor <= 0:
             allow_new_record_trigger = False
 
         max_new_record_triggers = max(0, int(self._settings.automation.new_record_scan_max_trigger_per_run or 0))
         new_record_triggered_count = 0
+        source_record_ids: set[str] = set()
+        scan_truncated = False
 
         pages = 0
+        last_page_has_more = False
         while pages < max_pages:
             page = await self._list_records_page(
                 resolved_app_token,
@@ -751,6 +1165,7 @@ class AutomationService:
                 page_size,
                 field_names=watch_fields,
             )
+            last_page_has_more = bool(page.get("has_more"))
             pages += 1
             items = page.get("items") or []
 
@@ -761,6 +1176,8 @@ class AutomationService:
                 record_id, fields, modified_time = self._extract_record_meta(item)
                 if not record_id:
                     continue
+                if force_full:
+                    source_record_ids.add(record_id)
                 if modified_time and modified_time <= cursor:
                     continue
                 if modified_time > max_seen_cursor:
@@ -818,18 +1235,46 @@ class AutomationService:
             if not page_token:
                 break
 
+        if pages >= max_pages and last_page_has_more:
+            scan_truncated = True
+
         if max_seen_cursor > cursor:
             self._checkpoint.set(resolved_table_id, max_seen_cursor)
 
-        return {
+        deletion_result: dict[str, Any] | None = None
+        if force_full and reconcile_deletions:
+            deletion_result = await self._reconcile_target_deletions(
+                source_table_id=resolved_table_id,
+                source_app_token=resolved_app_token,
+                source_record_ids=source_record_ids,
+                scan_truncated=scan_truncated,
+            )
+            counters["deleted_synced"] = int(deletion_result.get("deleted") or 0)
+            counters["delete_failed"] = int(deletion_result.get("failed") or 0)
+
+        result: dict[str, Any] = {
             "status": "ok",
             "table_id": resolved_table_id,
             "from_cursor": cursor,
             "to_cursor": max_seen_cursor,
             "pages": pages,
             "counters": counters,
-            "mode": "scan",
+            "mode": "sync_scan" if force_full else "scan",
+            "force_full": force_full,
+            "scan_truncated": scan_truncated,
         }
+        if deletion_result is not None:
+            result["deletion_sync"] = deletion_result
+        return result
+
+    async def sync_table(self, table_id: str | None = None, app_token: str | None = None) -> dict[str, Any]:
+        self._ensure_enabled()
+        return await self.scan_table(
+            table_id=table_id,
+            app_token=app_token,
+            force_full=True,
+            reconcile_deletions=True,
+        )
 
     async def scan_once_all_tables(self) -> dict[str, Any]:
         self._ensure_enabled()
@@ -872,7 +1317,7 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
             except Exception as exc:
@@ -882,13 +1327,56 @@ class AutomationService:
                         "status": "failed",
                         "table_id": table_id,
                         "app_token": app_token,
-                        "error": str(exc),
+                        "error": self._format_error(exc),
                     }
                 )
 
         return {
             "status": "ok",
             "mode": "poller_scan",
+            "tables": [target.get("table_id") for target in targets],
+            "results": results,
+        }
+
+    async def sync_once_all_tables(self) -> dict[str, Any]:
+        self._ensure_enabled()
+
+        targets = self.get_poll_targets()
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            table_id = str(target.get("table_id") or "").strip()
+            app_token = str(target.get("app_token") or "").strip()
+            if not table_id or not app_token:
+                continue
+
+            try:
+                result = await self.sync_table(table_id=table_id, app_token=app_token)
+                result["app_token"] = app_token
+                results.append(result)
+            except FeishuAPIError as exc:
+                LOGGER.exception("sync scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": self._format_error(exc),
+                    }
+                )
+            except Exception as exc:
+                LOGGER.exception("sync scan failed for table %s: %s", table_id, exc)
+                results.append(
+                    {
+                        "status": "failed",
+                        "table_id": table_id,
+                        "app_token": app_token,
+                        "error": self._format_error(exc),
+                    }
+                )
+
+        return {
+            "status": "ok",
+            "mode": "manual_sync",
             "tables": [target.get("table_id") for target in targets],
             "results": results,
         }

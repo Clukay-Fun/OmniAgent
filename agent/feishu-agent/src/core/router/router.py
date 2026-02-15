@@ -28,12 +28,16 @@ _SKILL_NAME_MAP: dict[str, str] = {
     # 小写别名 -> 标准名
     "query": "QuerySkill",
     "create": "CreateSkill",
+    "update": "UpdateSkill",
+    "delete": "DeleteSkill",
     "summary": "SummarySkill",
     "reminder": "ReminderSkill",
     "chitchat": "ChitchatSkill",
     # 标准名 -> 标准名（方便统一查找）
     "QuerySkill": "QuerySkill",
     "CreateSkill": "CreateSkill",
+    "UpdateSkill": "UpdateSkill",
+    "DeleteSkill": "DeleteSkill",
     "SummarySkill": "SummarySkill",
     "ReminderSkill": "ReminderSkill",
     "ChitchatSkill": "ChitchatSkill",

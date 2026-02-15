@@ -1180,7 +1180,118 @@ scenarios:
         - 更多
 
 # ============================================================
-# 第十四部分：安全场景
+# 第十四部分：多表联动
+# ============================================================
+
+  - scenario_id: M001
+    title: 多表联动 — 主表创建并写入子表
+    category: multi_table
+    precondition:
+      - multi_table.enabled=true
+      - 已配置 案件主表 -> 合同管理表 联动规则
+    dialogue:
+      - role: user
+        text: 新建案件，案号2026-001，委托人李四，案由合同纠纷
+    expected:
+      main_table:
+        tool: feishu.v1.bitable.record.create
+        result: success
+      linked_table:
+        action: create
+        result: success
+      reply_should_contain:
+        - 创建成功
+        - 已同步
+
+  - scenario_id: M002
+    title: 多表联动 — 子表失败后补录
+    category: multi_table
+    precondition:
+      - multi_table.enabled=true
+      - 合同管理表关联字段校验开启
+    dialogue:
+      - role: user
+        text: 新建案件，案号2026-002，委托人王五，案由借贷纠纷
+      - role: agent
+        text: |
+          主记录创建成功。
+          关联表「合同管理表」同步失败，请补充或修正后继续。
+      - role: user
+        text: 客户名称是王五
+    expected:
+      main_table:
+        result: success
+      linked_table:
+        first_try: failed
+        repair_try: success
+      reply_should_contain:
+        - 子表
+        - 已完成子表补录
+
+  - scenario_id: M003
+    title: 多表联动 — 上下文跨表查询
+    category: multi_table
+    dialogue:
+      - role: user
+        text: 查案号 2026-003
+      - role: agent
+        text: （返回案件记录）
+      - role: user
+        text: 这个案件的合同信息
+    expected:
+      context_resolution:
+        use_active_record: true
+      linked_query:
+        tool: feishu.v1.bitable.search_exact
+        by_join_key: true
+      reply_should_contain:
+        - 已按当前案件上下文联动查询关联表
+
+  - scenario_id: M004
+    title: 多表联动 — 主表更新触发子表更新
+    category: multi_table
+    precondition:
+      - multi_table.enabled=true
+      - 已配置 update_fields 映射
+    dialogue:
+      - role: user
+        text: 把案号 2026-004 的案件状态改成已结案
+    expected:
+      main_table:
+        tool: feishu.v1.bitable.record.update
+        result: success
+      linked_table:
+        action: update
+      reply_should_contain:
+        - 更新成功
+
+  - scenario_id: M005
+    title: 多表联动 — 子表更新失败后补录
+    category: multi_table
+    precondition:
+      - multi_table.enabled=true
+      - 已配置 update_fields 映射
+    dialogue:
+      - role: user
+        text: 把案号 2026-005 的案件状态改成已结案
+      - role: agent
+        text: |
+          主记录更新成功。
+          关联表同步失败，请补充修正字段后继续。
+      - role: user
+        text: 客户名称是某某公司
+    expected:
+      main_table:
+        result: success
+      linked_table:
+        first_try: failed
+        repair_try: success
+      reply_should_contain:
+        - 子表
+        - 已完成子表补录
+
+# ============================================================
+# 第十五部分：安全场景
 # ============================================================
 
   - scenario_id: SEC001
@@ -1216,7 +1327,7 @@ scenarios:
 # ============================================================
 
 coverage:
-  total_scenarios: 65
+  total_scenarios: 70
   categories:
     table_recognition: 5   # T001-T005
     query_all: 2            # S001, S001_B
@@ -1232,4 +1343,5 @@ coverage:
     context: 3              # C001-C003
     error: 10               # E001-E010
     pagination: 3           # P001-P003
+    multi_table: 5          # M001-M005
     security: 2             # SEC001-SEC002

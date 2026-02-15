@@ -60,6 +60,9 @@ postgres:
   max_size: 5
   timeout: 10
 
+# 提醒调度轮询（默认关闭，减少开发态噪音与 DB 依赖）
+reminder_scheduler_enabled: ${REMINDER_SCHEDULER_ENABLED:-false}
+
 # ------------------------------------------------------------
 # LLM 配置
 # ------------------------------------------------------------
@@ -87,6 +90,19 @@ llm:
     model: "deepseek-chat"
     api_key: ${LLM_FALLBACK_API_KEY:-}
     api_base: "https://api.deepseek.com/v1"
+
+# ------------------------------------------------------------
+# 任务模型配置（意图识别/工具调用专用，可选）
+# ------------------------------------------------------------
+# 启用后，Planner 意图识别和工具参数提取走此模型，
+# ChitchatSkill 等对话场景仍走上方主模型。
+# 未启用时所有环节共享主模型，行为不变。
+task_llm:
+  enabled: ${TASK_LLM_ENABLED:-false}
+  provider: "minimax"
+  model: ${TASK_LLM_MODEL:-MiniMax-M2.5}
+  api_key: ${TASK_LLM_API_KEY:-}
+  api_base: ${TASK_LLM_API_BASE:-}
 
 # ------------------------------------------------------------
 # Agent 配置

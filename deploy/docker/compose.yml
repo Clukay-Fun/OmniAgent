@@ -9,12 +9,13 @@ services:
   # ===========================================
   mcp-feishu-server:
     build: ../../mcp/mcp-feishu-server
-    container_name: omniagent-mcp-feishu
     ports:
       - "8081:8081"
     env_file:
       - ../../mcp/mcp-feishu-server/.env
     restart: unless-stopped
+    volumes:
+      - ../../mcp/mcp-feishu-server/automation_data:/app/automation_data
     deploy:
       resources:
         limits:
@@ -37,7 +38,6 @@ services:
   # ===========================================
   feishu-agent:
     build: ../../agent/feishu-agent
-    container_name: omniagent-feishu-agent
     ports:
       - "8080:8080"
     env_file:
@@ -78,7 +78,6 @@ services:
   postgres:
     profiles: ["db"]
     image: postgres:15-alpine
-    container_name: omniagent-postgres
     environment:
       POSTGRES_USER: omniagent
       POSTGRES_PASSWORD: omniagent123
@@ -100,7 +99,6 @@ services:
   prometheus:
     profiles: ["monitoring"]
     image: prom/prometheus:v2.48.0
-    container_name: omniagent-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -115,7 +113,6 @@ services:
   grafana:
     profiles: ["monitoring"]
     image: grafana/grafana:10.4.2
-    container_name: omniagent-grafana
     ports:
       - "3000:3000"
     environment:

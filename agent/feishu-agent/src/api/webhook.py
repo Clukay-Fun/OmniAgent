@@ -345,7 +345,18 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     chat_type = message.get("chat_type")
     message_id = message.get("message_id")
     sender_id = sender.get("sender_id", {})
-    user_id = sender_id.get("open_id") or sender_id.get("user_id") or chat_id or "unknown"
+    open_id = str(sender_id.get("open_id") or "").strip()
+    inner_user_id = str(sender_id.get("user_id") or "").strip()
+    if open_id:
+        user_id = open_id
+    elif inner_user_id:
+        user_id = f"user:{inner_user_id}"
+    elif chat_id and message_id:
+        user_id = f"chat:{chat_id}:msg:{message_id}"
+    elif chat_id:
+        user_id = f"chat:{chat_id}:anon"
+    else:
+        user_id = "unknown"
     if sender_id.get("open_id"):
         logger.info("Webhook sender open_id: %s", sender_id.get("open_id"))
 

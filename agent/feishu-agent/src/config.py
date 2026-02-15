@@ -86,6 +86,23 @@ class LLMSettings(BaseModel):
     fallback: LLMFallbackSettings = Field(default_factory=LLMFallbackSettings)
 
 
+# ============================================
+# region 任务模型配置
+# ============================================
+class TaskLLMSettings(BaseModel):
+    """任务模型配置（意图识别/工具调用专用）"""
+    enabled: bool = False
+    provider: str = "minimax"
+    model: str = "MiniMax-M2.5"
+    api_key: str = ""
+    api_base: str | None = None
+    temperature: float = 0.1
+    max_tokens: int = 1000
+    timeout: int = 30
+# endregion
+# ============================================
+
+
 class PromptSettings(BaseModel):
     role: str = ""
     capabilities: str = ""
@@ -259,7 +276,9 @@ class Settings(BaseModel):
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
+    reminder_scheduler_enabled: bool = False
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    task_llm: TaskLLMSettings = Field(default_factory=TaskLLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     user: UserSettings = Field(default_factory=UserSettings)
     hearing_reminder: HearingReminderSettings = Field(default_factory=HearingReminderSettings)
@@ -308,6 +327,23 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
     current[keys[-1]] = value
 
 
+def _parse_env_override(env_key: str, env_value: str) -> Any:
+    """按变量名解析环境变量覆盖值。"""
+    if env_key == "HEARING_REMINDER_OFFSETS":
+        parts = [item.strip() for item in env_value.split(",") if item.strip()]
+        offsets: list[int] = []
+        for item in parts:
+            try:
+                offsets.append(int(item))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid HEARING_REMINDER_OFFSETS item: {item!r}. "
+                    "Expected comma-separated integers, e.g. 7,3,1,0"
+                ) from exc
+        return offsets
+    return env_value
+
+
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     """
     应用环境变量覆盖
@@ -323,6 +359,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_BOT_ENCRYPT_KEY": ["feishu", "encrypt_key"],
         "MCP_SERVER_BASE": ["mcp", "base_url"],
         "POSTGRES_DSN": ["postgres", "dsn"],
+        "REMINDER_SCHEDULER_ENABLED": ["reminder_scheduler_enabled"],
         "POSTGRES_MIN_SIZE": ["postgres", "min_size"],
         "POSTGRES_MAX_SIZE": ["postgres", "max_size"],
         "POSTGRES_TIMEOUT": ["postgres", "timeout"],
@@ -335,11 +372,20 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "LLM_API_KEY": ["llm", "api_key"],
         "LLM_API_BASE": ["llm", "api_base"],
         "LLM_FALLBACK_API_KEY": ["llm", "fallback", "api_key"],
+        "TASK_LLM_ENABLED": ["task_llm", "enabled"],
+        "TASK_LLM_MODEL": ["task_llm", "model"],
+        "TASK_LLM_API_KEY": ["task_llm", "api_key"],
+        "TASK_LLM_API_BASE": ["task_llm", "api_base"],
+        "HEARING_REMINDER_ENABLED": ["hearing_reminder", "enabled"],
+        "HEARING_REMINDER_CHAT_ID": ["hearing_reminder", "reminder_chat_id"],
+        "HEARING_REMINDER_OFFSETS": ["hearing_reminder", "reminder_offsets"],
+        "HEARING_REMINDER_SCAN_HOUR": ["hearing_reminder", "scan_hour"],
+        "HEARING_REMINDER_SCAN_MINUTE": ["hearing_reminder", "scan_minute"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)
         if env_value is not None and env_value != "":
-            _set_nested(data, path, env_value)
+            _set_nested(data, path, _parse_env_override(env_key, env_value))
     return data
 
 

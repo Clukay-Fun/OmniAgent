@@ -9,10 +9,15 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
+from pathlib import Path
 from typing import Any
 
+import yaml
+
 from src.core.skills.base import BaseSkill
+from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.types import SkillContext, SkillResult
 from src.utils.time_parser import parse_time_range
 
@@ -51,6 +56,7 @@ class QuerySkill(BaseSkill):
         self._settings = settings
         self._llm = llm_client
         self._skills_config = skills_config or {}
+        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
 
         self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
         self._alias_lookup = self._build_alias_lookup(self._table_aliases)
@@ -62,6 +68,13 @@ class QuerySkill(BaseSkill):
             self._table_recognition.get("auto_confirm_threshold", 0.85)
         )
         self._max_candidates = int(self._table_recognition.get("max_candidates", 3))
+
+        # ============================================
+        # region 加载回复模板随机池
+        # ============================================
+        self._response_pool = self._load_response_pool()
+        # endregion
+        # ============================================
 
         # 结果格式化字段配置（支持自定义）
         query_cfg = self._skills_config.get("query", {})
@@ -177,7 +190,21 @@ class QuerySkill(BaseSkill):
             )
 
         tool_name, params = self._build_bitable_params(query, extra, table_result)
+        override = self._linker.resolve_query_override(
+            query=query,
+            current_tool=tool_name,
+            params=params,
+            target_table_id=table_result.get("table_id"),
+            target_table_name=table_result.get("table_name"),
+            active_table_id=extra.get("active_table_id"),
+            active_table_name=extra.get("active_table_name"),
+            active_record=extra.get("active_record") if isinstance(extra.get("active_record"), dict) else None,
+        )
         notice = table_result.get("notice")
+        if override:
+            tool_name, params = override
+            if not notice:
+                notice = "已按当前案件上下文联动查询关联表。"
 
         try:
             logger.info("Query tool selected: %s, params: %s", tool_name, params)
@@ -934,14 +961,41 @@ class QuerySkill(BaseSkill):
             
         return keyword
 
+    # ============================================
+    # region 回复模板加载
+    # ============================================
+    def _load_response_pool(self) -> dict[str, list[str]]:
+        """从 config/responses.yaml 加载业务回复模板"""
+        defaults = {
+            "result_opener": ["查到啦~ "],
+            "empty_result": ["未找到相关记录，请尝试调整查询条件。"],
+        }
+        responses_path = Path("config/responses.yaml")
+        if not responses_path.exists():
+            return defaults
+        try:
+            data = yaml.safe_load(responses_path.read_text(encoding="utf-8")) or {}
+            for key in defaults:
+                val = data.get(key)
+                if isinstance(val, list) and val:
+                    defaults[key] = val
+            return defaults
+        except Exception as exc:
+            logger.warning("Failed to load responses.yaml for QuerySkill: %s", exc)
+            return defaults
+    # endregion
+    # ============================================
+
     def _empty_result(self, message: str) -> SkillResult:
-        """构造空结果响应"""
+        """构造空结果响应（随机化）"""
+        pool = self._response_pool.get("empty_result")
+        reply = random.choice(pool) if pool else f"{message}，请尝试调整查询条件。"
         return SkillResult(
             success=True,
             skill_name=self.name,
             data={"records": [], "total": 0},
             message=message,
-            reply_text=f"{message}，请尝试调整查询条件。",
+            reply_text=reply,
         )
 
     def _format_case_result(
@@ -958,7 +1012,10 @@ class QuerySkill(BaseSkill):
         if isinstance(pagination, dict):
             total = pagination.get("total")
         title_count = total if isinstance(total, int) and total >= count else count
-        title = f"📌 案件查询结果（共 {title_count} 条）"
+        # 随机开场白
+        opener_pool = self._response_pool.get("result_opener")
+        opener = random.choice(opener_pool) if opener_pool else ""
+        title = f"{opener}📌 案件查询结果（共 {title_count} 条）"
         
         items = []
         df = self._display_fields  # 使用配置的字段名

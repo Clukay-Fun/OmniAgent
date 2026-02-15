@@ -9,6 +9,7 @@
 
 - 云服务器与域名已准备，暂不上传生产部署（等待备案审核）
 - 本仓库已完成一次目录重整：部署文件、监控文件、工具脚本、场景文档已拆分归位
+- Feishu Agent 已完成上下文强化、单表 CRUD 闭环与多表联动第一版（当前默认链路：案件 -> 合同管理表）
 - 开发/备案/上线统一口径见：`docs/deploy/three-stage-guide.md`
 
 ## 目录结构（已调整）
@@ -52,16 +53,29 @@ OmniAgent/
 统一开发入口（推荐）：
 
 ```bash
-python agent/feishu-agent/run_dev.py up
+python run_dev.py up
 ```
 
 常用操作：
 
 ```bash
-python agent/feishu-agent/run_dev.py logs --follow
-python agent/feishu-agent/run_dev.py ps
-python agent/feishu-agent/run_dev.py down
+python run_dev.py logs --follow
+python run_dev.py ps
+python run_dev.py down
+python run_dev.py clean
+python run_dev.py refresh-schema
+python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
+python run_dev.py auth-health
+python run_dev.py sync
+python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+
+# 一键拉起全部（MCP + Agent + Monitoring + DB）
+python run_dev.py up --all
 ```
+
+说明：`sync` 执行全量补偿（新增+修改+删除对账），`refresh-schema` 仅刷新字段结构。
+
+容器名冲突或历史残留时，先执行 `python run_dev.py clean` 再 `up`。
 
 默认端口：
 

@@ -20,6 +20,21 @@ from pydantic import BaseModel, Field
 
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
+REQUIRED_AGENT_MCP_TOOLS: tuple[str, ...] = (
+    "feishu.v1.bitable.list_tables",
+    "feishu.v1.bitable.search",
+    "feishu.v1.bitable.search_exact",
+    "feishu.v1.bitable.search_keyword",
+    "feishu.v1.bitable.search_person",
+    "feishu.v1.bitable.search_date_range",
+    "feishu.v1.bitable.search_advanced",
+    "feishu.v1.bitable.record.get",
+    "feishu.v1.bitable.record.create",
+    "feishu.v1.bitable.record.update",
+    "feishu.v1.bitable.record.delete",
+    "feishu.v1.doc.search",
+)
+
 
 # region 基础配置模型
 class ServerSettings(BaseModel):
@@ -128,6 +143,8 @@ class AutomationSettings(BaseModel):
     trigger_on_new_record_scan: bool = True
     trigger_on_new_record_scan_requires_checkpoint: bool = True
     new_record_scan_max_trigger_per_run: int = 50
+    sync_deletions_enabled: bool = True
+    sync_deletions_max_per_run: int = 200
     poller_enabled: bool = False
     poller_interval_seconds: float = 60.0
     action_max_retries: int = 1
@@ -135,6 +152,7 @@ class AutomationSettings(BaseModel):
     dead_letter_file: str = "automation_data/dead_letters.jsonl"
     run_log_file: str = "automation_data/run_logs.jsonl"
     schema_sync_enabled: bool = True
+    schema_poller_enabled: bool = False
     schema_sync_interval_seconds: float = 300.0
     schema_sync_event_driven: bool = True
     schema_cache_file: str = "automation_data/schema_cache.json"
@@ -149,6 +167,12 @@ class AutomationSettings(BaseModel):
     schema_policy_on_field_renamed: str = "warn_only"
     schema_policy_on_field_type_changed: str = "warn_only"
     schema_policy_on_trigger_field_removed: str = "disable_rule"
+    webhook_enabled: bool = False
+    webhook_api_key: str = ""
+    webhook_signature_secret: str = ""
+    webhook_timestamp_tolerance_seconds: int = 300
+    http_allowed_domains: list[str] = Field(default_factory=list)
+    http_timeout_seconds: float = 10.0
     status_write_enabled: bool = False
     status_field: str = "自动化_执行状态"
     error_field: str = "自动化_最近错误"
@@ -195,11 +219,27 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return _expand_env(data)
 
 
+def _extract_enabled_tools(config_data: dict[str, Any]) -> set[str]:
+    tools_data = config_data.get("tools")
+    if not isinstance(tools_data, dict):
+        return set()
+    enabled = tools_data.get("enabled")
+    if not isinstance(enabled, list):
+        return set()
+    return {str(name).strip() for name in enabled if str(name).strip()}
+
+
 def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
     current = data
     for key in keys[:-1]:
         current = current.setdefault(key, {})
     current[keys[-1]] = value
+
+
+def _parse_env_override(env_key: str, env_value: str) -> Any:
+    if env_key == "AUTOMATION_HTTP_ALLOWED_DOMAINS":
+        return [item.strip() for item in env_value.split(",") if item.strip()]
+    return env_value
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
@@ -234,6 +274,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             "automation",
             "new_record_scan_max_trigger_per_run",
         ],
+        "AUTOMATION_SYNC_DELETIONS_ENABLED": ["automation", "sync_deletions_enabled"],
+        "AUTOMATION_SYNC_DELETIONS_MAX_PER_RUN": ["automation", "sync_deletions_max_per_run"],
         "AUTOMATION_POLLER_ENABLED": ["automation", "poller_enabled"],
         "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
         "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
@@ -241,6 +283,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
         "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
         "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
+        "AUTOMATION_SCHEMA_POLLER_ENABLED": ["automation", "schema_poller_enabled"],
         "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],
         "AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN": ["automation", "schema_sync_event_driven"],
         "AUTOMATION_SCHEMA_CACHE_FILE": ["automation", "schema_cache_file"],
@@ -258,6 +301,15 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             "automation",
             "schema_policy_on_trigger_field_removed",
         ],
+        "AUTOMATION_WEBHOOK_ENABLED": ["automation", "webhook_enabled"],
+        "AUTOMATION_WEBHOOK_API_KEY": ["automation", "webhook_api_key"],
+        "AUTOMATION_WEBHOOK_SIGNATURE_SECRET": ["automation", "webhook_signature_secret"],
+        "AUTOMATION_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS": [
+            "automation",
+            "webhook_timestamp_tolerance_seconds",
+        ],
+        "AUTOMATION_HTTP_ALLOWED_DOMAINS": ["automation", "http_allowed_domains"],
+        "AUTOMATION_HTTP_TIMEOUT_SECONDS": ["automation", "http_timeout_seconds"],
         "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
         "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
         "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
@@ -265,8 +317,38 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)
         if env_value is not None and env_value != "":
-            _set_nested(data, path, env_value)
+            _set_nested(data, path, _parse_env_override(env_key, env_value))
     return data
+
+
+def check_tool_config_consistency(
+    settings: Settings,
+    runtime_config_path: str | None = None,
+    example_config_path: str | None = None,
+    required_tools: set[str] | None = None,
+) -> dict[str, Any]:
+    required = set(required_tools or REQUIRED_AGENT_MCP_TOOLS)
+    runtime_tools = {str(name).strip() for name in settings.tools.enabled if str(name).strip()}
+    runtime_missing = sorted(required - runtime_tools)
+
+    runtime_path = Path(runtime_config_path or os.getenv("CONFIG_PATH", "config.yaml"))
+    example_path = Path(example_config_path or "config.yaml.example")
+
+    example_exists = example_path.exists()
+    example_tools = _extract_enabled_tools(_load_yaml(example_path)) if example_exists else set()
+    example_missing = sorted(required - example_tools) if example_exists else []
+
+    return {
+        "required_tools": sorted(required),
+        "runtime_config_path": str(runtime_path),
+        "runtime_enabled": sorted(runtime_tools),
+        "runtime_missing": runtime_missing,
+        "example_config_path": str(example_path),
+        "example_exists": example_exists,
+        "example_enabled": sorted(example_tools),
+        "example_missing": example_missing,
+        "ok": not runtime_missing and (not example_exists or not example_missing),
+    }
 
 
 def load_settings(config_path: str | None = None) -> Settings:

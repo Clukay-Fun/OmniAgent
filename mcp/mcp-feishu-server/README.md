@@ -98,6 +98,7 @@ AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN=true
 AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT=true
 AUTOMATION_SCHEMA_SYNC_ENABLED=true
+AUTOMATION_SCHEMA_POLLER_ENABLED=false
 AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS=300
 AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=true
 AUTOMATION_SCHEMA_WEBHOOK_ENABLED=true
@@ -113,11 +114,27 @@ AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=false
 ### 4. 启动服务
 
 ```bash
-# 统一开发入口（推荐，启动 MCP + Agent）
-python ../../agent/feishu-agent/run_dev.py up
-
-# 在 MCP 目录下的代理入口（等价）
+# 统一开发入口（推荐，当前目录代理）
 python run_dev.py up
+
+# 一键拉起全部（含 monitoring + db）
+python run_dev.py up --all
+
+# 冲突清理（容器名/历史残留）
+python run_dev.py clean
+
+# 手动刷新 schema（省 API 调试）
+python run_dev.py refresh-schema
+python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
+
+# 鉴权健康检查（排查 token/网络）
+python run_dev.py auth-health
+
+# 手动补偿扫描（验证新增记录是否触发同步）
+python run_dev.py sync
+python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+
+# 说明：sync 会做新增+修改同步，并对 upsert 目标表执行删除对账
 
 # MCP 单服务模式
 python run_server.py
@@ -175,7 +192,9 @@ python run_server.py
 | `/feishu/events` | POST | 飞书事件订阅回调（实时触发） |
 | `/automation/init` | POST | 初始化快照 |
 | `/automation/scan` | POST | 手动补偿扫描 |
+| `/automation/sync` | POST | 手动全量同步（新增+修改+删除对账） |
 | `/automation/schema/refresh` | POST | 手动刷新表结构（支持全量/单表，支持风险演练） |
+| `/automation/auth/health` | GET | 鉴权健康检查（token 获取与网络连通性） |
 
 ### 示例请求
 
@@ -202,12 +221,23 @@ curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_person \
 # 手动刷新全部表 schema
 curl -X POST http://localhost:8081/automation/schema/refresh
 
+# 手动全量同步（新增+修改+删除对账）
+curl -X POST http://localhost:8081/automation/sync
+
+# 鉴权健康检查（token + 网络）
+curl http://localhost:8081/automation/auth/health
+
 # 手动刷新单表 schema
 curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx"
 
 # 强制风险演练（只发 webhook，不改 schema；需开启 AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=true）
 curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx&drill=true"
 ```
+
+说明：
+- 首次刷新（尚无 schema 缓存）会返回 `bootstrap=true`，用于建立基线，不视为风险变更
+- 当返回 `changed=false` 时表示本次字段结构无差异，不会产生 `schema_changed/schema_policy_applied` 风险日志
+- 为便于排查，系统会记录 `schema_refresh_noop` 运行日志
 
 ### Schema 风险演练开关
 

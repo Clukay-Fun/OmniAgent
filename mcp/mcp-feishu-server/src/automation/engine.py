@@ -163,11 +163,15 @@ class AutomationEngine:
         *,
         event_id: str,
         rule_id: str | None,
+        group: str | None,
+        app_token: str,
         record_id: str,
         table_id: str,
         trigger_field: str | None,
         changed: dict[str, Any] | None,
         actions: list[dict[str, Any]],
+        rules_evaluated: list[str],
+        rules_matched: list[str],
         result: str,
         error: str | None,
         retry_count: int,
@@ -180,15 +184,41 @@ class AutomationEngine:
             if action_type:
                 actions_executed.append(action_type)
 
+        action_details: list[dict[str, Any]] = []
+        for action in actions:
+            action_type = str(action.get("type") or "").strip()
+            if not action_type:
+                continue
+            detail: dict[str, Any] = {"type": action_type}
+            for key in (
+                "operation",
+                "target_app_token",
+                "target_table_id",
+                "target_record_id",
+                "target_record_ids",
+                "retry_count",
+                "duration_ms",
+                "skipped",
+                "skip_reason",
+            ):
+                if key in action:
+                    detail[key] = action.get(key)
+            action_details.append(detail)
+
         self._run_logs.write(
             {
                 "event_id": event_id,
                 "rule_id": rule_id,
+                "group": group,
+                "app_token": app_token,
                 "record_id": record_id,
                 "table_id": table_id,
                 "trigger_field": trigger_field,
                 "changed": changed,
+                "rules_evaluated": rules_evaluated,
+                "rules_matched": rules_matched,
                 "actions_executed": actions_executed,
+                "actions_detail": action_details,
                 "result": result,
                 "error": error,
                 "retry_count": int(retry_count),
@@ -204,6 +234,8 @@ class AutomationEngine:
         app_token: str,
         table_id: str,
         record_id: str,
+        rules_evaluated: list[str],
+        rules_matched: list[str],
     ) -> RuleExecutionResult:
         pipeline = rule.get("pipeline") or {}
         if not isinstance(pipeline, dict):
@@ -227,6 +259,7 @@ class AutomationEngine:
         all_action_results: list[dict[str, Any]] = []
         started_at = time.perf_counter()
         trigger_field, changed = self._extract_trigger_change(rule, context.get("diff") or {})
+        group = str(rule.get("group") or "").strip() or None
         try:
             all_action_results.extend(
                 await self._executor.run_actions(before_actions, context, app_token, table_id, record_id)
@@ -244,11 +277,15 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=str(context.get("event_id") or ""),
                 rule_id=str(rule.get("rule_id") or "") or None,
+                group=group,
+                app_token=app_token,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=trigger_field,
                 changed=changed,
                 actions=all_action_results,
+                rules_evaluated=rules_evaluated,
+                rules_matched=rules_matched,
                 result="success",
                 error=None,
                 retry_count=retry_count,
@@ -292,11 +329,15 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=str(context.get("event_id") or ""),
                 rule_id=str(rule.get("rule_id") or "") or None,
+                group=group,
+                app_token=app_token,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=trigger_field,
                 changed=changed,
                 actions=all_action_results,
+                rules_evaluated=rules_evaluated,
+                rules_matched=rules_matched,
                 result="failed",
                 error=error_text,
                 retry_count=retry_count,
@@ -321,6 +362,9 @@ class AutomationEngine:
         old_fields: dict[str, Any],
         current_fields: dict[str, Any],
         diff: dict[str, Any],
+        event_kind: str = "",
+        rule_id_filter: str | None = None,
+        force_match: bool = False,
     ) -> dict[str, Any]:
         rules = self._store.load_enabled_rules(table_id, app_token=app_token)
         results: list[dict[str, Any]] = []
@@ -329,11 +373,35 @@ class AutomationEngine:
         success_count = 0
         failed_count = 0
 
-        for rule in rules:
-            matched = self._matcher.match(rule, old_fields, current_fields, diff)
-            if not matched:
-                continue
+        rules_evaluated: list[str] = []
+        matched_rules: list[dict[str, Any]] = []
 
+        normalized_rule_filter = str(rule_id_filter or "").strip()
+
+        for rule in rules:
+            rule_id = str(rule.get("rule_id") or "").strip()
+            if normalized_rule_filter and rule_id != normalized_rule_filter:
+                continue
+            if rule_id:
+                rules_evaluated.append(rule_id)
+
+            matched = bool(force_match) or self._matcher.match(
+                rule,
+                old_fields,
+                current_fields,
+                diff,
+                event_kind=event_kind,
+            )
+            if matched:
+                matched_rules.append(rule)
+
+        rules_matched: list[str] = []
+        for rule in matched_rules:
+            rule_id = str(rule.get("rule_id") or "").strip()
+            if rule_id:
+                rules_matched.append(rule_id)
+
+        for rule in matched_rules:
             matched_count += 1
             context = {
                 "event_id": event_id,
@@ -345,7 +413,15 @@ class AutomationEngine:
                 "diff": copy.deepcopy(diff),
                 "error": "",
             }
-            execution = await self._run_rule_pipeline(rule, context, app_token, table_id, record_id)
+            execution = await self._run_rule_pipeline(
+                rule,
+                context,
+                app_token,
+                table_id,
+                record_id,
+                rules_evaluated,
+                rules_matched,
+            )
 
             if execution.status == "success":
                 success_count += 1
@@ -374,11 +450,15 @@ class AutomationEngine:
             self._write_run_log(
                 event_id=event_id,
                 rule_id=None,
+                group=None,
+                app_token=app_token,
                 record_id=record_id,
                 table_id=table_id,
                 trigger_field=None,
                 changed=fallback_changed,
                 actions=[],
+                rules_evaluated=rules_evaluated,
+                rules_matched=rules_matched,
                 result="no_match",
                 error=None,
                 retry_count=0,
@@ -388,8 +468,11 @@ class AutomationEngine:
 
         return {
             "status": status,
+            "event_kind": str(event_kind or ""),
             "matched": matched_count,
             "succeeded": success_count,
             "failed": failed_count,
+            "rules_evaluated": rules_evaluated,
+            "rules_matched": rules_matched,
             "results": results,
         }

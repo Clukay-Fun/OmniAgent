@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.automation import (
     AutomationPoller,
@@ -59,7 +60,7 @@ def get_schema_poller(settings: Settings) -> SchemaPoller:
     if _schema_poller is None:
         _schema_poller = SchemaPoller(
             service=get_automation_service(settings),
-            enabled=bool(settings.automation.schema_sync_enabled),
+            enabled=bool(settings.automation.schema_sync_enabled and settings.automation.schema_poller_enabled),
             interval_seconds=float(settings.automation.schema_sync_interval_seconds),
         )
     return _schema_poller
@@ -133,7 +134,26 @@ async def automation_scan(
     settings = get_settings()
     service = get_automation_service(settings)
     try:
+        if not str(table_id or "").strip() and not str(app_token or "").strip():
+            return await service.scan_once_all_tables()
         return await service.scan_table(table_id=table_id, app_token=app_token)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FeishuAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/automation/sync")
+async def automation_sync(
+    table_id: str | None = Query(default=None),
+    app_token: str | None = Query(default=None),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    try:
+        if not str(table_id or "").strip() and not str(app_token or "").strip():
+            return await service.sync_once_all_tables()
+        return await service.sync_table(table_id=table_id, app_token=app_token)
     except AutomationValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FeishuAPIError as exc:
@@ -182,6 +202,53 @@ async def automation_schema_refresh(
             raise AutomationValidationError("drill requires table_id to avoid bulk webhook push")
 
         return await service.refresh_schema_once_all_tables(triggered_by="manual_api")
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FeishuAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/automation/auth/health")
+async def automation_auth_health() -> dict[str, Any]:
+    settings = get_settings()
+    client = get_feishu_client(settings)
+    result = await client.auth_health()
+    return {
+        "status": result.get("status"),
+        "result": result,
+        "automation_enabled": bool(settings.automation.enabled),
+        "api_base": str(settings.feishu.api_base or ""),
+    }
+
+
+@router.post("/automation/webhook/{rule_id}")
+async def automation_webhook_trigger(
+    rule_id: str,
+    request: Request,
+    force: bool = Query(default=False),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json payload: {exc}")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="webhook payload must be object")
+
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+
+    try:
+        return await service.trigger_rule_webhook(
+            rule_id=rule_id,
+            payload=payload,
+            headers=headers,
+            raw_body=raw_body,
+            force=bool(force),
+        )
     except AutomationValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FeishuAPIError as exc:

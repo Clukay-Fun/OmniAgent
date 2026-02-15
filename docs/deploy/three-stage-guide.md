@@ -16,16 +16,25 @@
 ### 2) 统一开发入口（推荐）
 
 ```bash
-python agent/feishu-agent/run_dev.py up
+python run_dev.py up
 ```
 
 常用命令：
 
 ```bash
-python agent/feishu-agent/run_dev.py logs --follow
-python agent/feishu-agent/run_dev.py ps
-python agent/feishu-agent/run_dev.py down
+python run_dev.py logs --follow
+python run_dev.py ps
+python run_dev.py down
+python run_dev.py clean
+python run_dev.py refresh-schema
+python run_dev.py sync
+python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+
+# 一键拉起全部（含 monitoring + db）
+python run_dev.py up --all
 ```
+
+说明：`sync` 执行全量补偿（新增+修改+删除对账）。
 
 ### 3) 本地验证
 

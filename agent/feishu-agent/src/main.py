@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     skills_config = load_skills_config("config/skills.yaml")
     reminder_cfg = skills_config.get("reminder", {})
-    if settings.postgres.dsn:
+    if settings.reminder_scheduler_enabled and settings.postgres.dsn:
         db = PostgresClient(settings.postgres)
         interval_seconds = int(reminder_cfg.get("scan_interval_seconds", 60))
         lock_timeout_seconds = int(reminder_cfg.get("lock_timeout_seconds", 300))
@@ -82,6 +82,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             lock_timeout_seconds=lock_timeout_seconds,
         )
         app.state.reminder_scheduler.start()
+    else:
+        logger.info("Reminder scheduler disabled (set REMINDER_SCHEDULER_ENABLED=true and POSTGRES_DSN to enable)")
     
     # 启动开庭日提醒调度器
     if settings.hearing_reminder.enabled and settings.hearing_reminder.reminder_chat_id:

@@ -56,6 +56,22 @@ class L0RuleEngine:
             re.compile(r"批量删除"),
         ]
 
+        self._update_triggers = {
+            "更新", "修改", "改", "改成", "改为", "设成", "设置为", "设为", "调整", "变更",
+        }
+        self._delete_triggers = {
+            "删除", "删掉", "移除", "去掉",
+        }
+        self._reference_tokens = {
+            "这个", "这条", "那条", "上一条", "刚才", "刚刚", "前一条",
+        }
+
+        self._pending_field_hints = {
+            "案号", "案由", "委托人", "主办", "协办", "法院", "开庭", "备注", "项目",
+            "状态", "进展", "金额", "费用", "付款", "第", "这个", "那条",
+        }
+        self._generic_confirm_tokens = {"确认", "是", "是的", "ok", "yes"}
+
     def evaluate(self, user_id: str, text: str) -> L0Decision:
         query = (text or "").strip()
         normalized = self._normalize_text(query)
@@ -104,6 +120,32 @@ class L0RuleEngine:
             logger.info("L0 implicit cancel pending delete for user: %s", user_id)
             self._state.clear_pending_delete(user_id)
 
+        # 3.1) 通用待办动作状态（如创建补充字段）
+        pending_action = self._state.get_pending_action(user_id)
+        if pending_action:
+            if normalized in self._cancel_phrases:
+                self._state.clear_pending_action(user_id)
+                return L0Decision(
+                    handled=True,
+                    reply={"type": "text", "text": "好的，已取消当前操作。"},
+                )
+
+            force_skill = self._map_pending_action_skill(pending_action.action)
+            if force_skill and self._should_continue_pending_action(query):
+                return L0Decision(
+                    handled=False,
+                    force_skill=force_skill,
+                    force_extra={
+                        "pending_action": {
+                            "action": pending_action.action,
+                            "payload": pending_action.payload,
+                        }
+                    },
+                )
+
+            logger.info("L0 implicit cancel pending action for user: %s", user_id)
+            self._state.clear_pending_action(user_id)
+
         # 4) 分页
         if normalized in self._next_page_triggers:
             pagination = self._state.get_pagination(user_id)
@@ -151,6 +193,14 @@ class L0RuleEngine:
                 )
 
             record = last_result.records[ordinal_idx]
+            action_skill = self._detect_action_skill(query)
+            if action_skill:
+                return L0Decision(
+                    handled=False,
+                    force_skill=action_skill,
+                    force_last_result={"records": [record]},
+                )
+
             fields = record.get("fields_text") or record.get("fields") or {}
             case_no = fields.get("案号", "")
             cause = fields.get("案由", "")
@@ -167,6 +217,24 @@ class L0RuleEngine:
             return L0Decision(
                 handled=True,
                 reply={"type": "text", "text": "\n".join(detail)},
+            )
+
+        # 6) 指代 + 动作（这个/那条/刚才那条）
+        action_skill = self._detect_action_skill(query)
+        active_record = self._state.get_active_record(user_id)
+        if action_skill and active_record:
+            if action_skill == "DeleteSkill" and not self._has_reference_token(query):
+                return L0Decision(handled=False)
+            record = active_record.record or {
+                "record_id": active_record.record_id,
+                "fields_text": {
+                    "案号": active_record.record_summary,
+                },
+            }
+            return L0Decision(
+                handled=False,
+                force_skill=action_skill,
+                force_last_result={"records": [record]},
             )
 
         return L0Decision(handled=False)
@@ -216,3 +284,46 @@ class L0RuleEngine:
         if token.endswith("十") and len(token) == 2 and token[0] in mapping:
             return mapping[token[0]] * 10 - 1
         return None
+
+    def _detect_action_skill(self, query: str) -> str | None:
+        text = (query or "").strip()
+        if not text:
+            return None
+        if any(token in text for token in self._delete_triggers):
+            return "DeleteSkill"
+        if any(token in text for token in self._update_triggers):
+            return "UpdateSkill"
+        return None
+
+    def _has_reference_token(self, query: str) -> bool:
+        text = (query or "").strip()
+        if not text:
+            return False
+        if self._extract_ordinal_index(text) is not None:
+            return True
+        return any(token in text for token in self._reference_tokens)
+
+    def _map_pending_action_skill(self, action: str) -> str | None:
+        mapping = {
+            "create_record": "CreateSkill",
+            "update_record": "UpdateSkill",
+            "delete_record": "DeleteSkill",
+            "repair_child_write": "CreateSkill",
+            "repair_child_create": "CreateSkill",
+            "repair_child_update": "UpdateSkill",
+        }
+        key = str(action or "").strip()
+        return mapping.get(key)
+
+    def _should_continue_pending_action(self, query: str) -> bool:
+        text = (query or "").strip()
+        if not text:
+            return False
+        normalized = self._normalize_text(text)
+        if normalized in self._generic_confirm_tokens or normalized in self._cancel_phrases:
+            return True
+        if self._extract_ordinal_index(text) is not None:
+            return True
+        if any(token in text for token in self._pending_field_hints):
+            return True
+        return any(("\u4e00" <= ch <= "\u9fff") or ch.isalnum() for ch in text)

@@ -9,7 +9,12 @@
 from __future__ import annotations
 
 import logging
+import random
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
@@ -59,26 +64,22 @@ class ChitchatSkill(BaseSkill):
         "委托人", "主办", "协办", "进展", "待办", "提醒", "查询", "新增", "修改", "删除",
     ]
 
-    # 响应模板
-    RESPONSES = {
-        "greeting": "您好！我是小律，您的智能助理。有什么可以帮您的？",
-        "thanks": "不客气！如果还有其他问题，随时问我。",
-        "goodbye": "好的，再见！如有需要随时找我。",
-        "help": (
-            "📋 **我可以帮您：**\n\n"
-            "1. **查询案件** - 查看案件信息、进展\n"
-            "   - \"今天有什么庭\"\n"
-            "   - \"查一下张三的案件\"\n\n"
-            "2. **庭审日程** - 查看开庭安排\n"
-            "   - \"明天有什么庭\"\n"
-            "   - \"本周开庭安排\"\n\n"
-            "3. **设置提醒** - 待办事项管理\n"
-            "   - \"提醒我明天准备材料\"\n\n"
-            "4. **自由对话** - 随便聊聊\n"
-            "   - 任何问题都可以问我\n\n"
-            "请问需要什么帮助？"
-        ),
+    # ============================================
+    # region 默认回复随机池（YAML 加载失败时的兆底）
+    # ============================================
+    DEFAULT_RESPONSES = {
+        "greeting": ["您好！有什么可以帮您的？"],
+        "greeting_morning": ["早上好！今天有什么需要处理的吗？"],
+        "greeting_evening": ["晚上好！还有什么需要处理的吗？"],
+        "thanks": ["不客气！有其他问题随时问我。"],
+        "goodbye": ["好的，再见！如有需要随时找我。"],
+        "out_of_scope": ["案件相关的事可以问我哦～"],
+        "help": ["请问需要什么帮助？"],
+        "result_opener": ["查到啦~ "],
+        "empty_result": ["未找到相关记录。"],
     }
+    # endregion
+    # ============================================
 
     def __init__(
         self,
@@ -94,6 +95,13 @@ class ChitchatSkill(BaseSkill):
         """
         self._config = skills_config or {}
         self._llm_client = llm_client
+
+        # ============================================
+        # region 加载回复模板配置
+        # ============================================
+        self._responses = self._load_responses()
+        # endregion
+        # ============================================
         
         # 从配置加载自定义设置
         chitchat_cfg = self._config.get("chitchat", {})
@@ -127,22 +135,14 @@ class ChitchatSkill(BaseSkill):
         if self._is_goodbye(query):
             return self._create_result("goodbye", "告别响应")
 
-        # 4. 检查问候
+        # 4. 检查问候（带时间感知）
         if self._is_greeting(query):
-            return self._create_result("greeting", "问候响应")
+            greeting_type = self._get_time_greeting_type()
+            return self._create_result(greeting_type, "问候响应")
 
-        # 4.1 明显离题时收敛到业务域
+        # 4.1 明显离题时柔性收敛到业务域
         if not self._is_domain_related(query):
-            return SkillResult(
-                success=True,
-                skill_name=self.name,
-                data={"type": "out_of_scope"},
-                message="离题请求",
-                reply_text=(
-                    "我主要支持案件台账相关操作（查询、新增、修改、删除、提醒）。"
-                    "例如：\"查案号 2024-001\"、\"今天开庭的案件\"。"
-                ),
-            )
+            return self._create_result("out_of_scope", "离题请求")
         
         # 5. 使用 LLM 自由对话
         return await self._llm_chat(query, context)
@@ -234,13 +234,58 @@ class ChitchatSkill(BaseSkill):
         query_lower = query.lower()
         return any(token in query or token.lower() in query_lower for token in self.DOMAIN_HINTS)
 
+    # ============================================
+    # region 配置加载 + 时间感知 + 随机选择
+    # ============================================
+    def _load_responses(self) -> dict[str, list[str]]:
+        """从 config/responses.yaml 加载回复模板，加载失败时用默认值"""
+        responses_path = Path("config/responses.yaml")
+        if not responses_path.exists():
+            logger.warning("responses.yaml not found at %s, using defaults", responses_path)
+            return dict(self.DEFAULT_RESPONSES)
+        try:
+            data = yaml.safe_load(responses_path.read_text(encoding="utf-8")) or {}
+            # 确保每个 key 的值都是列表
+            result = dict(self.DEFAULT_RESPONSES)
+            for key, value in data.items():
+                if isinstance(value, list) and value:
+                    result[key] = value
+                elif isinstance(value, str) and value:
+                    result[key] = [value]
+            logger.info("Loaded responses from %s (%d types)", responses_path, len(result))
+            return result
+        except Exception as exc:
+            logger.error("Failed to load responses.yaml: %s, using defaults", exc)
+            return dict(self.DEFAULT_RESPONSES)
+
+    def get_response(self, response_type: str) -> str:
+        """公开方法：从随机池中随机选择一条回复（供其他 Skill 调用）"""
+        pool = self._responses.get(response_type)
+        if not pool:
+            return ""
+        return random.choice(pool)
+
+    def _get_time_greeting_type(self) -> str:
+        """根据当前时间选择问候类型"""
+        hour = datetime.now().hour
+        if hour < 11:
+            return "greeting_morning"
+        elif hour >= 18:
+            return "greeting_evening"
+        return "greeting"
+
     def _create_result(self, response_type: str, message: str) -> SkillResult:
-        """构造模板响应结果"""
+        """从随机池中选择一条回复"""
+        reply = self.get_response(response_type)
+        if not reply:
+            reply = self.get_response("greeting")
         return SkillResult(
             success=True,
             skill_name=self.name,
             data={"type": response_type},
             message=message,
-            reply_text=self.RESPONSES.get(response_type, ""),
+            reply_text=reply,
         )
+    # endregion
+    # ============================================
 # endregion

@@ -23,12 +23,16 @@ _SKILL_NAME_MAP: dict[str, str] = {
     # 小写别名 -> 标准名
     "query": "QuerySkill",
     "create": "CreateSkill",
+    "update": "UpdateSkill",
+    "delete": "DeleteSkill",
     "summary": "SummarySkill",
     "reminder": "ReminderSkill",
     "chitchat": "ChitchatSkill",
     # 标准名 -> 标准名
     "QuerySkill": "QuerySkill",
     "CreateSkill": "CreateSkill",
+    "UpdateSkill": "UpdateSkill",
+    "DeleteSkill": "DeleteSkill",
     "SummarySkill": "SummarySkill",
     "ReminderSkill": "ReminderSkill",
     "ChitchatSkill": "ChitchatSkill",
@@ -245,7 +249,7 @@ class IntentParser:
             return config.get("skills", {})
 
         skills: dict[str, Any] = {}
-        for key in ("query", "create", "summary", "reminder", "chitchat"):
+        for key in ("query", "create", "update", "delete", "summary", "reminder", "chitchat"):
             cfg = config.get(key)
             if not isinstance(cfg, dict):
                 continue
@@ -510,6 +514,12 @@ def _default_skills_config() -> dict[str, Any]:
         },
         "create": {
             "keywords": ["新增", "新建", "创建", "添加", "录入", "登记"],
+        },
+        "update": {
+            "keywords": ["更新", "修改", "改", "改为", "改成", "设成", "设置为", "调整"],
+        },
+        "delete": {
+            "keywords": ["删除", "删掉", "移除", "去掉"],
         },
         "chain": {
             "triggers": [

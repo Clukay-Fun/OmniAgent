@@ -54,6 +54,7 @@ agent/feishu-agent/workspace/*
 # local runtime directories
 runtime/
 deploy/runtime/
+automation_data/
 
 # service test code is local-only by default
 agent/feishu-agent/tests/

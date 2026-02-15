@@ -13,7 +13,6 @@
   - `tools/dev`：本地联调
   - `tools/ci`：校验与门禁
 - `docs/`：项目文档
-  - `docs/scenarios`：场景库与说明
   - `docs/deploy`：上传与上线清单
   - `docs/architecture`：架构与目录说明
   - `docs/tests`：测试说明
@@ -29,7 +28,4 @@
 - `monitoring/*` -> `deploy/monitoring/*`
 - 监控服务合并进 `deploy/docker/compose.yml`，通过 `--profile monitoring` 启动
 - `scripts/*` -> `tools/dev/*` 与 `tools/ci/*`
-- `docs/scenarios.yaml` -> `docs/scenarios/scenarios.yaml`
-- `docs/scenarios.schema.yaml` -> `docs/scenarios/scenarios.schema.yaml`
-- `docs/scenarios.md` -> `docs/scenarios/README.md`
 - `TEST.md` -> `docs/tests/TEST.md`

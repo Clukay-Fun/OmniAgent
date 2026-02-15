@@ -100,9 +100,19 @@ doc:
 tools:
   # 启用的工具列表
   enabled:
+    - "feishu.v1.bitable.list_tables"     # 列出表格
     - "feishu.v1.bitable.search"
+    - "feishu.v1.bitable.search_exact"
+    - "feishu.v1.bitable.search_keyword"
+    - "feishu.v1.bitable.search_person"
+    - "feishu.v1.bitable.search_date_range"
+    - "feishu.v1.bitable.search_advanced"
     - "feishu.v1.bitable.record.get"
+    - "feishu.v1.bitable.record.create"
+    - "feishu.v1.bitable.record.update"
+    - "feishu.v1.bitable.record.delete"
     - "feishu.v1.doc.search"
+    - "feishu.v1.calendar.event.create"
     # Phase 2
     # - "feishu.v1.file.upload"
     # - "feishu.v1.file.download"
@@ -141,6 +151,8 @@ automation:
   trigger_on_new_record_scan: ${AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN:-true}
   trigger_on_new_record_scan_requires_checkpoint: ${AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT:-true}
   new_record_scan_max_trigger_per_run: ${AUTOMATION_NEW_RECORD_SCAN_MAX_TRIGGER_PER_RUN:-50}
+  sync_deletions_enabled: ${AUTOMATION_SYNC_DELETIONS_ENABLED:-true}
+  sync_deletions_max_per_run: ${AUTOMATION_SYNC_DELETIONS_MAX_PER_RUN:-200}
   poller_enabled: ${AUTOMATION_POLLER_ENABLED:-false}
   poller_interval_seconds: ${AUTOMATION_POLLER_INTERVAL_SECONDS:-60}
   action_max_retries: ${AUTOMATION_ACTION_MAX_RETRIES:-1}
@@ -148,6 +160,7 @@ automation:
   dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
   run_log_file: ${AUTOMATION_RUN_LOG_FILE:-automation_data/run_logs.jsonl}
   schema_sync_enabled: ${AUTOMATION_SCHEMA_SYNC_ENABLED:-true}
+  schema_poller_enabled: ${AUTOMATION_SCHEMA_POLLER_ENABLED:-false}
   schema_sync_interval_seconds: ${AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS:-300}
   schema_sync_event_driven: ${AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN:-true}
   schema_cache_file: ${AUTOMATION_SCHEMA_CACHE_FILE:-automation_data/schema_cache.json}
@@ -162,6 +175,12 @@ automation:
   schema_policy_on_field_renamed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED:-warn_only}
   schema_policy_on_field_type_changed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_TYPE_CHANGED:-warn_only}
   schema_policy_on_trigger_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_TRIGGER_FIELD_REMOVED:-disable_rule}
+  webhook_enabled: ${AUTOMATION_WEBHOOK_ENABLED:-false}
+  webhook_api_key: ${AUTOMATION_WEBHOOK_API_KEY:-}
+  webhook_signature_secret: ${AUTOMATION_WEBHOOK_SIGNATURE_SECRET:-}
+  webhook_timestamp_tolerance_seconds: ${AUTOMATION_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+  http_allowed_domains: []
+  http_timeout_seconds: ${AUTOMATION_HTTP_TIMEOUT_SECONDS:-10}
   status_write_enabled: ${AUTOMATION_STATUS_WRITE_ENABLED:-false}
   status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
   error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}

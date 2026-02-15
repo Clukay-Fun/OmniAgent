@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from string import Formatter
@@ -62,6 +63,22 @@ def _extract_template_fields(value: Any) -> set[str]:
             continue
         fields.add(key)
     return fields
+
+
+def _collect_template_fields(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return _extract_template_fields(value)
+    if isinstance(value, list):
+        result: set[str] = set()
+        for item in value:
+            result.update(_collect_template_fields(item))
+        return result
+    if isinstance(value, dict):
+        result: set[str] = set()
+        for nested in value.values():
+            result.update(_collect_template_fields(nested))
+        return result
+    return set()
 
 
 def _as_action_list(value: Any) -> list[dict[str, Any]]:
@@ -136,6 +153,71 @@ class RuleStore:
             return {}
         return parsed
 
+    @staticmethod
+    def _collect_defaults(parsed: dict[str, Any]) -> dict[str, Any]:
+        defaults: dict[str, Any] = {}
+        global_defaults = parsed.get("global")
+        if isinstance(global_defaults, dict):
+            defaults.update(global_defaults)
+        explicit_defaults = parsed.get("defaults")
+        if isinstance(explicit_defaults, dict):
+            defaults.update(explicit_defaults)
+        return defaults
+
+    @staticmethod
+    def _apply_defaults_to_rule(rule: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+        if not defaults:
+            return dict(rule)
+
+        resolved = copy.deepcopy(rule)
+
+        default_source_app_token = str(
+            defaults.get("source_app_token")
+            or defaults.get("default_app_token")
+            or defaults.get("app_token")
+            or ""
+        ).strip()
+        default_source_table_id = str(
+            defaults.get("source_table_id")
+            or defaults.get("default_table_id")
+            or defaults.get("table_id")
+            or ""
+        ).strip()
+
+        rule_table = resolved.get("table")
+        if not isinstance(rule_table, dict):
+            rule_table = {}
+        if default_source_app_token and not str(rule_table.get("app_token") or "").strip():
+            rule_table["app_token"] = default_source_app_token
+        if default_source_table_id and not str(rule_table.get("table_id") or "").strip():
+            rule_table["table_id"] = default_source_table_id
+        if rule_table:
+            resolved["table"] = rule_table
+
+        default_target_app_token = str(
+            defaults.get("target_app_token") or default_source_app_token or ""
+        ).strip()
+        default_target_table_id = str(defaults.get("target_table_id") or "").strip()
+
+        pipeline = resolved.get("pipeline")
+        if isinstance(pipeline, dict):
+            for key in ("before_actions", "actions", "success_actions", "error_actions"):
+                actions = pipeline.get(key)
+                if not isinstance(actions, list):
+                    continue
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    action_type = str(action.get("type") or "").strip()
+                    if action_type != "bitable.upsert":
+                        continue
+                    if default_target_app_token and not str(action.get("target_app_token") or "").strip():
+                        action["target_app_token"] = default_target_app_token
+                    if default_target_table_id and not str(action.get("target_table_id") or "").strip():
+                        action["target_table_id"] = default_target_table_id
+
+        return resolved
+
     def load_enabled_rules(self, table_id: str, app_token: str = "") -> list[dict[str, Any]]:
         disabled_ids = self._disabled_rule_ids()
         enabled_rules: list[dict[str, Any]] = []
@@ -164,6 +246,7 @@ class RuleStore:
 
     def load_all_enabled_rules(self) -> list[dict[str, Any]]:
         parsed = self._load_raw()
+        defaults = self._collect_defaults(parsed)
         rules = parsed.get("rules")
         if not isinstance(rules, list):
             return []
@@ -174,15 +257,16 @@ class RuleStore:
                 continue
             if not bool(rule.get("enabled")):
                 continue
-            enabled_rules.append(rule)
+            enabled_rules.append(self._apply_defaults_to_rule(rule, defaults))
         return enabled_rules
 
     def load_all_rules(self) -> list[dict[str, Any]]:
         parsed = self._load_raw()
+        defaults = self._collect_defaults(parsed)
         rules = parsed.get("rules")
         if not isinstance(rules, list):
             return []
-        return [rule for rule in rules if isinstance(rule, dict)]
+        return [self._apply_defaults_to_rule(rule, defaults) for rule in rules if isinstance(rule, dict)]
 
     def _manual_watch_fields(self, table_id: str) -> set[str]:
         parsed = self._load_raw()
@@ -249,20 +333,11 @@ class RuleStore:
                     if name:
                         fields.add(name)
 
-            for key in ("message", "summary", "summary_template", "description", "description_template"):
-                fields.update(_extract_template_fields(action.get(key)))
+            for key in ("message", "summary", "summary_template", "description", "description_template", "url", "body"):
+                fields.update(_collect_template_fields(action.get(key)))
 
-            action_fields = action.get("fields")
-            if isinstance(action_fields, dict):
-                for value in action_fields.values():
-                    fields.update(_extract_template_fields(value))
-
-            for key in ("match_fields", "update_fields", "create_fields"):
-                action_dict = action.get(key)
-                if not isinstance(action_dict, dict):
-                    continue
-                for value in action_dict.values():
-                    fields.update(_extract_template_fields(value))
+            for key in ("fields", "match_fields", "update_fields", "create_fields", "headers", "json_body"):
+                fields.update(_collect_template_fields(action.get(key)))
 
         return fields, full_mode
 
@@ -303,7 +378,27 @@ class RuleStore:
 
 
 class RuleMatcher:
-    """规则匹配器：支持 changed/equals/in/any_field_changed + exclude_fields。"""
+    """规则匹配器：支持 on/changed/equals/in/any_field_changed + exclude_fields。"""
+
+    @staticmethod
+    def _match_event_scope(trigger: dict[str, Any], event_kind: str) -> bool:
+        on_value = trigger.get("on")
+        if on_value is None:
+            return True
+
+        allowed_raw = _as_list(on_value)
+        allowed = {
+            str(item or "").strip().lower()
+            for item in allowed_raw
+            if str(item or "").strip()
+        }
+        if not allowed:
+            return True
+
+        normalized_kind = str(event_kind or "").strip().lower()
+        if not normalized_kind:
+            return True
+        return normalized_kind in allowed
 
     @staticmethod
     def _match_any_field_changed(trigger: dict[str, Any], changed_fields: set[str]) -> bool:
@@ -376,9 +471,13 @@ class RuleMatcher:
         old_fields: dict[str, Any],
         current_fields: dict[str, Any],
         diff: dict[str, Any],
+        event_kind: str = "",
     ) -> bool:
         trigger = rule.get("trigger") or {}
         if not isinstance(trigger, dict):
+            return False
+
+        if not self._match_event_scope(trigger, event_kind):
             return False
 
         changed = diff.get("changed") or {}

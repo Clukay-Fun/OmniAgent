@@ -13,6 +13,8 @@ from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.multi_table_linker import MultiTableLinker
+from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ class DeleteSkill(BaseSkill):
         self._settings = settings
         self._skills_config = skills_config or {}
         self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
+        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
@@ -91,6 +94,10 @@ class DeleteSkill(BaseSkill):
         
         # 首次删除请求：需要确认
         records = last_result.get("records", [])
+        if not records:
+            active_record = extra.get("active_record")
+            if isinstance(active_record, dict) and active_record.get("record_id"):
+                records = [active_record]
 
         # Planner 直接给 record_id 时，直接进入确认
         planner_pending = self._extract_pending_from_planner(planner_plan)
@@ -130,10 +137,11 @@ class DeleteSkill(BaseSkill):
         # 如果有多条记录，需要用户明确
         if len(records) > 1:
             return SkillResult(
-                success=False,
+                success=True,
                 skill_name=self.name,
+                data={"records": records[:10]},
                 message="找到多条记录，无法确定删除目标",
-                reply_text=f"找到 {len(records)} 条记录，请明确要删除哪一条。",
+                reply_text=self._build_multi_record_reply(records),
             )
         
         # 获取记录信息
@@ -232,7 +240,15 @@ class DeleteSkill(BaseSkill):
                     reply_text=f"删除失败：{error}",
                 )
             
-            reply_text = f"✅ 已成功删除案件：{case_no}"
+            link_sync = await self._linker.sync_after_delete(
+                parent_table_id=table_id,
+                parent_table_name=str(pending.get("table_name") or "").strip() or None,
+                parent_fields={"案号": case_no},
+            )
+            link_summary = self._linker.summarize(link_sync)
+            reply_text = f"{pool.pick('delete_success', '✅ 已删除')}\n案件：{case_no}"
+            if link_summary:
+                reply_text += f"\n\n{link_summary}"
             
             return SkillResult(
                 success=True,
@@ -241,6 +257,7 @@ class DeleteSkill(BaseSkill):
                     "record_id": record_id,
                     "case_no": case_no,
                     "table_id": table_id,
+                    "link_sync": link_sync,
                 },
                 message="删除成功",
                 reply_text=reply_text,
@@ -252,7 +269,7 @@ class DeleteSkill(BaseSkill):
                 success=False,
                 skill_name=self.name,
                 message=str(e),
-                reply_text="删除失败，请稍后重试。",
+                reply_text=pool.pick("error", "删除失败，请稍后重试。"),
             )
     
     def _is_confirmation(self, query: str) -> bool:
@@ -320,4 +337,17 @@ class DeleteSkill(BaseSkill):
         except Exception as exc:
             logger.warning("DeleteSkill pre-search failed: %s", exc)
             return []
+
+    def _build_multi_record_reply(self, records: list[dict[str, Any]]) -> str:
+        lines = [f"找到 {len(records)} 条记录，请指定要删除哪一条："]
+        for index, record in enumerate(records[:5], start=1):
+            fields = record.get("fields_text") or record.get("fields") or {}
+            case_no = str(fields.get("案号") or fields.get("项目ID") or "未知")
+            cause = str(fields.get("案由") or fields.get("案件分类") or "")
+            if cause:
+                lines.append(f"{index}. {case_no} - {cause}")
+            else:
+                lines.append(f"{index}. {case_no}")
+        lines.append("可回复“删除第一个”或“第一个删除”继续。")
+        return "\n".join(lines)
 # endregion
