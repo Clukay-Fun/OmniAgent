@@ -167,6 +167,12 @@ class AutomationSettings(BaseModel):
     schema_policy_on_field_renamed: str = "warn_only"
     schema_policy_on_field_type_changed: str = "warn_only"
     schema_policy_on_trigger_field_removed: str = "disable_rule"
+    webhook_enabled: bool = False
+    webhook_api_key: str = ""
+    webhook_signature_secret: str = ""
+    webhook_timestamp_tolerance_seconds: int = 300
+    http_allowed_domains: list[str] = Field(default_factory=list)
+    http_timeout_seconds: float = 10.0
     status_write_enabled: bool = False
     status_field: str = "自动化_执行状态"
     error_field: str = "自动化_最近错误"
@@ -230,6 +236,12 @@ def _set_nested(data: dict[str, Any], keys: list[str], value: Any) -> None:
     current[keys[-1]] = value
 
 
+def _parse_env_override(env_key: str, env_value: str) -> Any:
+    if env_key == "AUTOMATION_HTTP_ALLOWED_DOMAINS":
+        return [item.strip() for item in env_value.split(",") if item.strip()]
+    return env_value
+
+
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     mapping = {
         "FEISHU_DATA_APP_ID": ["feishu", "app_id"],
@@ -289,6 +301,15 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             "automation",
             "schema_policy_on_trigger_field_removed",
         ],
+        "AUTOMATION_WEBHOOK_ENABLED": ["automation", "webhook_enabled"],
+        "AUTOMATION_WEBHOOK_API_KEY": ["automation", "webhook_api_key"],
+        "AUTOMATION_WEBHOOK_SIGNATURE_SECRET": ["automation", "webhook_signature_secret"],
+        "AUTOMATION_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS": [
+            "automation",
+            "webhook_timestamp_tolerance_seconds",
+        ],
+        "AUTOMATION_HTTP_ALLOWED_DOMAINS": ["automation", "http_allowed_domains"],
+        "AUTOMATION_HTTP_TIMEOUT_SECONDS": ["automation", "http_timeout_seconds"],
         "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
         "AUTOMATION_STATUS_FIELD": ["automation", "status_field"],
         "AUTOMATION_ERROR_FIELD": ["automation", "error_field"],
@@ -296,7 +317,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)
         if env_value is not None and env_value != "":
-            _set_nested(data, path, env_value)
+            _set_nested(data, path, _parse_env_override(env_key, env_value))
     return data
 
 

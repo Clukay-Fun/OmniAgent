@@ -167,3 +167,13 @@ sequenceDiagram
 - 本地测试若使用模拟 webhook，`user_id` 可能不是 open_id，会导致提醒推送 400
 - 飞书事件订阅回调必须公网可达（如使用 ngrok/Cloudflare Tunnel）
 - Summary 依赖上一次查询结果，空结果会导致汇总失败
+
+## 10. 近期开发进展（2026-02）
+
+- 上下文主键收敛到 `open_id`，私聊场景实现“多用户隔离 + 同用户多设备连续”。
+- 状态管理增强：新增 `active_table`、`active_record`、`pending_action`、`last_result_ids` 槽位，并接入统一 TTL 清理。
+- L0 规则增强：支持“第N个/这个/那条”直接驱动 Update/Delete 技能，不再只做展示。
+- 单表 CRUD 完整化：Create 支持必填补槽与确认/取消，Update 支持目标定位与字段校验，Delete 支持多条编号确认。
+- 多表联动第一版上线：新增 `MultiTableLinker`，支持主表写入后联动子表、失败补录重试、上下文跨表查询。
+- 当前默认联动链路：`案件项目总库` / `【诉讼案件】` -> `合同管理表`（规则在 `config/skills.yaml`）。
+- 发票相关子表（`发票提交明细`、`费用发票统计`）已从当前联动范围剔除，后续按需求再启用。

@@ -12,8 +12,10 @@ import time
 from typing import Any
 
 from src.core.state.models import (
+    ActiveRecordState,
     ConversationState,
     LastResultState,
+    PendingActionState,
     PaginationState,
     PendingDeleteState,
 )
@@ -30,12 +32,16 @@ class ConversationStateManager:
         pending_delete_ttl_seconds: int = 300,
         pagination_ttl_seconds: int = 600,
         last_result_ttl_seconds: int = 600,
+        active_record_ttl_seconds: int = 1800,
+        pending_action_ttl_seconds: int = 300,
     ) -> None:
         self._store = store
         self._default_ttl = default_ttl_seconds
         self._pending_delete_ttl = pending_delete_ttl_seconds
         self._pagination_ttl = pagination_ttl_seconds
         self._last_result_ttl = last_result_ttl_seconds
+        self._active_record_ttl = active_record_ttl_seconds
+        self._pending_action_ttl = pending_action_ttl_seconds
 
     def active_count(self) -> int:
         return self._store.active_count()
@@ -63,6 +69,11 @@ class ConversationStateManager:
             state.pagination = None
         if state.last_result and state.last_result.is_expired(now):
             state.last_result = None
+            state.last_result_ids = []
+        if state.active_record and state.active_record.is_expired(now):
+            state.active_record = None
+        if state.pending_action and state.pending_action.is_expired(now):
+            state.pending_action = None
 
         state.updated_at = now
         state.expires_at = max(state.expires_at, now + self._default_ttl)
@@ -116,6 +127,7 @@ class ConversationStateManager:
             created_at=now,
             expires_at=now + self._last_result_ttl,
         )
+        state.last_result_ids = record_ids
         state.updated_at = now
         self._store.set(user_id, state)
 
@@ -153,5 +165,128 @@ class ConversationStateManager:
     def clear_pagination(self, user_id: str) -> None:
         state = self.get_state(user_id)
         state.pagination = None
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
+    def get_last_result_payload(self, user_id: str) -> dict[str, Any] | None:
+        last_result = self.get_last_result(user_id)
+        if not last_result:
+            return None
+        return {
+            "records": last_result.records,
+            "record_ids": last_result.record_ids,
+            "query_summary": last_result.query_summary,
+        }
+
+    def set_last_skill(self, user_id: str, skill_name: str) -> None:
+        state = self.get_state(user_id)
+        state.extras["last_skill"] = skill_name
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
+    def get_last_skill(self, user_id: str) -> str | None:
+        state = self.get_state(user_id)
+        value = state.extras.get("last_skill")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def set_active_table(self, user_id: str, table_id: str | None, table_name: str | None = None) -> None:
+        state = self.get_state(user_id)
+        state.active_table_id = str(table_id).strip() if table_id else None
+        state.active_table_name = str(table_name).strip() if table_name else None
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
+    def get_active_table(self, user_id: str) -> dict[str, str | None]:
+        state = self.get_state(user_id)
+        return {
+            "table_id": state.active_table_id,
+            "table_name": state.active_table_name,
+        }
+
+    def clear_active_table(self, user_id: str) -> None:
+        state = self.get_state(user_id)
+        state.active_table_id = None
+        state.active_table_name = None
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
+    def set_active_record(
+        self,
+        user_id: str,
+        record: dict[str, Any],
+        table_id: str | None = None,
+        table_name: str | None = None,
+        source: str = "unknown",
+    ) -> None:
+        now = time.time()
+        state = self.get_state(user_id)
+        record_id = str(record.get("record_id") or "").strip()
+        if not record_id:
+            return
+
+        if table_id is None:
+            table_id = str(record.get("table_id") or "").strip() or None
+        if table_name is None:
+            table_name = str(record.get("table_name") or "").strip() or None
+
+        fields = record.get("fields_text") or record.get("fields") or {}
+        summary = ""
+        if isinstance(fields, dict):
+            summary = str(fields.get("案号") or fields.get("项目ID") or "").strip()
+
+        state.active_record = ActiveRecordState(
+            record_id=record_id,
+            record_summary=summary,
+            table_id=table_id,
+            table_name=table_name,
+            record=record,
+            source=source,
+            created_at=now,
+            expires_at=now + self._active_record_ttl,
+        )
+        if table_id:
+            state.active_table_id = table_id
+        if table_name:
+            state.active_table_name = table_name
+        state.updated_at = now
+        self._store.set(user_id, state)
+
+    def clear_active_record(self, user_id: str) -> None:
+        state = self.get_state(user_id)
+        state.active_record = None
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
+    def get_active_record(self, user_id: str) -> ActiveRecordState | None:
+        state = self.get_state(user_id)
+        return state.active_record
+
+    def set_pending_action(
+        self,
+        user_id: str,
+        action: str,
+        payload: dict[str, Any] | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        now = time.time()
+        state = self.get_state(user_id)
+        state.pending_action = PendingActionState(
+            action=str(action).strip(),
+            payload=payload or {},
+            created_at=now,
+            expires_at=now + (ttl_seconds if ttl_seconds is not None else self._pending_action_ttl),
+        )
+        state.updated_at = now
+        self._store.set(user_id, state)
+
+    def get_pending_action(self, user_id: str) -> PendingActionState | None:
+        state = self.get_state(user_id)
+        return state.pending_action
+
+    def clear_pending_action(self, user_id: str) -> None:
+        state = self.get_state(user_id)
+        state.pending_action = None
         state.updated_at = time.time()
         self._store.set(user_id, state)

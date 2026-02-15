@@ -21,6 +21,16 @@
 - ✅ **人格化回复**（模板随机池 + 时间感知问候 + 柔性拒绝）
 - ✅ **回复模板外置**（`config/responses.yaml` 集中管理）
 
+## 🆕 近期开发进展（2026-02）
+
+- ✅ 对话上下文主键收敛为 `open_id`（私聊场景多用户隔离、同用户多设备连续）
+- ✅ 状态槽位增强：`active_table` / `active_record` / `pending_action` / `last_result_ids`
+- ✅ 单表 CRUD 多轮闭环：创建补字段、确认/取消、更新目标定位、删除二次确认
+- ✅ L0 指代执行增强：支持“第N个/这个/那条”直接驱动更新与删除
+- ✅ 多表联动能力上线（当前默认启用 `case_to_contract`）
+- ✅ 子表失败补录机制上线：主表成功保留，子表失败进入对话补录重试
+- ✅ 多表离线回归脚本：`python ../../tools/dev/verify_multitable_linker.py`
+
 ---
 
 ## 🏗️ 架构图
@@ -252,6 +262,12 @@ Runner 当前包含：
 - Docs 场景投影校验（从 `../../docs/scenarios/scenarios.yaml` 自动抽取可映射场景）
 - Error/Security 守卫校验（批量删除拦截、注入类输入、空输入等）
 - Skill 行为回归（当前包含 Reminder 的时间澄清/过去时间校验）
+
+多表联动离线校验（不依赖真实飞书环境）：
+
+```bash
+python ../../tools/dev/verify_multitable_linker.py
+```
 
 本地单服务启动前自动执行场景回归（可选）：
 

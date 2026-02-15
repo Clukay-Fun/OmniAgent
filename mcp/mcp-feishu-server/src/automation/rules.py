@@ -65,6 +65,22 @@ def _extract_template_fields(value: Any) -> set[str]:
     return fields
 
 
+def _collect_template_fields(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return _extract_template_fields(value)
+    if isinstance(value, list):
+        result: set[str] = set()
+        for item in value:
+            result.update(_collect_template_fields(item))
+        return result
+    if isinstance(value, dict):
+        result: set[str] = set()
+        for nested in value.values():
+            result.update(_collect_template_fields(nested))
+        return result
+    return set()
+
+
 def _as_action_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -317,20 +333,11 @@ class RuleStore:
                     if name:
                         fields.add(name)
 
-            for key in ("message", "summary", "summary_template", "description", "description_template"):
-                fields.update(_extract_template_fields(action.get(key)))
+            for key in ("message", "summary", "summary_template", "description", "description_template", "url", "body"):
+                fields.update(_collect_template_fields(action.get(key)))
 
-            action_fields = action.get("fields")
-            if isinstance(action_fields, dict):
-                for value in action_fields.values():
-                    fields.update(_extract_template_fields(value))
-
-            for key in ("match_fields", "update_fields", "create_fields"):
-                action_dict = action.get(key)
-                if not isinstance(action_dict, dict):
-                    continue
-                for value in action_dict.values():
-                    fields.update(_extract_template_fields(value))
+            for key in ("fields", "match_fields", "update_fields", "create_fields", "headers", "json_body"):
+                fields.update(_collect_template_fields(action.get(key)))
 
         return fields, full_mode
 
@@ -371,7 +378,27 @@ class RuleStore:
 
 
 class RuleMatcher:
-    """规则匹配器：支持 changed/equals/in/any_field_changed + exclude_fields。"""
+    """规则匹配器：支持 on/changed/equals/in/any_field_changed + exclude_fields。"""
+
+    @staticmethod
+    def _match_event_scope(trigger: dict[str, Any], event_kind: str) -> bool:
+        on_value = trigger.get("on")
+        if on_value is None:
+            return True
+
+        allowed_raw = _as_list(on_value)
+        allowed = {
+            str(item or "").strip().lower()
+            for item in allowed_raw
+            if str(item or "").strip()
+        }
+        if not allowed:
+            return True
+
+        normalized_kind = str(event_kind or "").strip().lower()
+        if not normalized_kind:
+            return True
+        return normalized_kind in allowed
 
     @staticmethod
     def _match_any_field_changed(trigger: dict[str, Any], changed_fields: set[str]) -> bool:
@@ -444,9 +471,13 @@ class RuleMatcher:
         old_fields: dict[str, Any],
         current_fields: dict[str, Any],
         diff: dict[str, Any],
+        event_kind: str = "",
     ) -> bool:
         trigger = rule.get("trigger") or {}
         if not isinstance(trigger, dict):
+            return False
+
+        if not self._match_event_scope(trigger, event_kind):
             return False
 
         changed = diff.get("changed") or {}

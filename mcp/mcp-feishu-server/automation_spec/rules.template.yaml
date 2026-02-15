@@ -3,7 +3,7 @@
 # 运行时加载：否（仅模板）；真正生效文件是 ../automation_rules.yaml。
 # 关联文件：README.md（流程说明）、fields.yaml（字段契约）。
 # 说明：默认推荐日志优先，状态字段回写按 status_write_enabled 决定。
-# 当前动作类型：log.write / bitable.update / bitable.upsert / calendar.create
+# 当前动作类型：log.write / bitable.update / bitable.upsert / calendar.create / http.request
 
 meta:
   version: "v1.2"
@@ -34,6 +34,7 @@ rules:
       app_token: app_token_xxx
 
     trigger:
+      on: [updated]   # 可选：created / updated / [created, updated]
       field: 案件分类
       condition:
         changed: true
@@ -50,6 +51,16 @@ rules:
         - type: log.write
           level: info
           message: "规则命中：{record_id} 案件分类={案件分类}"
+
+        # 可选：回调外部系统（需配置 AUTOMATION_HTTP_ALLOWED_DOMAINS）
+        # - type: http.request
+        #   method: POST
+        #   url: https://example.com/api/callback
+        #   headers:
+        #     X-Source: mcp-feishu-automation
+        #   json_body:
+        #     record_id: "{record_id}"
+        #     table_id: "{table_id}"
 
         # 可选：需要建日历时启用
         # - type: calendar.create
@@ -99,6 +110,7 @@ rules:
       app_token: app_token_xxx
 
     trigger:
+      on: [updated]
       any_field_changed: true
       exclude_fields:
         - 自动化_执行状态
@@ -121,6 +133,7 @@ rules:
       app_token: app_token_source
 
     trigger:
+      on: [created, updated]
       all:
         - field: 协作类型
           condition:

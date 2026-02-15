@@ -1,18 +1,23 @@
 """
 描述: 自动化动作执行器。
 主要功能:
-    - 渲染并执行规则动作（update/upsert/calendar/log）
+    - 渲染并执行规则动作（update/upsert/calendar/log/http）
     - 处理动作重试、状态回写与错误归类
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+import time
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from src.config import Settings
 from src.feishu.client import FeishuAPIError
@@ -235,7 +240,7 @@ def _normalize_bitable_fields_payload(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 class ActionExecutor:
-    """动作执行器：支持 log.write、bitable.update、calendar.create（含重试）。"""
+    """动作执行器：支持 log/update/upsert/calendar/http（含重试）。"""
 
     def __init__(self, settings: Settings, client: Any) -> None:
         self._settings = settings
@@ -375,6 +380,121 @@ class ActionExecutor:
                 continue
             filtered[key] = value
         return filtered, skipped
+
+    @staticmethod
+    def _host_matches_allowed_domain(host: str, allowed_domain: str) -> bool:
+        host_value = host.strip().lower()
+        allowed_value = allowed_domain.strip().lower()
+        if not host_value or not allowed_value:
+            return False
+        if host_value == allowed_value:
+            return True
+        return host_value.endswith("." + allowed_value)
+
+    @staticmethod
+    def _is_private_or_internal_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        return bool(
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        )
+
+    @classmethod
+    def _validate_http_target(cls, url: str, allowed_domains: list[str]) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("http.request url must use http or https")
+
+        host = str(parsed.hostname or "").strip().lower()
+        if not host:
+            raise ValueError("http.request url host is required")
+
+        if host in {"localhost"} or host.endswith(".localhost"):
+            raise ValueError("http.request does not allow localhost")
+        if host.endswith(".local") or host.endswith(".internal"):
+            raise ValueError("http.request does not allow local/internal domains")
+
+        sanitized_domains = [domain.strip().lower() for domain in allowed_domains if domain and domain.strip()]
+        if not sanitized_domains:
+            raise ValueError("http.request requires non-empty AUTOMATION_HTTP_ALLOWED_DOMAINS")
+
+        if not any(cls._host_matches_allowed_domain(host, domain) for domain in sanitized_domains):
+            raise ValueError(f"http.request host not in allowlist: {host}")
+
+        try:
+            host_ip = ipaddress.ip_address(host)
+        except ValueError:
+            host_ip = None
+
+        if host_ip is not None:
+            if cls._is_private_or_internal_ip(host_ip):
+                raise ValueError(f"http.request private/internal ip is not allowed: {host}")
+
+    async def _action_http_request(self, action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        rendered_action = _render_value(action, self._compose_context(context))
+        if not isinstance(rendered_action, dict):
+            raise ValueError("http.request action payload is invalid")
+
+        method = str(rendered_action.get("method") or "POST").strip().upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise ValueError(f"http.request unsupported method: {method}")
+
+        url = str(rendered_action.get("url") or "").strip()
+        if not url:
+            raise ValueError("http.request requires url")
+
+        allowed_domains = list(self._settings.automation.http_allowed_domains or [])
+        self._validate_http_target(url, allowed_domains)
+
+        timeout_limit = min(10.0, max(0.1, float(self._settings.automation.http_timeout_seconds or 10.0)))
+        timeout_seconds = float(rendered_action.get("timeout_seconds") or timeout_limit)
+        timeout_seconds = min(timeout_limit, max(0.1, timeout_seconds))
+
+        headers_raw = rendered_action.get("headers")
+        headers: dict[str, str] = {}
+        if isinstance(headers_raw, dict):
+            for key, value in headers_raw.items():
+                header_key = str(key or "").strip()
+                if not header_key:
+                    continue
+                headers[header_key] = str(value or "")
+
+        json_body = rendered_action.get("json_body")
+        content = rendered_action.get("body")
+        if json_body is not None and content is not None:
+            raise ValueError("http.request body and json_body cannot be used together")
+
+        request_kwargs: dict[str, Any] = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+        }
+        if json_body is not None:
+            request_kwargs["json"] = json_body
+        if content is not None:
+            request_kwargs["content"] = str(content)
+
+        timeout = httpx.Timeout(timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+            response = await client.request(**request_kwargs)
+
+        if response.status_code >= 400:
+            raise ValueError(f"http.request failed with status {response.status_code}")
+
+        return {
+            "type": "http.request",
+            "method": method,
+            "url": url,
+            "status_code": int(response.status_code),
+            "ok": True,
+            "response_headers": {
+                "content_type": str(response.headers.get("content-type") or ""),
+                "request_id": str(response.headers.get("x-request-id") or ""),
+            },
+        }
 
     async def _action_log_write(self, action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         level = str(action.get("level") or "info").lower()
@@ -813,42 +933,61 @@ class ActionExecutor:
         for action in actions:
             action_type = str(action.get("type") or "").strip()
             if action_type == "log.write":
+                started_at = time.perf_counter()
                 result = await self._run_with_retry(
                     action_type,
                     lambda: self._action_log_write(action, context),
                 )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
                 results.append(result)
                 context["last_action_type"] = action_type
                 context["last_action_result"] = result
                 continue
             if action_type == "bitable.update":
+                started_at = time.perf_counter()
                 result = await self._run_with_retry(
                     action_type,
                     lambda: self._action_bitable_update(action, context, app_token, table_id, record_id),
                 )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
                 results.append(result)
                 context["last_action_type"] = action_type
                 context["last_action_result"] = result
                 continue
             if action_type == "calendar.create":
+                started_at = time.perf_counter()
                 result = await self._run_with_retry(
                     action_type,
                     lambda: self._action_calendar_create(action, context),
                 )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
                 results.append(result)
                 context["last_action_type"] = action_type
                 context["last_action_result"] = result
                 continue
             if action_type == "bitable.upsert":
+                started_at = time.perf_counter()
                 result = await self._run_with_retry(
                     action_type,
                     lambda: self._action_bitable_upsert(action, context, app_token),
                 )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
                 results.append(result)
                 context["last_action_type"] = action_type
                 context["last_action_result"] = result
                 context["upsert_record_id"] = str(result.get("target_record_id") or "")
                 context["upsert_operation"] = str(result.get("operation") or "")
+                continue
+            if action_type == "http.request":
+                started_at = time.perf_counter()
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_http_request(action, context),
+                )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
                 continue
             raise ValueError(f"unsupported action type: {action_type}")
         return results

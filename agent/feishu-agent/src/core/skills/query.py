@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.types import SkillContext, SkillResult
 from src.utils.time_parser import parse_time_range
 
@@ -55,6 +56,7 @@ class QuerySkill(BaseSkill):
         self._settings = settings
         self._llm = llm_client
         self._skills_config = skills_config or {}
+        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
 
         self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
         self._alias_lookup = self._build_alias_lookup(self._table_aliases)
@@ -188,7 +190,21 @@ class QuerySkill(BaseSkill):
             )
 
         tool_name, params = self._build_bitable_params(query, extra, table_result)
+        override = self._linker.resolve_query_override(
+            query=query,
+            current_tool=tool_name,
+            params=params,
+            target_table_id=table_result.get("table_id"),
+            target_table_name=table_result.get("table_name"),
+            active_table_id=extra.get("active_table_id"),
+            active_table_name=extra.get("active_table_name"),
+            active_record=extra.get("active_record") if isinstance(extra.get("active_record"), dict) else None,
+        )
         notice = table_result.get("notice")
+        if override:
+            tool_name, params = override
+            if not notice:
+                notice = "已按当前案件上下文联动查询关联表。"
 
         try:
             logger.info("Query tool selected: %s, params: %s", tool_name, params)

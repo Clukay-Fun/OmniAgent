@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.automation import (
     AutomationPoller,
@@ -218,3 +219,37 @@ async def automation_auth_health() -> dict[str, Any]:
         "automation_enabled": bool(settings.automation.enabled),
         "api_base": str(settings.feishu.api_base or ""),
     }
+
+
+@router.post("/automation/webhook/{rule_id}")
+async def automation_webhook_trigger(
+    rule_id: str,
+    request: Request,
+    force: bool = Query(default=False),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json payload: {exc}")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="webhook payload must be object")
+
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+
+    try:
+        return await service.trigger_rule_webhook(
+            rule_id=rule_id,
+            payload=payload,
+            headers=headers,
+            raw_body=raw_body,
+            force=bool(force),
+        )
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FeishuAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))

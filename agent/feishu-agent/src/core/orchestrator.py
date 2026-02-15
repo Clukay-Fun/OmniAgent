@@ -162,6 +162,8 @@ class AgentOrchestrator:
             pending_delete_ttl_seconds=300,
             pagination_ttl_seconds=600,
             last_result_ttl_seconds=600,
+            active_record_ttl_seconds=max(int(settings.session.ttl_minutes * 60), 60),
+            pending_action_ttl_seconds=300,
         )
 
         # 初始化 L0 规则层
@@ -302,6 +304,9 @@ class AgentOrchestrator:
         else:
             builtin_map = {
                 "query": "QuerySkill",
+                "create": "CreateSkill",
+                "update": "UpdateSkill",
+                "delete": "DeleteSkill",
                 "summary": "SummarySkill",
                 "reminder": "ReminderSkill",
                 "chitchat": "ChitchatSkill",
@@ -517,12 +522,30 @@ class AgentOrchestrator:
                 if should_execute:
                     # Step 2: 构建执行上下文
                     prev_context = self._context_manager.get(user_id)
+                    state_last_result = self._state_manager.get_last_result_payload(user_id)
+                    state_last_skill = self._state_manager.get_last_skill(user_id)
+                    active_table = self._state_manager.get_active_table(user_id)
+                    active_record = self._state_manager.get_active_record(user_id)
+                    pending_action = self._state_manager.get_pending_action(user_id)
                     if l0_decision.force_skill:
                         extra = dict(l0_decision.force_extra or {})
                     else:
                         extra = await self._build_extra(text, user_id, llm_context)
                         if planner_applied and planner_output:
                             extra["planner_plan"] = planner_output.to_context()
+
+                    if active_table.get("table_id"):
+                        extra["active_table_id"] = active_table.get("table_id")
+                    if active_table.get("table_name"):
+                        extra["active_table_name"] = active_table.get("table_name")
+                    if active_record and active_record.record:
+                        extra["active_record"] = active_record.record
+                    if pending_action:
+                        extra["pending_action"] = {
+                            "action": pending_action.action,
+                            "payload": pending_action.payload,
+                        }
+
                     extra["chat_id"] = chat_id
                     extra["chat_type"] = chat_type
                     extra["user_profile"] = user_profile  # 添加用户档案
@@ -531,8 +554,8 @@ class AgentOrchestrator:
                     context = SkillContext(
                         query=text,
                         user_id=user_id,
-                        last_result=force_last_result if force_last_result is not None else (prev_context.last_result if prev_context else None),
-                        last_skill=prev_context.last_skill if prev_context else None,
+                        last_result=force_last_result if force_last_result is not None else (state_last_result or (prev_context.last_result if prev_context else None)),
+                        last_skill=state_last_skill or (prev_context.last_skill if prev_context else None),
                         extra=extra,
                     )
 
@@ -830,9 +853,24 @@ class AgentOrchestrator:
         try:
             data = result.data or {}
             skill_name = result.skill_name
+            self._state_manager.set_last_skill(user_id, skill_name)
+
+            pending_action_data = data.get("pending_action") if isinstance(data, dict) else None
+            if isinstance(pending_action_data, dict):
+                action = str(pending_action_data.get("action") or "").strip()
+                payload = pending_action_data.get("payload")
+                if action:
+                    self._state_manager.set_pending_action(
+                        user_id,
+                        action=action,
+                        payload=payload if isinstance(payload, dict) else {},
+                    )
+            if bool(data.get("clear_pending_action")):
+                self._state_manager.clear_pending_action(user_id)
 
             if skill_name == "DeleteSkill":
                 pending = data.get("pending_delete") if isinstance(data, dict) else None
+                delete_records = data.get("records") if isinstance(data, dict) else None
                 if isinstance(pending, dict) and pending.get("record_id"):
                     record_id = str(pending.get("record_id"))
                     summary = str(pending.get("case_no") or pending.get("record_summary") or "")
@@ -841,10 +879,39 @@ class AgentOrchestrator:
                 elif result.success:
                     self._state_manager.clear_pending_delete(user_id)
 
+                if isinstance(delete_records, list) and len(delete_records) > 1:
+                    self._state_manager.set_last_result(user_id, delete_records, query)
+
+                if result.success:
+                    deleted_record_id = str(data.get("record_id") or "").strip()
+                    active = self._state_manager.get_active_record(user_id)
+                    if deleted_record_id and active and active.record_id == deleted_record_id:
+                        self._state_manager.clear_active_record(user_id)
+
+            if skill_name == "UpdateSkill":
+                update_records = data.get("records") if isinstance(data, dict) else None
+                if isinstance(update_records, list) and len(update_records) > 1:
+                    self._state_manager.set_last_result(user_id, update_records, query)
+
             if skill_name == "QuerySkill" and result.success:
                 records = data.get("records") if isinstance(data, dict) else None
                 if isinstance(records, list):
                     self._state_manager.set_last_result(user_id, records, query)
+
+                    if records:
+                        table_id, table_name = self._resolve_table_context_from_result(data, records)
+                        if table_id or table_name:
+                            self._state_manager.set_active_table(user_id, table_id, table_name)
+                        if len(records) == 1 and isinstance(records[0], dict):
+                            self._state_manager.set_active_record(
+                                user_id,
+                                records[0],
+                                table_id=table_id,
+                                table_name=table_name,
+                                source="query_single",
+                            )
+                    else:
+                        self._state_manager.clear_active_record(user_id)
 
                 pagination = data.get("pagination") if isinstance(data, dict) else None
                 query_meta = data.get("query_meta") if isinstance(data, dict) else None
@@ -871,11 +938,92 @@ class AgentOrchestrator:
                 else:
                     # 查询结果未携带分页信息时，清空旧分页状态
                     self._state_manager.clear_pagination(user_id)
+            elif skill_name == "CreateSkill" and result.success:
+                if "pending_action" not in data:
+                    self._state_manager.clear_pending_action(user_id)
+                table_id = str(data.get("table_id") or "").strip() or None
+                table_name = str(data.get("table_name") or "").strip() or None
+                if table_id or table_name:
+                    self._state_manager.set_active_table(user_id, table_id, table_name)
+                record_id = str(data.get("record_id") or "").strip()
+                if record_id:
+                    fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+                    record = {
+                        "record_id": record_id,
+                        "record_url": data.get("record_url", ""),
+                        "fields": fields,
+                        "fields_text": fields,
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    }
+                    self._state_manager.set_active_record(
+                        user_id,
+                        record,
+                        table_id=table_id,
+                        table_name=table_name,
+                        source="create",
+                    )
+            elif skill_name == "UpdateSkill" and result.success:
+                if "pending_action" not in data:
+                    self._state_manager.clear_pending_action(user_id)
+                table_id = str(data.get("table_id") or "").strip() or None
+                table_name = str(data.get("table_name") or "").strip() or None
+                if table_id or table_name:
+                    self._state_manager.set_active_table(user_id, table_id, table_name)
+                record_id = str(data.get("record_id") or "").strip()
+                if record_id:
+                    updated_fields = data.get("updated_fields") if isinstance(data.get("updated_fields"), dict) else {}
+                    record = {
+                        "record_id": record_id,
+                        "record_url": data.get("record_url", ""),
+                        "fields": updated_fields,
+                        "fields_text": updated_fields,
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    }
+                    self._state_manager.set_active_record(
+                        user_id,
+                        record,
+                        table_id=table_id,
+                        table_name=table_name,
+                        source="update",
+                    )
+
             elif skill_name != "QuerySkill":
                 # 非查询请求会使分页上下文失效
                 self._state_manager.clear_pagination(user_id)
         except Exception as exc:
             logger.warning("Failed to sync state: %s", exc)
+
+    def _resolve_table_context_from_result(
+        self,
+        result_data: dict[str, Any],
+        records: list[dict[str, Any]],
+    ) -> tuple[str | None, str | None]:
+        table_id = str(result_data.get("table_id") or "").strip() or None
+        table_name = str(result_data.get("table_name") or "").strip() or None
+
+        query_meta = result_data.get("query_meta")
+        if isinstance(query_meta, dict):
+            params = query_meta.get("params")
+            if isinstance(params, dict):
+                if not table_id:
+                    table_id = str(params.get("table_id") or "").strip() or None
+                if not table_name:
+                    table_name = str(params.get("table_name") or "").strip() or None
+
+        if not table_id and records:
+            table_id = self._extract_table_id_from_record(records[0])
+        return table_id, table_name
+
+    def _extract_table_id_from_record(self, record: dict[str, Any]) -> str | None:
+        url = str(record.get("record_url") or "").strip()
+        if not url:
+            return None
+        match = re.search(r"[?&]table=([^&#]+)", url)
+        if match:
+            return match.group(1)
+        return None
 
     async def _build_llm_context(self, user_id: str, query: str | None = None) -> dict[str, str]:
         context: dict[str, str] = {

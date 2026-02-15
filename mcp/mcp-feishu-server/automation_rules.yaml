@@ -93,6 +93,7 @@ rules:
     table: *source_table_fyk
 
     trigger:
+      on: [created]
       all:
         - field: 协作类型（必填）
           condition: *collab_whitelist
@@ -127,6 +128,7 @@ rules:
     table: *source_table_fyk
 
     trigger:
+      on: [updated]
       all:
         - any_field_changed: true
           exclude_fields: [已同步到总览, 记录ID]

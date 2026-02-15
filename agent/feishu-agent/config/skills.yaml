@@ -76,6 +76,23 @@ create:
     - 添加
     - 录入
     - 登记
+  required_fields:
+    - 案号
+    - 委托人
+    - 案由
+  confirm_phrases:
+    - 确认
+    - 确认创建
+    - 是
+    - 是的
+    - ok
+    - yes
+  cancel_phrases:
+    - 取消
+    - 算了
+    - 不用了
+    - 不建了
+    - 不创建
 
 update:
   keywords:
@@ -84,6 +101,8 @@ update:
     - 改
     - 编辑
     - 变更
+  field_options:
+    案件状态: [进行中, 已结案, 暂停]
 
 delete:
   keywords:
@@ -157,11 +176,35 @@ skills_market:
   enabled: true
   local_dir: src/skills_market
 
+multi_table:
+  enabled: true
+  links:
+    - name: case_to_contract
+      enabled: true
+      parent_tables: ["案件项目总库", "【诉讼案件】"]
+      child_table: "合同管理表"
+      parent_key: "委托人"
+      child_key: "客户名称"
+      create_fields:
+        委托人: 客户名称
+        主办律师: 主办律师
+        项目ID: 关联项目
+      update_fields:
+        委托人: 客户名称
+        主办律师: 主办律师
+        项目ID: 关联项目
+      create_if_missing_on_update: true
+      enable_create: true
+      enable_update: true
+      enable_delete: false
+      delete_mode: none  # none / delete
+
 table_aliases:
   # 根据实际表格名称配置别名
   案件项目总库: ["案件", "项目", "总库", "案子", "我的案件", "诉讼"]
   "【诉讼案件】": ["诉讼案件"]
   招投标台账: ["招投标", "投标", "中标"]
+  合同管理表: ["合同", "合同信息", "合同台账"]
   关键节点表: ["节点", "关键节点"]
   签约项目台账: ["签约", "签约项目"]
   投标台账: ["投标台账"]

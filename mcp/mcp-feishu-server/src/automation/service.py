@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -152,6 +153,180 @@ class AutomationService:
             return
         if token != expected:
             raise AutomationValidationError("invalid verification token")
+
+    def _find_enabled_rule(self, rule_id: str) -> dict[str, Any] | None:
+        normalized_rule_id = str(rule_id or "").strip()
+        if not normalized_rule_id:
+            return None
+
+        for rule in self._engine.rule_store.load_all_enabled_rules():
+            current_rule_id = str(rule.get("rule_id") or "").strip()
+            if current_rule_id == normalized_rule_id:
+                return rule
+        return None
+
+    def _verify_webhook_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
+        if not bool(self._settings.automation.webhook_enabled):
+            raise AutomationValidationError("automation webhook is disabled")
+
+        configured_key = str(self._settings.automation.webhook_api_key or "").strip()
+        signature_secret = str(self._settings.automation.webhook_signature_secret or "").strip()
+        if not configured_key and not signature_secret:
+            raise AutomationValidationError(
+                "automation webhook auth is not configured, set AUTOMATION_WEBHOOK_API_KEY "
+                "or AUTOMATION_WEBHOOK_SIGNATURE_SECRET"
+            )
+
+        header_map = {str(key).lower(): str(value) for key, value in headers.items()}
+
+        if configured_key:
+            provided_key = str(header_map.get("x-automation-key") or "").strip()
+            if not provided_key or not hmac.compare_digest(provided_key, configured_key):
+                raise AutomationValidationError("invalid webhook api key")
+
+        if signature_secret:
+            timestamp_text = str(header_map.get("x-automation-timestamp") or "").strip()
+            signature_text = str(header_map.get("x-automation-signature") or "").strip()
+            if not timestamp_text or not signature_text:
+                raise AutomationValidationError(
+                    "missing webhook signature headers: x-automation-timestamp / x-automation-signature"
+                )
+
+            try:
+                timestamp = int(timestamp_text)
+            except ValueError as exc:
+                raise AutomationValidationError("invalid x-automation-timestamp") from exc
+
+            now = int(time.time())
+            tolerance = max(1, int(self._settings.automation.webhook_timestamp_tolerance_seconds or 300))
+            if abs(now - timestamp) > tolerance:
+                raise AutomationValidationError("webhook signature timestamp expired")
+
+            normalized_signature = signature_text
+            if normalized_signature.lower().startswith("sha256="):
+                normalized_signature = normalized_signature.split("=", 1)[1].strip()
+
+            signed_payload = f"{timestamp}".encode("utf-8") + b"." + raw_body
+            expected_signature = hmac.new(
+                signature_secret.encode("utf-8"),
+                signed_payload,
+                hashlib.sha256,
+            ).hexdigest()
+
+            if not hmac.compare_digest(normalized_signature, expected_signature):
+                raise AutomationValidationError("invalid webhook signature")
+
+    @staticmethod
+    def _extract_webhook_fields(payload: dict[str, Any]) -> dict[str, Any]:
+        fields = payload.get("fields")
+        if isinstance(fields, dict):
+            return fields
+
+        reserved = {
+            "event_id",
+            "record_id",
+            "table_id",
+            "app_token",
+            "event_kind",
+            "old_fields",
+            "diff",
+            "force",
+            "triggered_by",
+        }
+        result: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key in reserved:
+                continue
+            result[str(key)] = value
+        return result
+
+    async def trigger_rule_webhook(
+        self,
+        *,
+        rule_id: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        raw_body: bytes,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        self._ensure_enabled()
+        self._verify_webhook_auth(headers, raw_body)
+
+        normalized_rule_id = str(rule_id or "").strip()
+        if not normalized_rule_id:
+            raise AutomationValidationError("rule_id is required")
+
+        rule = self._find_enabled_rule(normalized_rule_id)
+        if rule is None:
+            raise AutomationValidationError(f"rule not found or disabled: {normalized_rule_id}")
+
+        if not isinstance(payload, dict):
+            raise AutomationValidationError("webhook payload must be object")
+
+        rule_table = rule.get("table") or {}
+        if not isinstance(rule_table, dict):
+            rule_table = {}
+
+        app_token = str(
+            payload.get("app_token")
+            or rule_table.get("app_token")
+            or self._settings.bitable.default_app_token
+            or ""
+        ).strip()
+        table_id = str(
+            payload.get("table_id")
+            or rule_table.get("table_id")
+            or self._settings.bitable.default_table_id
+            or ""
+        ).strip()
+
+        event_id = str(payload.get("event_id") or "").strip()
+        if not event_id:
+            event_id = f"manual_webhook:{normalized_rule_id}:{int(time.time() * 1000)}"
+
+        record_id = str(payload.get("record_id") or "").strip()
+        if not record_id:
+            record_id = f"manual:{int(time.time() * 1000)}"
+
+        old_fields_raw = payload.get("old_fields")
+        old_fields = old_fields_raw if isinstance(old_fields_raw, dict) else {}
+        current_fields = self._extract_webhook_fields(payload)
+
+        diff_raw = payload.get("diff")
+        if isinstance(diff_raw, dict):
+            diff = diff_raw
+        else:
+            diff = self._snapshot.diff(old_fields, current_fields)
+
+        event_kind = str(payload.get("event_kind") or "").strip().lower()
+        if not event_kind:
+            event_kind = "updated" if old_fields else "created"
+
+        rule_execution = await self._engine.execute(
+            app_token=app_token,
+            table_id=table_id,
+            record_id=record_id,
+            event_id=event_id,
+            old_fields=old_fields,
+            current_fields=current_fields,
+            diff=diff,
+            event_kind=event_kind,
+            rule_id_filter=normalized_rule_id,
+            force_match=bool(force),
+        )
+
+        return {
+            "status": "ok",
+            "kind": "webhook_rule_triggered",
+            "rule_id": normalized_rule_id,
+            "event_id": event_id,
+            "event_kind": event_kind,
+            "app_token": app_token,
+            "table_id": table_id,
+            "record_id": record_id,
+            "force": bool(force),
+            "rules": rule_execution,
+        }
 
     def _decrypt_envelope_if_needed(self, payload: dict[str, Any]) -> dict[str, Any]:
         encrypted = payload.get("encrypt")
@@ -369,6 +544,7 @@ class AutomationService:
                 old_fields={},
                 current_fields=current_fields,
                 diff=diff,
+                event_kind="created",
             )
             self._snapshot.save(table_id, record_id, current_fields)
             changed = diff.get("changed") or {}
@@ -412,6 +588,7 @@ class AutomationService:
             old_fields=old_fields,
             current_fields=current_fields,
             diff=diff,
+            event_kind="updated",
         )
         self._snapshot.save(table_id, record_id, current_fields)
         changed = diff.get("changed") or {}
