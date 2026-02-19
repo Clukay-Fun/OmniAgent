@@ -2,16 +2,19 @@
 
 本文件是当前仓库的统一流程口径。根 README 与两个子 README 只保留服务说明，阶段流程以此为准。
 
+统一入口说明：当前主入口为 `apps/agent-host`（Agent）与 `integrations/feishu-mcp-server`（MCP）；`agent/feishu-agent` / `mcp/mcp-feishu-server` 仍保留为兼容 shim 或历史路径。
+
 ## 阶段一：部署前（本地开发联调）
 
 目标：在本地完成 MCP + Agent 功能联调，不对公网提供正式回调。
 
 ### 1) 准备配置
 
-- 复制并填写：`mcp/mcp-feishu-server/.env`
-- 复制并填写：`agent/feishu-agent/.env`
-- 复制模板：`mcp/mcp-feishu-server/config.yaml.example` -> `mcp/mcp-feishu-server/config.yaml`
-- 复制模板：`agent/feishu-agent/config.yaml.example` -> `agent/feishu-agent/config.yaml`
+- 主入口模板：`integrations/feishu-mcp-server/.env.example` -> `integrations/feishu-mcp-server/.env`
+- 主入口模板：`apps/agent-host/.env.example` -> `apps/agent-host/.env`
+- 主入口模板：`integrations/feishu-mcp-server/config.yaml.example` -> `integrations/feishu-mcp-server/config.yaml`
+- 主入口模板：`apps/agent-host/config.yaml.example` -> `apps/agent-host/config.yaml`
+- 兼容 shim / 历史路径：`mcp/mcp-feishu-server/*` 与 `agent/feishu-agent/*`（与主入口口径等价）
 
 ### 2) 统一开发入口（推荐）
 
@@ -64,7 +67,8 @@ python run_dev.py up --all
 ### 1) 服务启动口径
 
 - Docker 主文件：`deploy/docker/compose.yml`
-- 生产核心：`mcp-feishu-server` + `feishu-agent`
+- 生产核心服务：`mcp-feishu-server` + `feishu-agent`（代码主入口分别对应 `integrations/feishu-mcp-server` 与 `apps/agent-host`）
+- 兼容 shim / 历史目录：`mcp/mcp-feishu-server`、`agent/feishu-agent`
 - 可选 profile：
   - 监控：`--profile monitoring`
   - 数据库：`--profile db`

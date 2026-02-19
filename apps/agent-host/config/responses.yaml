@@ -1,0 +1,2 @@
+success: "已完成 {skill_name}"
+failure: "处理失败：{skill_name}"

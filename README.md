@@ -2,8 +2,8 @@
 
 多模块智能 Agent 项目，当前主线是：
 
-- `mcp/mcp-feishu-server`：飞书数据侧 MCP 服务（查询、CRUD、自动化、schema watcher）
-- `agent/feishu-agent`：飞书机器人侧 Agent（意图识别、技能路由、MCP 调用）
+- `apps/agent-host`：单 Agent 主应用入口（当前通过 shim 兼容 `agent/feishu-agent`）
+- `integrations/feishu-mcp-server`：飞书数据侧 MCP 服务（当前兼容 `mcp/mcp-feishu-server`）
 
 ## 当前阶段
 
@@ -16,11 +16,13 @@
 
 ```text
 OmniAgent/
+├── apps/agent-host/                 # 单 Agent 主应用入口
+├── integrations/feishu-mcp-server/  # 飞书数据侧 MCP 服务主入口
 ├── agent/
-│   ├── feishu-agent/                # Agent 服务代码
+│   └── feishu-agent/                # 兼容 shim / 历史路径（旧 Agent 目录）
 │       └── workspace/               # Agent 运行态工作区（本地）
 ├── mcp/
-│   └── mcp-feishu-server/           # MCP 服务代码
+│   └── mcp-feishu-server/           # 兼容 shim / 历史路径（旧 MCP 目录）
 ├── deploy/
 │   ├── docker/
 │   │   ├── compose.yml              # 主 compose
@@ -113,14 +115,15 @@ curl http://localhost:8081/mcp/tools
 
 ## 文档入口
 
-- MCP 详细文档：`mcp/mcp-feishu-server/README.md`
-- Agent 详细文档：`agent/feishu-agent/README.md`
+- 主应用文档：`apps/agent-host/README.md`
+- MCP 详细文档：`integrations/feishu-mcp-server/README.md`
+- 兼容路径（旧）：`agent/feishu-agent/README.md`、`mcp/mcp-feishu-server/README.md`
 - 三阶段统一文档：`docs/deploy/three-stage-guide.md`
 - 统一变量参考（合并版）：`.env.example`
 - 上传清单（备案后用）：`docs/deploy/upload-manifest.md`
 - 云部署检查清单（无 DB 版）：`docs/deploy/cloud-checklist-no-db.md`
 - 仓库结构说明：`docs/architecture/repo-layout.md`
-- 测试说明：`docs/tests/TEST.md`
+- 测试说明：`docs/scenarios/README.md`
 
 ## 许可证
 
