@@ -162,8 +162,9 @@ class IntentParser:
                 reason="日期查询规则命中",
             )
             logger.info(
-                "Intent parsed by date rule",
+                "日期规则命中并完成意图解析",
                 extra={
+                    "event_code": "intent.parsed_by_date_rule",
                     "query": query,
                     "top_skill": match.name,
                     "score": date_score,
@@ -188,8 +189,9 @@ class IntentParser:
 
         if top_score >= self._direct_threshold:
             logger.info(
-                "Intent parsed by rule",
+                "规则命中并完成意图解析",
                 extra={
+                    "event_code": "intent.parsed_by_rule",
                     "query": query,
                     "top_skill": rule_matches[0].name if rule_matches else "",
                     "score": top_score,
@@ -213,7 +215,11 @@ class IntentParser:
                         llm_result.requires_llm_confirm = True
                         return llm_result
                 except Exception as e:
-                    logger.warning(f"LLM classification failed: {e}, falling back to rule")
+                    logger.warning(
+                        "LLM 意图分类失败，回退规则解析: %s",
+                        e,
+                        extra={"event_code": "intent.llm_classify_failed_fallback_rule"},
+                    )
 
             return IntentResult(
                 skills=rule_matches[:3],
@@ -229,7 +235,11 @@ class IntentParser:
                     llm_result.method = "llm"
                     return llm_result
             except Exception as e:
-                logger.warning(f"LLM classification failed: {e}")
+                logger.warning(
+                    "LLM 意图分类失败: %s",
+                    e,
+                    extra={"event_code": "intent.llm_classify_failed"},
+                )
 
         fallback_match = SkillMatch(
             name=self._get_skill_name(self._fallback_skill),
@@ -321,7 +331,17 @@ class IntentParser:
                 reason += f"，时间: {', '.join(time_hits[:2])}"
 
             matches.append(SkillMatch(name=skill_name, score=score, reason=reason))
-            logger.info(f"Skill check: {skill_key} -> score={score}, hits={hit_count}, boost={time_bonus}, reason={reason}")
+            logger.info(
+                "规则技能打分完成",
+                extra={
+                    "event_code": "intent.rule_skill_scored",
+                    "skill_key": skill_key,
+                    "score": score,
+                    "hits": hit_count,
+                    "boost": time_bonus,
+                    "reason": reason,
+                },
+            )
 
         matches.sort(key=lambda x: x.score, reverse=True)
         return matches
@@ -430,7 +450,11 @@ class IntentParser:
                 method="llm",
             )
         except Exception as e:
-            logger.error(f"LLM classify error: {e}")
+            logger.error(
+                "LLM 意图分类异常: %s",
+                e,
+                extra={"event_code": "intent.llm_classify_error"},
+            )
             return None
 
     def _build_llm_system_prompt(self, llm_context: dict[str, str] | None) -> str:
@@ -479,7 +503,11 @@ def load_skills_config(config_path: str = "config/skills.yaml") -> dict[str, Any
 
     path = Path(config_path)
     if not path.exists():
-        logger.warning(f"Skills config not found: {config_path}, using defaults")
+        logger.warning(
+            "未找到技能配置文件，使用默认配置: %s",
+            config_path,
+            extra={"event_code": "intent.skills_config.not_found"},
+        )
         return _default_skills_config()
 
     with open(path, "r", encoding="utf-8") as f:

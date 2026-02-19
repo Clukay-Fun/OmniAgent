@@ -74,7 +74,11 @@ class SkillRouter:
 
     def register(self, skill: BaseSkill) -> None:
         self._skills[skill.name] = skill
-        logger.debug(f"Registered skill: {skill.name}")
+        logger.debug(
+            "已注册技能: %s",
+            skill.name,
+            extra={"event_code": "router.skill.registered"},
+        )
 
     def register_all(self, skills: list[BaseSkill]) -> None:
         for skill in skills:
@@ -144,14 +148,19 @@ class SkillRouter:
             fallback_skill = self._skills.get("ChitchatSkill")
             if fallback_skill:
                 logger.warning(
-                    "Skill not found: %s, fallback to ChitchatSkill",
+                    "技能不存在，降级到闲聊技能: %s",
                     normalized_name,
+                    extra={"event_code": "router.skill.fallback_to_chitchat"},
                 )
                 normalized_name = "ChitchatSkill"
                 skill = fallback_skill
 
         if not skill:
-            logger.warning("Skill not found: %s", normalized_name)
+            logger.warning(
+                "技能未注册: %s",
+                normalized_name,
+                extra={"event_code": "router.skill.not_found"},
+            )
             record_skill_execution(normalized_name, "not_found", 0)
             return self._fallback_result(f"技能 {normalized_name} 未注册")
 
@@ -160,8 +169,9 @@ class SkillRouter:
 
         try:
             logger.info(
-                "Executing skill",
+                "开始执行技能",
                 extra={
+                    "event_code": "router.skill.start",
                     "skill": normalized_name,
                     "query": context.query,
                     "hop": context.hop_count,
@@ -173,8 +183,9 @@ class SkillRouter:
                 status = "failure"
 
             logger.info(
-                "Skill executed",
+                "技能执行完成",
                 extra={
+                    "event_code": "router.skill.completed",
                     "skill": normalized_name,
                     "success": result.success,
                     "duration_ms": round((time.perf_counter() - start_time) * 1000, 2),
@@ -183,7 +194,12 @@ class SkillRouter:
             return result
         except (LLMTimeoutError, MCPTimeoutError) as e:
             status = "timeout"
-            logger.warning(f"Skill timeout: {normalized_name} - {e}")
+            logger.warning(
+                "技能执行超时: %s - %s",
+                normalized_name,
+                e,
+                extra={"event_code": "router.skill.timeout", "skill": normalized_name},
+            )
             return SkillResult(
                 success=False,
                 skill_name=normalized_name,
@@ -192,7 +208,13 @@ class SkillRouter:
             )
         except Exception as e:
             status = "error"
-            logger.error(f"Skill execution error: {normalized_name} - {e}", exc_info=True)
+            logger.error(
+                "技能执行异常: %s - %s",
+                normalized_name,
+                e,
+                extra={"event_code": "router.skill.error", "skill": normalized_name},
+                exc_info=True,
+            )
             return SkillResult(
                 success=False,
                 skill_name=normalized_name,
@@ -213,7 +235,11 @@ class SkillRouter:
 
         for skill_key in sequence:
             if current_context.hop_count >= self._max_hops:
-                logger.warning(f"Chain execution hit max_hops: {self._max_hops}")
+                logger.warning(
+                    "链式执行达到最大跳数: %s",
+                    self._max_hops,
+                    extra={"event_code": "router.chain.max_hops"},
+                )
                 break
 
             skill_name = self._resolve_skill_name(skill_key)
@@ -221,7 +247,12 @@ class SkillRouter:
             last_result = result
 
             if not result.success:
-                logger.warning(f"Chain broken at {skill_name}: {result.message}")
+                logger.warning(
+                    "链式执行中断: %s - %s",
+                    skill_name,
+                    result.message,
+                    extra={"event_code": "router.chain.broken", "skill": skill_name},
+                )
                 break
 
             current_context = current_context.with_result(skill_name, result.data)
@@ -330,7 +361,11 @@ class ContextManager:
             self._timestamps.pop(user_id, None)
 
         if expired_users:
-            logger.debug(f"Cleaned up {len(expired_users)} expired contexts")
+            logger.debug(
+                "已清理过期上下文数量: %s",
+                len(expired_users),
+                extra={"event_code": "router.context.cleanup"},
+            )
 
     def active_count(self) -> int:
         return len(self._contexts)

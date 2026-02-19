@@ -68,7 +68,7 @@ def _get_agent_core() -> AgentOrchestrator:
             llm_client=_llm_client,
             skills_config_path="config/skills.yaml",
         )
-        logger.info("AgentOrchestrator initialized")
+        logger.info("Agent 编排器初始化完成", extra={"event_code": "webhook.agent_core.initialized"})
     return _agent_core
 
 
@@ -89,7 +89,7 @@ def _get_user_manager():
     global _user_manager, _mcp_client
     if _user_manager is None:
         try:
-            logger.info("Initializing UserManager...")
+            logger.info("开始初始化用户管理器", extra={"event_code": "webhook.user_manager.init_start"})
             from src.user.manager import UserManager
             from src.user.matcher import UserMatcher
             from src.user.cache import UserCache
@@ -120,9 +120,14 @@ def _get_user_manager():
                 cache=cache,
             )
             
-            logger.info("UserManager initialized")
+            logger.info("用户管理器初始化完成", extra={"event_code": "webhook.user_manager.init_success"})
         except Exception as e:
-            logger.error(f"Failed to initialize UserManager: {e}", exc_info=True)
+            logger.error(
+                "初始化用户管理器失败: %s",
+                e,
+                extra={"event_code": "webhook.user_manager.init_failed"},
+                exc_info=True,
+            )
             raise
     
     return _user_manager
@@ -149,7 +154,11 @@ def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dic
     try:
         return formatter.format(rendered)
     except Exception as exc:
-        logger.warning("Format outbound failed, fall back to text: %s", exc)
+        logger.warning(
+            "格式化 outbound 失败，降级文本: %s",
+            exc,
+            extra={"event_code": "webhook.reply.format_fallback"},
+        )
         return {
             "msg_type": "text",
             "content": {"text": text_fallback},
@@ -284,17 +293,24 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         4. 去重与过滤
         5. 处理消息并回复
     """
-    logger.info("=== Received Feishu webhook request ===")
+    logger.info("收到飞书 webhook 请求", extra={"event_code": "webhook.request.received"})
     payload = await request.json()
-    logger.info(f"Payload type: {payload.get('type')}, event_type: {payload.get('header', {}).get('event_type')}")
+    logger.info(
+        "Webhook 载荷信息",
+        extra={
+            "event_code": "webhook.request.payload",
+            "payload_type": payload.get("type"),
+            "event_type": payload.get("header", {}).get("event_type"),
+        },
+    )
 
     if payload.get("type") == "url_verification":
-        logger.info("URL verification request")
+        logger.info("处理 URL 验证请求", extra={"event_code": "webhook.url_verification"})
         return {"challenge": payload.get("challenge", "")}
 
     settings = _get_settings()
     if payload.get("encrypt"):
-        logger.info("Decrypting payload...")
+        logger.info("开始解密 webhook 载荷", extra={"event_code": "webhook.payload.decrypt_start"})
         if not settings.feishu.encrypt_key:
             raise HTTPException(status_code=400, detail="encrypt_key is required")
         payload = _decrypt_event(payload["encrypt"], settings.feishu.encrypt_key)
@@ -303,11 +319,11 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
     if settings.feishu.verification_token:
         token = header.get("token") or payload.get("token")
         if token != settings.feishu.verification_token:
-            logger.warning("Verification token mismatch")
+            logger.warning("Webhook 验证令牌不匹配", extra={"event_code": "webhook.token_mismatch"})
             raise HTTPException(status_code=401, detail="Verification failed")
 
     event_id = header.get("event_id") or payload.get("event_id")
-    logger.info(f"Event ID: {event_id}")
+    logger.info("Webhook 事件信息", extra={"event_code": "webhook.event.info", "event_id": event_id})
 
     event = payload.get("event") or {}
     message = event.get("message") or {}
@@ -317,23 +333,26 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
     dedup_key = message_id or event_id
     deduplicator = _get_deduplicator()
     if dedup_key and settings.webhook.dedup.enabled and deduplicator.is_duplicate(dedup_key):
-        logger.info(f"Duplicate message: {dedup_key}")
+        logger.info("检测到重复消息，跳过处理", extra={"event_code": "webhook.message.duplicate", "dedup_key": dedup_key})
         return {"status": "duplicate"}
 
     if settings.webhook.filter.ignore_bot_message and sender.get("sender_type") == "bot":
-        logger.info("Ignored bot message")
+        logger.info("已忽略机器人消息", extra={"event_code": "webhook.message.ignored_bot"})
         return {"status": "ignored"}
 
     if settings.webhook.filter.private_chat_only and not _is_private_chat(message):
-        logger.info("Ignored non-private chat message")
+        logger.info("已忽略非私聊消息", extra={"event_code": "webhook.message.ignored_non_private"})
         return {"status": "ignored"}
 
     message_type = message.get("message_type")
     if message_type not in settings.webhook.filter.allowed_message_types:
-        logger.info(f"Ignored message type: {message_type}")
+        logger.info(
+            "已忽略不支持的消息类型",
+            extra={"event_code": "webhook.message.ignored_type", "message_type": message_type},
+        )
         return {"status": "ignored"}
 
-    logger.info(f"Processing message: {message_id}")
+    logger.info("开始处理 webhook 消息", extra={"event_code": "webhook.message.processing", "message_id": message_id})
     if dedup_key and settings.webhook.dedup.enabled:
         deduplicator.mark(dedup_key)
     asyncio.create_task(_process_message_with_dedup(message, sender, dedup_key))
@@ -364,11 +383,11 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         message: 消息体
         sender: 发送者信息
     """
-    logger.info("=== Starting _process_message ===")
+    logger.info("开始执行消息处理流程", extra={"event_code": "webhook.pipeline.start"})
     text = _get_text_content(message)
-    logger.info(f"Extracted text: {text}")
+    logger.info("提取文本完成", extra={"event_code": "webhook.message.text_extracted", "text": text})
     if not text:
-        logger.warning("No text content, returning")
+        logger.warning("消息无文本内容，结束处理", extra={"event_code": "webhook.message.empty_text"})
         return False
 
     chat_id = message.get("chat_id")
@@ -388,13 +407,24 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     else:
         user_id = "unknown"
     if sender_id.get("open_id"):
-        logger.info("Webhook sender open_id: %s", sender_id.get("open_id"))
+        logger.info(
+            "Webhook 发送者 open_id 已识别",
+            extra={"event_code": "webhook.sender.open_id", "open_id": sender_id.get("open_id")},
+        )
 
     if not chat_id:
-        logger.warning("No chat_id, returning")
+        logger.warning("缺少 chat_id，结束处理", extra={"event_code": "webhook.message.missing_chat_id"})
         return False
 
-    logger.info(f"chat_id: {chat_id}, user_id: {user_id}, text: {text}")
+    logger.info(
+        "消息上下文已就绪",
+        extra={
+            "event_code": "webhook.message.context_ready",
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "text": text,
+        },
+    )
     
     settings = _get_settings()
     agent_core = _get_agent_core()
@@ -411,9 +441,16 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                     chat_id=chat_id,
                     auto_match=False,  # 不自动匹配，只获取姓名
                 )
-                logger.info(f"User identified: {user_profile.name}")
+                logger.info(
+                    "用户身份识别完成",
+                    extra={"event_code": "webhook.user_profile.resolved", "user_name": user_profile.name},
+                )
             except Exception as e:
-                logger.warning(f"Failed to get user profile: {e}")
+                logger.warning(
+                    "获取用户档案失败: %s",
+                    e,
+                    extra={"event_code": "webhook.user_profile.resolve_failed"},
+                )
         
         # 处理消息
         reply = await agent_core.handle_message(
@@ -425,7 +462,10 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         )
         
         if chat_id.startswith("test-"):
-            logger.info("Test chat_id, reply suppressed: %s", reply.get("text", ""))
+            logger.info(
+                "测试会话已抑制回复发送",
+                extra={"event_code": "webhook.reply.suppressed_test_chat", "reply_text": reply.get("text", "")},
+            )
             return True
         
         # 发送回复消息
@@ -444,16 +484,27 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         text_len = len(text_obj) if isinstance(text_obj, str) else 0
 
         logger.info(
-            "Sending reply: msg_type=%s, text_len=%s, has_card=%s",
-            msg_type,
-            text_len,
-            bool(reply.get("card")),
+            "准备发送回复",
+            extra={
+                "event_code": "webhook.reply.sending",
+                "msg_type": msg_type,
+                "text_len": text_len,
+                "has_card": bool(reply.get("card")),
+            },
         )
         sent = await send_message(settings, chat_id, msg_type, content, reply_message_id=message_id)
-        logger.info("Reply sent, message_id: %s", sent.get("message_id", ""))
+        logger.info(
+            "回复发送成功",
+            extra={"event_code": "webhook.reply.sent", "message_id": sent.get("message_id", "")},
+        )
         return True
 
     except Exception as exc:
-        logger.error("Error processing message: %s", exc, exc_info=True)
+        logger.error(
+            "处理消息失败: %s",
+            exc,
+            extra={"event_code": "webhook.message.process_failed"},
+            exc_info=True,
+        )
         return False
 # endregion

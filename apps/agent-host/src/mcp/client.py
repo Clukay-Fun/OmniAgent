@@ -96,8 +96,12 @@ class MCPClient:
                 client = await self._get_client()
                 
                 logger.debug(
-                    f"Calling MCP tool",
-                    extra={"tool": tool_name, "attempt": attempt},
+                    "调用 MCP 工具",
+                    extra={
+                        "event_code": "mcp.call.start",
+                        "tool": tool_name,
+                        "attempt": attempt,
+                    },
                 )
                 
                 response = await client.post(url, json={"params": params})
@@ -140,8 +144,13 @@ class MCPClient:
             # 指数退避重试
             delay = self._retry_delay * (2 ** attempt)
             logger.warning(
-                f"MCP call failed, retrying",
-                extra={"tool": tool_name, "attempt": attempt, "delay": delay},
+                "MCP 调用失败，准备重试",
+                extra={
+                    "event_code": "mcp.call.retry",
+                    "tool": tool_name,
+                    "attempt": attempt,
+                    "delay": delay,
+                },
             )
             await asyncio.sleep(delay)
         

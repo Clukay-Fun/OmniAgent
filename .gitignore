@@ -24,3 +24,7 @@ htmlcov/
 
 # Local git worktrees
 .worktrees/
+
+# Runtime workspace user memory
+workspace/users/
+apps/workspace/users/

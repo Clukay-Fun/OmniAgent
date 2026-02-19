@@ -159,10 +159,17 @@ class AgentOrchestrator:
                 timeout=settings.task_llm.timeout,
             )
             self._task_llm = LLMClient(_task_llm_cfg)
-            logger.info("Task LLM enabled: %s", settings.task_llm.model)
+            logger.info(
+                "任务模型已启用: %s",
+                settings.task_llm.model,
+                extra={"event_code": "orchestrator.task_llm.enabled"},
+            )
         else:
             self._task_llm = self._llm
-            logger.info("Task LLM disabled, using default LLM for all")
+            logger.info(
+                "任务模型未启用，统一使用默认模型",
+                extra={"event_code": "orchestrator.task_llm.disabled"},
+            )
         # endregion
         # ============================================
         
@@ -280,26 +287,45 @@ class AgentOrchestrator:
         if getattr(self, "_market_skills", None):
             skills.extend(self._market_skills)
         self._router.register_all(skills)
-        logger.info(f"Registered skills: {self._router.list_skills()}")
+        logger.info(
+            "技能注册完成",
+            extra={
+                "event_code": "orchestrator.skills.registered",
+                "skills": self._router.list_skills(),
+            },
+        )
 
     def _init_vector_memory(self, config: dict[str, Any] | None) -> VectorMemoryManager | None:
         if not config:
-            logger.info("Vector config not found, vector memory disabled")
+            logger.info(
+                "未找到向量配置，已禁用向量记忆",
+                extra={"event_code": "orchestrator.vector.disabled_no_config"},
+            )
             return None
 
         store_cfg = config.get("vector_store", {})
         store_type = store_cfg.get("type", "chroma")
         if store_type != "chroma":
-            logger.warning("Unsupported vector store type: %s", store_type)
+            logger.warning(
+                "不支持的向量存储类型: %s",
+                store_type,
+                extra={"event_code": "orchestrator.vector.unsupported_store"},
+            )
             return None
 
         embedding_cfg = config.get("embedding", {})
         chroma_cfg = config.get("chroma", {})
         if not embedding_cfg or not chroma_cfg:
-            logger.warning("Vector config incomplete, vector memory disabled")
+            logger.warning(
+                "向量配置不完整，已禁用向量记忆",
+                extra={"event_code": "orchestrator.vector.invalid_config"},
+            )
             return None
         if not embedding_cfg.get("api_key") or not embedding_cfg.get("api_base"):
-            logger.warning("Embedding API config missing, vector memory disabled")
+            logger.warning(
+                "缺少 Embedding API 配置，已禁用向量记忆",
+                extra={"event_code": "orchestrator.vector.embedding_config_missing"},
+            )
             return None
 
         store = ChromaStore(
@@ -307,7 +333,10 @@ class AgentOrchestrator:
             collection_prefix=chroma_cfg.get("collection_prefix", "memory_vectors_"),
         )
         if not store.is_available:
-            logger.warning("Chroma not available, vector memory disabled")
+            logger.warning(
+                "Chroma 不可用，已禁用向量记忆",
+                extra={"event_code": "orchestrator.vector.chroma_unavailable"},
+            )
             return None
 
         embedder = EmbeddingClient(embedding_cfg)
@@ -345,7 +374,11 @@ class AgentOrchestrator:
                     name: cfg for name, cfg in market_defs.items() if name not in builtin_names
                 }
             except Exception as exc:
-                logger.warning("Failed to load skills market: %s", exc)
+                logger.warning(
+                    "加载技能市场失败: %s",
+                    exc,
+                    extra={"event_code": "orchestrator.market.load_failed"},
+                )
 
         return self._merge_skills_config(base_config, market_defs)
 
@@ -381,7 +414,11 @@ class AgentOrchestrator:
 
         for key, cfg in (market_defs or {}).items():
             if key in skills_registry:
-                logger.warning("Market skill key already exists: %s", key)
+                logger.warning(
+                    "技能市场键已存在，跳过覆盖: %s",
+                    key,
+                    extra={"event_code": "orchestrator.market.duplicate_key"},
+                )
                 continue
             skills_registry[key] = cfg
 
@@ -396,14 +433,22 @@ class AgentOrchestrator:
             config_path = Path.cwd() / config_path
         l0_path = config_path.parent / "l0_rules.yaml"
         if not l0_path.exists():
-            logger.info("L0 rules not found: %s", l0_path)
+            logger.info(
+                "未找到 L0 规则文件: %s",
+                l0_path,
+                extra={"event_code": "orchestrator.l0_rules.not_found"},
+            )
             return {}
         try:
             with l0_path.open("r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             return data if isinstance(data, dict) else {}
         except Exception as exc:
-            logger.warning("Failed to load L0 rules: %s", exc)
+            logger.warning(
+                "加载 L0 规则失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.l0_rules.load_failed"},
+            )
             return {}
 
     def _resolve_planner_scenarios_dir(self, skills_config_path: str, scenarios_dir: str) -> str:
@@ -528,8 +573,9 @@ class AgentOrchestrator:
                         method="l0",
                     )
                     logger.info(
-                        "Intent forced by L0",
+                        "L0 规则强制指定意图",
                         extra={
+                            "event_code": "orchestrator.intent.forced_by_l0",
                             "query": text,
                             "intent": intent.to_dict(),
                         },
@@ -557,8 +603,9 @@ class AgentOrchestrator:
                                 planner_applied = True
                                 record_intent_parse("planner", planner_duration)
                                 logger.info(
-                                    "Intent parsed by planner",
+                                    "Planner 意图解析完成",
                                     extra={
+                                        "event_code": "orchestrator.intent.parsed_planner",
                                         "query": text,
                                         "intent": intent.to_dict(),
                                         "planner": planner_output.to_context(),
@@ -570,8 +617,9 @@ class AgentOrchestrator:
                             intent = await self._intent_parser.parse(text, llm_context=llm_context)
                             record_intent_parse(intent.method, time.perf_counter() - intent_start)
                             logger.info(
-                                "Intent parsed",
+                                "意图解析完成",
                                 extra={
+                                    "event_code": "orchestrator.intent.parsed",
                                     "query": text,
                                     "intent": intent.to_dict(),
                                 },
@@ -657,21 +705,33 @@ class AgentOrchestrator:
             
         except asyncio.TimeoutError:
             status = "timeout"
-            logger.warning("Message handling timeout")
+            logger.warning(
+                "消息处理超时",
+                extra={"event_code": "orchestrator.request.timeout"},
+            )
             reply = {
                 "type": "text",
                 "text": self._settings.reply.templates.error.format(message="请求超时，请稍后重试"),
             }
         except ConnectionError as e:
             status = "connection_error"
-            logger.error(f"Connection error: {e}")
+            logger.error(
+                "连接异常: %s",
+                e,
+                extra={"event_code": "orchestrator.request.connection_error"},
+            )
             reply = {
                 "type": "text",
                 "text": self._settings.reply.templates.error.format(message="服务连接异常，请稍后重试"),
             }
         except Exception as e:
             status = "error"
-            logger.error(f"Message handling error: {e}", exc_info=True)
+            logger.error(
+                "消息处理异常: %s",
+                e,
+                extra={"event_code": "orchestrator.request.error"},
+                exc_info=True,
+            )
             reply = {
                 "type": "text",
                 "text": self._settings.reply.templates.error.format(message="处理出错"),
@@ -682,8 +742,9 @@ class AgentOrchestrator:
             record_request("handle_message", status)
             
             logger.info(
-                "Request completed",
+                "请求处理完成",
                 extra={
+                    "event_code": "orchestrator.request.completed",
                     "status": status,
                     "duration_ms": round(duration * 1000, 2),
                 },
@@ -770,7 +831,14 @@ class AgentOrchestrator:
                 pref = self._extract_preference(user_text)
                 if pref:
                     self._memory_manager.remember_user(user_id, f"[偏好] {pref}")
-                    logger.info("Auto-preference captured for %s: %s", user_id, pref)
+                    logger.info(
+                        "已自动捕获用户偏好",
+                        extra={
+                            "event_code": "orchestrator.memory.preference_captured",
+                            "target_user_id": user_id,
+                            "preference": pref,
+                        },
+                    )
         except Exception:
             pass
         # endregion
@@ -1054,7 +1122,11 @@ class AgentOrchestrator:
                 # 非查询请求会使分页上下文失效
                 self._state_manager.clear_pagination(user_id)
         except Exception as exc:
-            logger.warning("Failed to sync state: %s", exc)
+            logger.warning(
+                "同步会话状态失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.state.sync_failed"},
+            )
 
     def _resolve_table_context_from_result(
         self,
@@ -1210,7 +1282,11 @@ class AgentOrchestrator:
         参数:
             config_path: 配置文件路径
         """
-        logger.info(f"Reloading skills config from {config_path}")
+        logger.info(
+            "开始热重载技能配置: %s",
+            config_path,
+            extra={"event_code": "orchestrator.config.reload_start"},
+        )
         self._skills_config = self._load_skills_config(config_path)
         self._assistant_name = _resolve_assistant_name(self._skills_config)
         self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
@@ -1242,7 +1318,10 @@ class AgentOrchestrator:
         
         # 重新注册技能
         self._register_skills()
-        logger.info("Skills config reloaded successfully")
+        logger.info(
+            "技能配置热重载完成",
+            extra={"event_code": "orchestrator.config.reload_success"},
+        )
 # endregion
 
 

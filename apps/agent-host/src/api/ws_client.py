@@ -79,8 +79,12 @@ async def handle_message_async(
     """
     try:
         logger.info(
-            "Processing message via WebSocket",
-            extra={"user_id": user_id, "text": text},
+            "通过长连接处理消息",
+            extra={
+                "event_code": "ws.message.processing",
+                "user_id": user_id,
+                "text": text,
+            },
         )
         
         # 调用 Agent 处理
@@ -92,7 +96,12 @@ async def handle_message_async(
             await send_reply(chat_id, reply_text, message_id)
             
     except Exception as e:
-        logger.error(f"Error processing message: {e}", exc_info=True)
+        logger.error(
+            "长连接消息处理失败: %s",
+            e,
+            extra={"event_code": "ws.message.processing_error"},
+            exc_info=True,
+        )
         error_text = settings.reply.templates.error.format(message=str(e))
         await send_reply(chat_id, error_text, message_id)
 
@@ -161,11 +170,19 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         
         # 仅处理私聊文本消息
         if chat_type != "p2p":
-            logger.debug(f"Ignored non-p2p message: chat_type={chat_type}")
+            logger.debug(
+                "忽略非私聊消息: chat_type=%s",
+                chat_type,
+                extra={"event_code": "ws.message.ignored_non_p2p"},
+            )
             return
         
         if message_type != "text":
-            logger.debug(f"Ignored non-text message: message_type={message_type}")
+            logger.debug(
+                "忽略非文本消息: message_type=%s",
+                message_type,
+                extra={"event_code": "ws.message.ignored_non_text"},
+            )
             return
         
         # 忽略机器人自己的消息
@@ -191,8 +208,9 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         )
         
         logger.info(
-            "Received message via WebSocket",
+            "收到长连接消息",
             extra={
+                "event_code": "ws.message.received",
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "text": text[:50],
@@ -205,7 +223,12 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         )
         
     except Exception as e:
-        logger.error(f"Error in on_message_receive: {e}", exc_info=True)
+        logger.error(
+            "处理长连接事件失败: %s",
+            e,
+            extra={"event_code": "ws.event.handle_error"},
+            exc_info=True,
+        )
 
 
 def _extract_text(content: str) -> str:
@@ -244,17 +267,26 @@ def start_ws_client() -> None:
     """
     启动 WebSocket 长连接客户端（阻塞运行）
     """
-    logger.info("Starting WebSocket client...")
-    logger.info(f"App ID: {settings.feishu.app_id[:8]}...")
+    logger.info("启动飞书长连接客户端", extra={"event_code": "ws.client.start"})
+    logger.info(
+        "当前应用 ID 前缀: %s...",
+        settings.feishu.app_id[:8],
+        extra={"event_code": "ws.client.app_id"},
+    )
     
     client = create_ws_client()
     
     try:
         client.start()
     except KeyboardInterrupt:
-        logger.info("WebSocket client stopped by user")
+        logger.info("用户主动停止长连接客户端", extra={"event_code": "ws.client.stopped"})
     except Exception as e:
-        logger.error(f"WebSocket client error: {e}", exc_info=True)
+        logger.error(
+            "长连接客户端异常: %s",
+            e,
+            extra={"event_code": "ws.client.error"},
+            exc_info=True,
+        )
         raise
 # endregion
 
