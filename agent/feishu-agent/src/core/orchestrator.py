@@ -38,6 +38,7 @@ from src.core.skills import (
 )
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
+from src.core.response.renderer import ResponseRenderer
 from src.db.postgres import PostgresClient
 from src.config import Settings
 from src.llm.client import LLMClient
@@ -47,6 +48,61 @@ from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorM
 from src.skills_market import load_market_skills
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_assistant_name(skills_config: dict[str, Any] | None) -> str:
+    configured_name = ""
+    if isinstance(skills_config, dict):
+        raw = skills_config.get("assistant_name")
+        if isinstance(raw, str):
+            configured_name = raw.strip()
+    return configured_name or "小敬"
+
+
+def _build_outbound_from_skill_result(
+    result: SkillResult,
+    assistant_name: str = "小敬",
+) -> dict[str, Any]:
+    """将 SkillResult 转成统一 outbound 结构。"""
+    renderer = ResponseRenderer(assistant_name=assistant_name)
+    rendered = renderer.render(result)
+    return rendered.to_dict()
+
+
+def _ensure_minimal_outbound(
+    reply: dict[str, Any],
+    assistant_name: str,
+) -> dict[str, Any]:
+    text_value = str(reply.get("text") or "请稍后重试。")
+
+    outbound = reply.get("outbound")
+    if not isinstance(outbound, dict):
+        outbound = {}
+
+    raw_fallback = outbound.get("text_fallback")
+    text_fallback = raw_fallback.strip() if isinstance(raw_fallback, str) else ""
+    if not text_fallback:
+        text_fallback = text_value
+
+    blocks = outbound.get("blocks")
+    paragraph_exists = isinstance(blocks, list) and any(
+        isinstance(block, dict) and block.get("type") == "paragraph" for block in blocks
+    )
+    if not paragraph_exists:
+        blocks = [{"type": "paragraph", "content": {"text": text_fallback}}]
+
+    meta = outbound.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["assistant_name"] = str(meta.get("assistant_name") or assistant_name)
+    meta["skill_name"] = str(meta.get("skill_name") or "fallback")
+
+    reply["outbound"] = {
+        "text_fallback": text_fallback,
+        "blocks": blocks,
+        "meta": meta,
+    }
+    return reply
 
 
 # region 核心编排器
@@ -132,6 +188,8 @@ class AgentOrchestrator:
 
         # 加载技能配置（含技能市场）
         self._skills_config = self._load_skills_config(skills_config_path)
+        self._assistant_name = _resolve_assistant_name(self._skills_config)
+        self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
 
         # LLM 超时配置
         self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
@@ -584,6 +642,8 @@ class AgentOrchestrator:
 
                     # Step 5: 构建回复
                     reply = result.to_reply()
+                    rendered = self._response_renderer.render(result)
+                    reply["outbound"] = rendered.to_dict()
 
                     # Step 6: 写入记忆（日志 + 关键偏好）
                     self._record_memory(
@@ -633,6 +693,7 @@ class AgentOrchestrator:
             clear_request_context()
         
         # 记录助手回复
+        reply = _ensure_minimal_outbound(reply, assistant_name=self._assistant_name)
         self._sessions.add_message(user_id, "assistant", reply.get("text", ""))
         
         return reply
@@ -1151,6 +1212,8 @@ class AgentOrchestrator:
         """
         logger.info(f"Reloading skills config from {config_path}")
         self._skills_config = self._load_skills_config(config_path)
+        self._assistant_name = _resolve_assistant_name(self._skills_config)
+        self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
         
         # 重新初始化解析器和路由器
         self._intent_parser = IntentParser(

@@ -12,3 +12,5 @@ requests
 llama-index
 markitdown
 sse-starlette
+pytest
+pytest-cov

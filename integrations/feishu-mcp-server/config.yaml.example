@@ -1,0 +1,13 @@
+# Primary entry placeholder.
+# Runtime remains compatible with: mcp/mcp-feishu-server/config.yaml
+
+bitable:
+  domain: ${BITABLE_DOMAIN}
+  default_app_token: ${BITABLE_APP_TOKEN}
+  default_table_id: ${BITABLE_TABLE_ID}
+  default_view_id: ${BITABLE_VIEW_ID:-}
+
+tools:
+  enabled:
+    - feishu.v1.bitable.search
+    - feishu.v1.bitable.record.get

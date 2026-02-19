@@ -19,7 +19,9 @@ from typing import Any, cast
 from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
+from src.adapters.channels.feishu.formatter import FeishuFormatter
 from src.core.orchestrator import AgentOrchestrator
+from src.core.response.models import RenderedResponse
 from src.core.session import SessionManager
 from src.config import get_settings
 from src.llm.provider import create_llm_client
@@ -124,6 +126,34 @@ def _get_user_manager():
             raise
     
     return _user_manager
+
+
+def _pick_reply_text(reply: dict[str, Any]) -> str:
+    outbound = reply.get("outbound") if isinstance(reply, dict) else None
+    if isinstance(outbound, dict):
+        raw_text = outbound.get("text_fallback")
+        if isinstance(raw_text, str) and raw_text.strip():
+            return raw_text
+    return str(reply.get("text") or "")
+
+
+def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dict[str, Any]:
+    text_fallback = _pick_reply_text(reply)
+    outbound = reply.get("outbound") if isinstance(reply, dict) else None
+    rendered = RenderedResponse.from_outbound(
+        outbound if isinstance(outbound, dict) else None,
+        fallback_text=text_fallback,
+    )
+
+    formatter = FeishuFormatter(card_enabled=card_enabled)
+    try:
+        return formatter.format(rendered)
+    except Exception as exc:
+        logger.warning("Format outbound failed, fall back to text: %s", exc)
+        return {
+            "msg_type": "text",
+            "content": {"text": text_fallback},
+        }
 
 
 # 公开访问器（供 main.py 等外部模块使用）
@@ -399,14 +429,16 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
             return True
         
         # 发送回复消息
-        content: dict[str, object]
-        if reply.get("type") == "card":
-            msg_type = "interactive"
-            card_payload = reply.get("card")
-            content = cast(dict[str, object], card_payload) if isinstance(card_payload, dict) else {}
+        payload = _build_send_payload(
+            reply,
+            card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+        )
+        msg_type = str(payload.get("msg_type") or "text")
+        if msg_type == "interactive":
+            content = cast(dict[str, object], payload.get("card") if isinstance(payload.get("card"), dict) else {})
         else:
             msg_type = "text"
-            content = cast(dict[str, object], {"text": str(reply.get("text") or "")})
+            content = cast(dict[str, object], payload.get("content") if isinstance(payload.get("content"), dict) else {"text": _pick_reply_text(reply)})
 
         text_obj = content.get("text")
         text_len = len(text_obj) if isinstance(text_obj, str) else 0
