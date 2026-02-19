@@ -17,7 +17,9 @@ def _load_module(module_path: Path, module_name: str) -> ModuleType:
     return module
 
 
-def _run_and_capture_command(module: ModuleType, monkeypatch) -> list[str]:
+def test_root_run_dev_targets_agent_host_entry(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev")
+
     captured: dict[str, list[str]] = {}
 
     def fake_run(command: list[str], cwd: str, check: bool):
@@ -35,37 +37,20 @@ def _run_and_capture_command(module: ModuleType, monkeypatch) -> list[str]:
     monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
 
     rc = module.main()
-
     assert rc == 0
-    return captured["command"]
-
-
-def test_root_run_dev_targets_agent_host_shim(monkeypatch) -> None:
-    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev")
-
-    command = _run_and_capture_command(module, monkeypatch)
 
     expected_target = REPO_ROOT / "apps" / "agent-host" / "run_dev.py"
-    assert command[1] == str(expected_target)
+    assert captured["command"][1] == str(expected_target)
 
 
-def test_agent_host_run_dev_shim_targets_feishu_agent(monkeypatch) -> None:
-    shim_path = REPO_ROOT / "apps" / "agent-host" / "run_dev.py"
-    assert shim_path.exists()
+def test_agent_host_run_dev_uses_repo_compose_files() -> None:
+    module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
 
-    module = _load_module(shim_path, "agent_host_run_dev")
-    command = _run_and_capture_command(module, monkeypatch)
-
-    expected_target = REPO_ROOT / "agent" / "feishu-agent" / "run_dev.py"
-    assert command[1] == str(expected_target)
+    compose_args = module._compose_base_args(REPO_ROOT)
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.yml") in compose_args
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.dev.yml") in compose_args
 
 
-def test_agent_host_run_server_shim_targets_feishu_agent(monkeypatch) -> None:
-    shim_path = REPO_ROOT / "apps" / "agent-host" / "run_server.py"
-    assert shim_path.exists()
-
-    module = _load_module(shim_path, "agent_host_run_server")
-    command = _run_and_capture_command(module, monkeypatch)
-
-    expected_target = REPO_ROOT / "agent" / "feishu-agent" / "run_server.py"
-    assert command[1] == str(expected_target)
+def test_agent_host_run_server_no_legacy_path_reference() -> None:
+    content = (REPO_ROOT / "apps" / "agent-host" / "run_server.py").read_text(encoding="utf-8")
+    assert "agent/feishu-agent" not in content

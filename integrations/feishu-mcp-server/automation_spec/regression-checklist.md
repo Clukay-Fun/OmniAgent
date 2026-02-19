@@ -9,7 +9,7 @@
 
 - [ ] 服务可用：`GET /health` 返回 200
 - [ ] 自动化开启：`AUTOMATION_ENABLED=true`
-- [ ] 当前规则文件是目标版本：`mcp/mcp-feishu-server/automation_rules.yaml`
+- [ ] 当前规则文件是目标版本：`integrations/feishu-mcp-server/automation_rules.yaml`
 - [ ] 已初始化快照：`POST /automation/init?table_id=<source_table_id>&app_token=<app_token>`
 
 建议先准备两条源记录：

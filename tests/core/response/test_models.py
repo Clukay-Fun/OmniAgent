@@ -6,10 +6,10 @@ from pydantic import ValidationError
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "apps" / "agent-host" / "src"
-sys.path.insert(0, str(SRC))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from core.response.models import Block, RenderedResponse
+from src.core.response.models import Block, RenderedResponse
 
 
 @pytest.mark.parametrize("value", ["", " ", "\n\t"])

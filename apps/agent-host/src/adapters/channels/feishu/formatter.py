@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from core.response.models import Block, RenderedResponse
+from src.core.response.models import Block, RenderedResponse
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class FeishuFormatter:
             "content": {"text": rendered.text_fallback},
         }
 
-    def _build_card(self, rendered: RenderedResponse) -> Optional[Dict[str, Any]]:
+    def _build_card(self, rendered: RenderedResponse) -> Dict[str, Any] | None:
         try:
             elements: List[Dict[str, Any]] = []
             for block in rendered.blocks:
@@ -57,7 +57,7 @@ class FeishuFormatter:
             },
         }
 
-    def _block_to_element(self, block: Block) -> Optional[Dict[str, Any]]:
+    def _block_to_element(self, block: Block) -> Dict[str, Any] | None:
         content = block.content if isinstance(block.content, dict) else {}
 
         if block.type == "divider":
@@ -107,7 +107,7 @@ class FeishuFormatter:
 
         return None
 
-    def _markdown_element(self, text: str) -> Optional[Dict[str, Any]]:
+    def _markdown_element(self, text: str) -> Dict[str, Any] | None:
         if not text:
             return None
         return {

@@ -4,8 +4,8 @@ import types
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FEISHU_AGENT_ROOT = ROOT / "agent" / "feishu-agent"
-sys.path.insert(0, str(FEISHU_AGENT_ROOT))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 # orchestrator imports Postgres client, which requires asyncpg at import time.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))

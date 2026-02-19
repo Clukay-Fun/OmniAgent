@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping
 
 import yaml
 
-from core.response.models import Block, RenderedResponse
+from src.core.response.models import Block, RenderedResponse
 
 
 DEFAULT_TEMPLATES: Dict[str, str] = {
@@ -17,8 +17,8 @@ DEFAULT_TEMPLATES: Dict[str, str] = {
 class ResponseRenderer:
     def __init__(
         self,
-        templates: Optional[Mapping[str, str]] = None,
-        templates_path: Optional[str | Path] = None,
+        templates: Mapping[str, str] | None = None,
+        templates_path: str | Path | None = None,
         assistant_name: str = "assistant",
     ) -> None:
         if templates is not None:
@@ -54,7 +54,7 @@ class ResponseRenderer:
             meta={"assistant_name": self._assistant_name, "skill_name": skill_name},
         )
 
-    def _load_templates(self, templates_path: Optional[str | Path]) -> Dict[str, str]:
+    def _load_templates(self, templates_path: str | Path | None) -> Dict[str, str]:
         path = Path(templates_path) if templates_path else self._default_template_path()
         if not path.exists():
             return dict(DEFAULT_TEMPLATES)
@@ -80,6 +80,8 @@ class ResponseRenderer:
     def _to_mapping(self, value: Any) -> Dict[str, Any]:
         if isinstance(value, Mapping):
             return dict(value)
+        if hasattr(value, "__dict__") and isinstance(value.__dict__, dict):
+            return dict(value.__dict__)
         if hasattr(value, "dict") and callable(value.dict):
             return dict(value.dict())
         if hasattr(value, "model_dump") and callable(value.model_dump):

@@ -3,10 +3,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "apps" / "agent-host" / "src"
-sys.path.insert(0, str(SRC))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from core.response.renderer import ResponseRenderer
+from src.core.response.renderer import ResponseRenderer
 
 
 def build_renderer() -> ResponseRenderer:
