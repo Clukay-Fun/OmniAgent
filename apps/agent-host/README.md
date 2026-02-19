@@ -222,6 +222,9 @@ python run_dev.py sync
 # 本地长连接模式（未备案阶段推荐）
 python run_dev.py agent-ws
 
+# 本地长连接热更新（代码变更自动重启）
+python run_dev.py agent-ws-watch
+
 # 说明：sync 会对 upsert 目标表做删除对账
 
 # 本地单服务模式（仅 Agent）

@@ -51,6 +51,23 @@ def test_root_run_dev_agent_ws_starts_ws_client(monkeypatch) -> None:
     assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
 
 
+def test_root_run_dev_agent_ws_watch_delegates_to_watch_runner(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_ws_watch")
+
+    captured: dict[str, object] = {}
+
+    def fake_watch_runner(repo_root: Path) -> int:
+        captured["repo_root"] = repo_root
+        return 0
+
+    monkeypatch.setattr(module, "_run_agent_ws_watch", fake_watch_runner)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-ws-watch"])
+
+    rc = module.main()
+    assert rc == 0
+    assert captured["repo_root"] == REPO_ROOT
+
+
 def test_agent_host_run_dev_targets_root_entry(monkeypatch) -> None:
     module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
 

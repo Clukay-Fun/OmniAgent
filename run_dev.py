@@ -70,6 +70,66 @@ def _run_command(args: list[str], repo_root: Path) -> int:
     return int(result.returncode)
 
 
+def _run_agent_ws(repo_root: Path) -> int:
+    """启动一次飞书长连接客户端。"""
+    agent_root = repo_root / "apps" / "agent-host"
+    ws_cmd = [sys.executable, "-m", "src.api.ws_client"]
+    return _run_command(ws_cmd, agent_root)
+
+
+def _run_agent_ws_watch(repo_root: Path) -> int:
+    """监听代码变更并自动重启长连接客户端。"""
+    try:
+        from watchfiles import watch
+    except Exception:
+        print("[error] 未安装 watchfiles，无法使用 agent-ws-watch")
+        print("请先执行: pip install watchfiles")
+        return 1
+
+    agent_root = repo_root / "apps" / "agent-host"
+    watch_targets = [
+        agent_root / "src",
+        agent_root / "config",
+        agent_root / "workspace",
+    ]
+
+    for target in watch_targets:
+        if not target.exists():
+            target.mkdir(parents=True, exist_ok=True)
+
+    def _spawn() -> subprocess.Popen[str]:
+        command = [sys.executable, "-m", "src.api.ws_client"]
+        print("$", " ".join(command))
+        return subprocess.Popen(command, cwd=str(agent_root), text=True)
+
+    def _stop(proc: subprocess.Popen[str]) -> None:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+    process = _spawn()
+    print("[info] agent-ws-watch 已启动，监听 src/config/workspace 变更")
+    print("[info] 按 Ctrl+C 停止")
+    try:
+        for changes in watch(*[str(p) for p in watch_targets], debounce=500):
+            if not changes:
+                continue
+            print(f"[info] 检测到 {len(changes)} 处变更，重启长连接客户端")
+            _stop(process)
+            process = _spawn()
+    except KeyboardInterrupt:
+        print("[info] 已停止 agent-ws-watch")
+    finally:
+        _stop(process)
+
+    return 0
+
+
 def _cleanup_legacy_containers(repo_root: Path) -> int:
     """清理旧版固定容器名，避免历史冲突。"""
     cmd = ["docker", "rm", "-f", *LEGACY_CONTAINER_NAMES]
@@ -193,6 +253,7 @@ def _parse_args() -> argparse.Namespace:
             "ps",
             "clean",
             "agent-ws",
+            "agent-ws-watch",
             "refresh-schema",
             "scan",
             "sync",
@@ -252,9 +313,10 @@ def main() -> int:
         return _run_command([*base, *down_profile_flags, "down", "--remove-orphans"], repo_root)
 
     if action == "agent-ws":
-        agent_root = repo_root / "apps" / "agent-host"
-        ws_cmd = [sys.executable, "-m", "src.api.ws_client"]
-        return _run_command(ws_cmd, agent_root)
+        return _run_agent_ws(repo_root)
+
+    if action == "agent-ws-watch":
+        return _run_agent_ws_watch(repo_root)
 
     if action == "refresh-schema":
         table_id = str(args.table_id or "").strip()

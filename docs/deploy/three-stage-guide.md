@@ -34,6 +34,7 @@ python run_dev.py refresh-schema
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 python run_dev.py agent-ws
+python run_dev.py agent-ws-watch
 
 # 一键拉起全部（含 monitoring + db）
 python run_dev.py up --all
@@ -49,6 +50,12 @@ python run_dev.py up --all
 
 ```bash
 python run_dev.py agent-ws
+```
+
+开发调试建议使用自动重启模式（代码变更后自动重启长连接进程）：
+
+```bash
+python run_dev.py agent-ws-watch
 ```
 
 2) MCP 暂停实时事件自动化，建议在 `integrations/feishu-mcp-server/.env` 设置：

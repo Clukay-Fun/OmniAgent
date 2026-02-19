@@ -1265,7 +1265,7 @@ class BitableSearchPersonTool(BaseTool):
     """
 
     name = "feishu.v1.bitable.search_person"
-    description = "Search bitable records by person field using open_id."
+    description = "Search bitable records by person field using open_id or user_name."
     parameters = {
         "type": "object",
         "properties": {
@@ -1278,11 +1278,11 @@ class BitableSearchPersonTool(BaseTool):
                 "default": False,
             },
             "field": {"type": "string", "description": "人员字段名（如：主办律师）"},
-            "open_id": {"type": "string", "description": "用户 open_id"},
+            "open_id": {"type": "string", "description": "用户 open_id（可选）"},
             "user_name": {"type": "string", "description": "用户姓名（用于兜底匹配）"},
             "limit": {"type": "integer", "description": "返回数量限制", "default": 100},
         },
-        "required": ["field", "open_id"],
+        "required": ["field"],
     }
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1294,7 +1294,7 @@ class BitableSearchPersonTool(BaseTool):
         open_id = params.get("open_id")
         user_name = str(params.get("user_name") or "").strip() or None
 
-        if not app_token or not table_id or not field or not open_id:
+        if not app_token or not table_id or not field or (not open_id and not user_name):
             return {"records": [], "total": 0}
 
         field_info = await _fetch_fields_info(self, app_token, table_id)
@@ -1342,28 +1342,30 @@ class BitableSearchPersonTool(BaseTool):
         if return_fields:
             payload_base["field_names"] = return_fields
 
-        filter_variants = [
-            {
-                "conjunction": "and",
-                "conditions": [
-                    {
-                        "field_name": resolved_field,
-                        "operator": "contains",
-                        "value": [open_id],
-                    }
-                ],
-            },
-            {
-                "conjunction": "and",
-                "conditions": [
-                    {
-                        "field_name": resolved_field,
-                        "operator": "is",
-                        "value": [open_id],
-                    }
-                ],
-            },
-        ]
+        filter_variants: list[dict[str, Any]] = []
+        if open_id:
+            filter_variants = [
+                {
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": resolved_field,
+                            "operator": "contains",
+                            "value": [open_id],
+                        }
+                    ],
+                },
+                {
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": resolved_field,
+                            "operator": "is",
+                            "value": [open_id],
+                        }
+                    ],
+                },
+            ]
 
         result: dict[str, Any] | None = None
         last_error: FeishuAPIError | None = None
@@ -1392,7 +1394,7 @@ class BitableSearchPersonTool(BaseTool):
             )
             matched_records: list[dict[str, Any]] = []
             for record in records_for_filter:
-                if _record_matches_person(record, resolved_field, str(open_id), user_name=user_name):
+                if _record_matches_person(record, resolved_field, str(open_id or ""), user_name=user_name):
                     matched_records.append(record)
 
             result = {

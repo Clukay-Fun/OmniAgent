@@ -48,6 +48,7 @@
 ```bash
 python run_dev.py up
 python run_dev.py agent-ws
+python run_dev.py agent-ws-watch
 python run_dev.py logs --follow
 python run_dev.py ps
 python run_dev.py down

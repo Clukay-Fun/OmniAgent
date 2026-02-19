@@ -231,6 +231,12 @@ def parse_time_range(text: str) -> Optional[TimeRange]:
         base.time_from = time_from
         base.time_to = time_to
         return base
+    if "下个月" in normalized:
+        next_month_anchor = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+        base = _month_range(next_month_anchor)
+        base.time_from = time_from
+        base.time_to = time_to
+        return base
 
     # 仅时间段时默认今天
     if time_from or time_to:

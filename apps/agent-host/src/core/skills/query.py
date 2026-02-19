@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -249,6 +250,11 @@ class QuerySkill(BaseSkill):
                         message="没有更多记录",
                         reply_text="已经没有更多记录了。",
                     )
+                if tool_name == "feishu.v1.bitable.search_date_range":
+                    field = str(params.get("field") or "").strip()
+                    if field == "开庭日":
+                        return self._empty_result("该时间范围内没有开庭安排")
+                    return self._empty_result("该时间范围内没有匹配记录")
                 return self._empty_result("未找到相关案件记录")
             return self._format_case_result(
                 records,
@@ -629,6 +635,11 @@ class QuerySkill(BaseSkill):
                     params.setdefault("ignore_default_view", True)
 
                 if mapped_tool == "feishu.v1.bitable.search_date_range":
+                    guessed_field = self._guess_date_field(query)
+                    current_field = str(params.get("field") or "").strip()
+                    if guessed_field and (not current_field or current_field in {"截止日", "日期", "时间"}):
+                        params["field"] = guessed_field
+
                     if extra.get("date_from"):
                         params.setdefault("date_from", extra.get("date_from"))
                     if extra.get("date_to"):
@@ -646,6 +657,10 @@ class QuerySkill(BaseSkill):
                                 params.setdefault("time_from", parsed.time_from)
                             if parsed.time_to:
                                 params.setdefault("time_to", parsed.time_to)
+                        elif any(token in query for token in ["最近", "近期", "最新"]):
+                            today = date.today()
+                            params.setdefault("date_from", (today - timedelta(days=30)).isoformat())
+                            params.setdefault("date_to", (today + timedelta(days=30)).isoformat())
 
                 if mapped_tool == "feishu.v1.bitable.search":
                     parsed = parse_time_range(query)
@@ -671,8 +686,18 @@ class QuerySkill(BaseSkill):
                         user_name = getattr(user_profile, "name", "") if user_profile else ""
                     if user_name:
                         params["user_name"] = user_name
+                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("user_name"):
+                    entity_keyword = self._extract_entity_keyword(query)
+                    if entity_keyword:
+                        params["user_name"] = entity_keyword
                 if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("field"):
                     params["field"] = "主办律师"
+
+                if mapped_tool == "feishu.v1.bitable.search_exact" and not params.get("value"):
+                    exact = self._extract_exact_field(query)
+                    if exact:
+                        params.setdefault("field", exact.get("field"))
+                        params["value"] = exact.get("value")
 
                 if mapped_tool == "feishu.v1.bitable.search" and not any(
                     params.get(k) for k in ("keyword", "date_from", "date_to", "filters")
@@ -691,6 +716,12 @@ class QuerySkill(BaseSkill):
 
                 if mapped_tool == "feishu.v1.bitable.search_keyword" and not params.get("fields"):
                     params["fields"] = self._build_keyword_fields()
+
+                if mapped_tool == "feishu.v1.bitable.search_keyword" and params.get("keyword"):
+                    params["keyword"] = self._sanitize_search_keyword(str(params.get("keyword") or ""))
+
+                if mapped_tool == "feishu.v1.bitable.search_exact" and params.get("value"):
+                    params["value"] = self._sanitize_search_keyword(str(params.get("value") or ""))
 
                 if mapped_tool in {
                     "feishu.v1.bitable.search_keyword",
@@ -711,7 +742,9 @@ class QuerySkill(BaseSkill):
         if isinstance(planner_plan, dict):
             mapped_tool = selected_tool or self._map_planner_tool(str(planner_plan.get("tool") or ""))
             if mapped_tool:
-                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
+                if mapped_tool == "feishu.v1.bitable.search_person" and not (
+                    params.get("open_id") or params.get("user_name")
+                ):
                     mapped_tool = None
                 if mapped_tool == "feishu.v1.bitable.search_exact" and (not params.get("field") or not params.get("value")):
                     mapped_tool = None
@@ -827,9 +860,18 @@ class QuerySkill(BaseSkill):
         return any(token in normalized for token in self._keep_view_keywords)
 
     def _guess_date_field(self, query: str) -> str:
-        if "开庭" in query or "庭审" in query:
+        normalized = query.replace(" ", "")
+        if "管辖权异议" in normalized:
+            return "管辖权异议截止日"
+        if "举证" in normalized:
+            return "举证截止日"
+        if "查封" in normalized:
+            return "查封到期日"
+        if "上诉" in normalized:
+            return "上诉截止日"
+        if "开庭" in normalized or "庭审" in normalized:
             return "开庭日"
-        if "截止" in query:
+        if "截止" in normalized or "到期" in normalized:
             return "截止日"
         return "开庭日"
 
@@ -844,26 +886,32 @@ class QuerySkill(BaseSkill):
             if not match:
                 continue
             value = match.group(1).strip()
+            value = re.sub(r"(?:的)?(?:案件|案子|项目)$", "", value).strip()
+            value = self._sanitize_search_keyword(value)
             if value:
                 return {"field": field, "value": value}
         return None
 
     def _extract_entity_keyword(self, query: str) -> str:
         """提取“X的案件/案子/项目”中的主体关键词。"""
+        if "案号" in query or "项目ID" in query or "项目编号" in query:
+            return ""
+
         compact = re.sub(r"[，。,.!?？!：:；;]", " ", query)
         pattern = re.compile(
-            r"(?:查找|查询|搜索|查一查|查|找|看看|看下|查看|帮我查|请查)?\s*([^\s]{2,50}?)(?:的)?(?:案件|案子|项目)"
+            r"(?:帮我|请|麻烦)?(?:查找|查询|搜索|查一查|查一下|查|找|看看|看下|看一下|查看|帮我查)?\s*(?:一下)?\s*([^\s]{2,60}?)(?:的)?(?:案件|案子|项目)"
         )
         match = pattern.search(compact)
         if not match:
             return ""
 
         candidate = match.group(1).strip()
-        candidate = re.sub(r"^(查找|查询|搜索|查一查|查|找|看看|看下|查看)", "", candidate).strip()
+        candidate = self._sanitize_search_keyword(candidate)
         candidate = re.sub(r"^(我的|我负责的|我负责|自己的|有关|关于)", "", candidate).strip()
+        candidate = re.sub(r"(负责的?|相关的?|有关的?)$", "", candidate).strip()
         if not candidate:
             return ""
-        if candidate in {"我", "自己", "所有", "全部", "今天", "明天", "本周", "本月"}:
+        if candidate in {"我", "自己", "所有", "全部", "今天", "明天", "本周", "本月", "最近", "近期"}:
             return ""
         return candidate
 
@@ -952,14 +1000,34 @@ class QuerySkill(BaseSkill):
         
         for word in action_words + general_words:
             keyword = keyword.replace(word, "")
-        
-        keyword = keyword.strip()
-        
+
+        keyword = self._sanitize_search_keyword(keyword)
+
         # 如果关键词太短或只是常见词，返回空（查询全部）
         if len(keyword) <= 1:
             return ""
             
         return keyword
+
+    def _sanitize_search_keyword(self, keyword: str) -> str:
+        cleaned = str(keyword or "").strip()
+        if not cleaned:
+            return ""
+
+        cleaned = re.sub(r"^[\s'\"“”‘’]+|[\s'\"“”‘’]+$", "", cleaned)
+        cleaned = re.sub(
+            r"^(?:帮我|请|麻烦|查询|查找|搜索|查看|看下|看一下|看看|看|查一下|查一查|查|找|一下|帮忙|我想|我想查)+",
+            "",
+            cleaned,
+        ).strip()
+        cleaned = re.sub(r"^(?:案号(?:为|是)?|项目ID(?:为|是)?|项目编号(?:为|是)?|编号(?:为|是)?)", "", cleaned).strip()
+        cleaned = re.sub(r"(?:的)?(?:案件|案子|项目|信息)$", "", cleaned).strip()
+        cleaned = re.sub(r"^(?:一下)+", "", cleaned).strip()
+        cleaned = re.sub(r"\s+", "", cleaned)
+
+        if cleaned in {"最近", "近期", "最新", "一下", "查询", "查看", "查", "找"}:
+            return ""
+        return cleaned
 
     # ============================================
     # region 回复模板加载
