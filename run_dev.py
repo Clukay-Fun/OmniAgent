@@ -253,7 +253,7 @@ def main() -> int:
 
     if action == "agent-ws":
         agent_root = repo_root / "apps" / "agent-host"
-        ws_cmd = [sys.executable, "src/api/ws_client.py"]
+        ws_cmd = [sys.executable, "-m", "src.api.ws_client"]
         return _run_command(ws_cmd, agent_root)
 
     if action == "refresh-schema":
