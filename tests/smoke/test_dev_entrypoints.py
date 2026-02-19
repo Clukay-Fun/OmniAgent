@@ -25,6 +25,32 @@ def test_root_run_dev_uses_repo_compose_files() -> None:
     assert str(REPO_ROOT / "deploy" / "docker" / "compose.dev.yml") in compose_args
 
 
+def test_root_run_dev_agent_ws_starts_ws_client(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_ws")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-ws"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    assert captured["command"] == ["/usr/bin/python3", "src/api/ws_client.py"]
+    assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
+
+
 def test_agent_host_run_dev_targets_root_entry(monkeypatch) -> None:
     module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
 

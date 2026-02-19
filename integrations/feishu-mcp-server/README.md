@@ -142,6 +142,11 @@ python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 
 # 说明：sync 会做新增+修改同步，并对 upsert 目标表执行删除对账
 
+# 本地未备案阶段建议关闭事件触发，改用 sync/scan 手动补偿
+# AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=false
+# AUTOMATION_POLLER_ENABLED=false
+# AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=false
+
 # MCP 单服务模式
 python run_server.py
 ```

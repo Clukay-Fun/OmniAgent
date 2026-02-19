@@ -41,12 +41,15 @@
 
 ```bash
 python run_dev.py up
+python run_dev.py agent-ws
 python run_dev.py logs --follow
 python run_dev.py ps
 python run_dev.py down
 python run_dev.py clean
 python run_dev.py sync
 ```
+
+本地未备案阶段建议：Agent 走 `agent-ws` 长连接，MCP 通过 `sync/scan` 手动补偿。
 
 ## 深入文档入口
 

@@ -33,12 +33,38 @@ python run_dev.py clean
 python run_dev.py refresh-schema
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+python run_dev.py agent-ws
 
 # 一键拉起全部（含 monitoring + db）
 python run_dev.py up --all
 ```
 
 说明：`sync` 执行全量补偿（新增+修改+删除对账）。
+
+### 2.1) 本地长连接模式（无公网 / 无 ngrok）
+
+适用于本地域名未备案、无法稳定公网回调的阶段。
+
+1) Agent 使用飞书 WebSocket 长连接：
+
+```bash
+python run_dev.py agent-ws
+```
+
+2) MCP 暂停实时事件自动化，建议在 `integrations/feishu-mcp-server/.env` 设置：
+
+```env
+AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=false
+AUTOMATION_POLLER_ENABLED=false
+AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=false
+```
+
+3) 数据同步采用手动补偿：`sync/scan`
+
+```bash
+python run_dev.py sync
+python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+```
 
 ### 3) 本地验证
 

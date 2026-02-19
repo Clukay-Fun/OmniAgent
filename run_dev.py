@@ -192,6 +192,7 @@ def _parse_args() -> argparse.Namespace:
             "logs",
             "ps",
             "clean",
+            "agent-ws",
             "refresh-schema",
             "scan",
             "sync",
@@ -249,6 +250,11 @@ def main() -> int:
         _cleanup_legacy_containers(repo_root)
         down_profile_flags = _profile_flags(args, include_all=True)
         return _run_command([*base, *down_profile_flags, "down", "--remove-orphans"], repo_root)
+
+    if action == "agent-ws":
+        agent_root = repo_root / "apps" / "agent-host"
+        ws_cmd = [sys.executable, "src/api/ws_client.py"]
+        return _run_command(ws_cmd, agent_root)
 
     if action == "refresh-schema":
         table_id = str(args.table_id or "").strip()

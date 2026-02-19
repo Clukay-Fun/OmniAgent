@@ -28,3 +28,10 @@ def test_project_context_describes_dependency_layers() -> None:
     assert "`requirements.txt`（根：聚合安装）" in content
     assert "`apps/agent-host/requirements.txt`（Agent 运行依赖）" in content
     assert "`integrations/feishu-mcp-server/requirements.txt`（MCP 运行依赖）" in content
+
+
+def test_three_stage_guide_mentions_local_ws_mode() -> None:
+    content = _read("docs/deploy/three-stage-guide.md")
+    assert "agent-ws" in content
+    assert "AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=false" in content
+    assert "sync/scan" in content
