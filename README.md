@@ -45,6 +45,8 @@ OmniAgent/
 
 ## 本地开发（不依赖云）
 
+命令以 `docs/deploy/three-stage-guide.md` 为准（本节仅保留高频快捷入口）。
+
 统一开发入口（推荐）：
 
 ```bash

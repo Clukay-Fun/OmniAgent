@@ -12,7 +12,16 @@
 
 - Agent 主入口：`apps/agent-host`
 - MCP 主入口：`integrations/feishu-mcp-server`
-- 仓库开发入口：`run_dev.py`
+- 仓库开发入口：`run_dev.py`（唯一权威实现）
+- `apps/agent-host/run_dev.py`：代理入口
+- `integrations/feishu-mcp-server/run_dev.py`：代理入口
+
+## 依赖分层
+
+- `requirements.txt`（根：聚合安装）
+- `requirements/dev.txt`（开发与测试依赖）
+- `apps/agent-host/requirements.txt`（Agent 运行依赖）
+- `integrations/feishu-mcp-server/requirements.txt`（MCP 运行依赖）
 
 ## 核心运行链路
 

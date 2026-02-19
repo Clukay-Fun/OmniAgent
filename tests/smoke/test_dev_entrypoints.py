@@ -17,8 +17,16 @@ def _load_module(module_path: Path, module_name: str) -> ModuleType:
     return module
 
 
-def test_root_run_dev_targets_agent_host_entry(monkeypatch) -> None:
+def test_root_run_dev_uses_repo_compose_files() -> None:
     module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev")
+
+    compose_args = module._compose_base_args(REPO_ROOT)
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.yml") in compose_args
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.dev.yml") in compose_args
+
+
+def test_agent_host_run_dev_targets_root_entry(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
 
     captured: dict[str, list[str]] = {}
 
@@ -33,22 +41,38 @@ def test_root_run_dev_targets_agent_host_entry(monkeypatch) -> None:
         return Result()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
-    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "up", "--build"])
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "up"])
     monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
 
     rc = module.main()
     assert rc == 0
-
-    expected_target = REPO_ROOT / "apps" / "agent-host" / "run_dev.py"
+    expected_target = REPO_ROOT / "run_dev.py"
     assert captured["command"][1] == str(expected_target)
 
 
-def test_agent_host_run_dev_uses_repo_compose_files() -> None:
-    module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
+def test_mcp_run_dev_targets_root_entry(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "integrations" / "feishu-mcp-server" / "run_dev.py", "mcp_run_dev")
 
-    compose_args = module._compose_base_args(REPO_ROOT)
-    assert str(REPO_ROOT / "deploy" / "docker" / "compose.yml") in compose_args
-    assert str(REPO_ROOT / "deploy" / "docker" / "compose.dev.yml") in compose_args
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        assert isinstance(cwd, str)
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "logs"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+    expected_target = REPO_ROOT / "run_dev.py"
+    assert captured["command"][1] == str(expected_target)
 
 
 def test_agent_host_run_server_no_legacy_path_reference() -> None:

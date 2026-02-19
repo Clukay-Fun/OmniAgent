@@ -153,9 +153,15 @@ TASK_LLM_API_BASE=https://api.minimax.chat/v1
 
 ## 🚀 快速开始
 
+说明：`run_dev.py（根目录权威实现）`，本目录 `run_dev.py` 仅作为代理入口。
+
 ### 1. 安装依赖
 
 ```bash
+# 全仓开发（推荐，在仓库根目录执行）
+# pip install -r requirements.txt
+
+# 仅 Agent 单服务依赖（在当前目录执行）
 pip install -r requirements.txt
 ```
 
