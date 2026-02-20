@@ -253,8 +253,8 @@ class QuerySkill(BaseSkill):
                 if tool_name == "feishu.v1.bitable.search_date_range":
                     field = str(params.get("field") or "").strip()
                     if field == "开庭日":
-                        return self._empty_result("该时间范围内没有开庭安排")
-                    return self._empty_result("该时间范围内没有匹配记录")
+                        return self._empty_result("该时间范围内没有开庭安排", prefer_message=True)
+                    return self._empty_result("该时间范围内没有匹配记录", prefer_message=True)
                 return self._empty_result("未找到相关案件记录")
             return self._format_case_result(
                 records,
@@ -550,7 +550,7 @@ class QuerySkill(BaseSkill):
     def _is_case_domain_query(self, query: str) -> bool:
         normalized = query.replace(" ", "")
         keywords = ["开庭", "庭审", "案件", "案子", "案号", "审理", "法院", "委托人", "对方当事人"]
-        return any(token in normalized for token in keywords)
+        return any(token in normalized for token in keywords) or self._is_hearing_query(normalized)
 
     def _pick_case_default_table(self, table_names: list[str]) -> str | None:
         preferred = ["案件项目总库", "案件 项目总库", "【诉讼案件】", "诉讼案件"]
@@ -664,7 +664,7 @@ class QuerySkill(BaseSkill):
 
                 if mapped_tool == "feishu.v1.bitable.search":
                     parsed = parse_time_range(query)
-                    if parsed and any(token in query for token in ["开庭", "庭审"]):
+                    if parsed and self._is_hearing_query(query):
                         mapped_tool = "feishu.v1.bitable.search_date_range"
                         params["field"] = params.get("field") or "开庭日"
                         params.setdefault("date_from", parsed.date_from)
@@ -722,6 +722,18 @@ class QuerySkill(BaseSkill):
 
                 if mapped_tool == "feishu.v1.bitable.search_exact" and params.get("value"):
                     params["value"] = self._sanitize_search_keyword(str(params.get("value") or ""))
+
+                if mapped_tool == "feishu.v1.bitable.search_exact":
+                    exact_field = str(params.get("field") or "").strip()
+                    exact_value = str(params.get("value") or "").strip()
+                    entity_keyword = self._extract_entity_keyword(query)
+                    if exact_field in {"主办律师", "协办律师"} and (
+                        self._looks_like_org_name(exact_value) or self._looks_like_org_name(entity_keyword)
+                    ):
+                        mapped_tool = "feishu.v1.bitable.search_keyword"
+                        params.pop("value", None)
+                        params["keyword"] = self._sanitize_search_keyword(entity_keyword or exact_value)
+                        params.setdefault("fields", self._build_keyword_fields())
 
                 if mapped_tool in {
                     "feishu.v1.bitable.search_keyword",
@@ -869,11 +881,17 @@ class QuerySkill(BaseSkill):
             return "查封到期日"
         if "上诉" in normalized:
             return "上诉截止日"
-        if "开庭" in normalized or "庭审" in normalized:
+        if self._is_hearing_query(normalized):
             return "开庭日"
         if "截止" in normalized or "到期" in normalized:
             return "截止日"
         return "开庭日"
+
+    def _is_hearing_query(self, query: str) -> bool:
+        normalized = query.replace(" ", "")
+        if "开庭" in normalized or "庭审" in normalized or "庭要开" in normalized:
+            return True
+        return bool(re.search(r"庭.*开|开.*庭", normalized))
 
     def _extract_exact_field(self, query: str) -> dict[str, str] | None:
         exact_patterns: list[tuple[str, str]] = [
@@ -1029,6 +1047,13 @@ class QuerySkill(BaseSkill):
             return ""
         return cleaned
 
+    def _looks_like_org_name(self, text: str) -> bool:
+        normalized = str(text or "").strip()
+        if len(normalized) < 4:
+            return False
+        org_tokens = ("公司", "集团", "有限公司", "有限责任", "股份", "事务所", "中心")
+        return any(token in normalized for token in org_tokens)
+
     # ============================================
     # region 回复模板加载
     # ============================================
@@ -1054,10 +1079,13 @@ class QuerySkill(BaseSkill):
     # endregion
     # ============================================
 
-    def _empty_result(self, message: str) -> SkillResult:
+    def _empty_result(self, message: str, prefer_message: bool = False) -> SkillResult:
         """构造空结果响应（随机化）"""
         pool = self._response_pool.get("empty_result")
-        reply = random.choice(pool) if pool else f"{message}，请尝试调整查询条件。"
+        if prefer_message and message:
+            reply = message
+        else:
+            reply = random.choice(pool) if pool else f"{message}，请尝试调整查询条件。"
         return SkillResult(
             success=True,
             skill_name=self.name,

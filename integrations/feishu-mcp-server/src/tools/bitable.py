@@ -1494,8 +1494,8 @@ class BitableSearchDateRangeTool(BaseTool):
             resolved_field = next((name for name, ftype in field_info.items() if ftype in _DATE_FIELD_TYPES), None)
         if not resolved_field:
             raise ValueError("No date field available")
-        if field_info.get(resolved_field) not in _DATE_FIELD_TYPES:
-            raise ValueError(f"Field is not a date field: {resolved_field}")
+        field_type = field_info.get(resolved_field)
+        is_native_date_field = field_type in _DATE_FIELD_TYPES
 
         requested_limit = int(params.get("limit") or 100)
         requested_limit = min(requested_limit, settings.bitable.search.max_records)
@@ -1518,20 +1518,56 @@ class BitableSearchDateRangeTool(BaseTool):
         if return_fields:
             payload_base["field_names"] = return_fields
 
-        payload: dict[str, Any] = dict(payload_base)
-        payload.update({
-            "filter": {
-                "conjunction": "and",
-                "conditions": _build_date_conditions(resolved_field, date_from, date_to),
-            },
-            "sort": [{"field_name": resolved_field, "desc": False}],
-        })
+        if is_native_date_field:
+            payload: dict[str, Any] = dict(payload_base)
+            payload.update({
+                "filter": {
+                    "conjunction": "and",
+                    "conditions": _build_date_conditions(resolved_field, date_from, date_to),
+                },
+                "sort": [{"field_name": resolved_field, "desc": False}],
+            })
 
-        try:
-            result = await _search_records(self, app_token, table_id, view_id, payload)
-        except FeishuAPIError as exc:
-            if not _is_filter_fallback_error(exc):
-                raise
+            try:
+                result = await _search_records(self, app_token, table_id, view_id, payload)
+            except FeishuAPIError as exc:
+                if not _is_filter_fallback_error(exc):
+                    raise
+                fallback_page_size = min(settings.bitable.search.max_records, 100)
+                records_for_filter = await _collect_records_for_local_filter(
+                    self,
+                    app_token,
+                    table_id,
+                    view_id,
+                    payload_base,
+                    page_size=fallback_page_size,
+                )
+                matched_records = _filter_records_by_date_range(
+                    records_for_filter,
+                    resolved_field,
+                    date_from,
+                    date_to,
+                )
+
+                if time_from or time_to:
+                    matched_records = _filter_records_by_time_window(
+                        matched_records,
+                        resolved_field,
+                        time_from,
+                        time_to,
+                    )
+                result = {
+                    "records": matched_records[:requested_limit],
+                    "total": len(matched_records),
+                    "has_more": len(matched_records) > requested_limit,
+                    "page_token": "",
+                    "debug": {
+                        "fallback": "local_date_range_match",
+                        "reason": str(exc),
+                        "scanned_records": len(records_for_filter),
+                    },
+                }
+        else:
             fallback_page_size = min(settings.bitable.search.max_records, 100)
             records_for_filter = await _collect_records_for_local_filter(
                 self,
@@ -1547,7 +1583,6 @@ class BitableSearchDateRangeTool(BaseTool):
                 date_from,
                 date_to,
             )
-
             if time_from or time_to:
                 matched_records = _filter_records_by_time_window(
                     matched_records,
@@ -1562,7 +1597,7 @@ class BitableSearchDateRangeTool(BaseTool):
                 "page_token": "",
                 "debug": {
                     "fallback": "local_date_range_match",
-                    "reason": str(exc),
+                    "reason": f"non_date_field:{resolved_field}",
                     "scanned_records": len(records_for_filter),
                 },
             }
@@ -1579,7 +1614,8 @@ class BitableSearchDateRangeTool(BaseTool):
             result["total"] = len(filtered_records)
             result["has_more"] = len(filtered_records) > requested_limit
             result["page_token"] = ""
-            debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
+            raw_debug = result.get("debug")
+            debug: dict[str, Any] = raw_debug if isinstance(raw_debug, dict) else {}
             debug.update({
                 "time_window": {
                     "time_from": time_from,

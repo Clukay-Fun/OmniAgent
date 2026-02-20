@@ -24,6 +24,14 @@ variables:
   next_friday: "${下周五日期}"
   default_table: "案件项目总库"
   default_view_id: "${环境变量 BITABLE_VIEW_ID}"
+  sample_case_no: "（2024）粤0304民撤4号"
+  sample_case_no_secondary: "（2024）粤01民终28497号"
+  sample_lawyer_name: "房怡康"
+  sample_company_name: "深圳市神州红国际软装艺术有限公司"
+  sample_hearing_query_week: "这周有什么庭要开"
+  sample_hearing_query_tomorrow_am: "明天上午有什么庭要开"
+  sample_hearing_query_next_month: "下个月有什么庭要开"
+  sample_hearing_query_explicit_day: "2月20号有什么庭要开"
 
 # ============================================================
 # 第一部分：表名识别场景
@@ -255,13 +263,13 @@ scenarios:
       退化为关键词搜索，搜"主办律师"和"协办律师"字段
     dialogue:
       - role: user
-        text: 查张三的案件
+        text: 查${sample_lawyer_name}的案件
     expected:
       intent: QuerySkill
       scene: someone_cases
       tool: feishu.v1.bitable.search_keyword
       key_params:
-        keyword: 张三
+        keyword: ${sample_lawyer_name}
         search_fields:
           - 主办律师
           - 协办律师
@@ -271,7 +279,18 @@ scenarios:
         1. 先调通讯录API用姓名查 open_id
         2. 再用 open_id 精确搜索
       reply_should_contain:
-        - 张三负责的案件
+        - ${sample_lawyer_name}负责的案件
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        no_confirm_prompt: true
+        tool_in:
+          - feishu.v1.bitable.search_keyword
+          - feishu.v1.bitable.search_person
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
 
   - scenario_id: S004_B
     title: 指定人员案件 — 重名处理
@@ -299,16 +318,28 @@ scenarios:
     category: query_exact
     dialogue:
       - role: user
-        text: 查案号 (2024)沪01民终123号
+        text: 查案号 ${sample_case_no}
     expected:
       intent: QuerySkill
       tool: feishu.v1.bitable.search_exact
       key_params:
         field_name: 案号
-        value: (2024)沪01民终123号
+        value: ${sample_case_no}
         operator: is
       reply_should_contain:
-        - '"(2024)沪01民终123号"的详细信息'
+        - '"${sample_case_no}"的详细信息'
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        no_confirm_prompt: true
+        tool_in:
+          - feishu.v1.bitable.search_exact
+          - feishu.v1.bitable.search_keyword
+        field: 案号
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
 
   - scenario_id: S005_B
     title: 精确查询 — 项目编号
@@ -366,7 +397,7 @@ scenarios:
     category: query_date
     dialogue:
       - role: user
-        text: 本周开庭的案件
+        text: ${sample_hearing_query_week}
     expected:
       intent: QuerySkill
       tool: feishu.v1.bitable.search_date_range
@@ -378,41 +409,81 @@ scenarios:
         input: 本周
         resolved_from: "${week_start}"
         resolved_to: "${week_end}"
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        tool: feishu.v1.bitable.search_date_range
+        field: 开庭日
+        no_confirm_prompt: true
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
 
   - scenario_id: S006_B
-    title: 日期查询 — 今天
+    title: 日期查询 — 明天上午开庭
     category: query_date
     dialogue:
       - role: user
-        text: 今天有开庭吗
+        text: ${sample_hearing_query_tomorrow_am}
     expected:
       tool: feishu.v1.bitable.search_date_range
       key_params:
         field_name: 开庭日
-        date_from: "${today} 00:00:00"
-        date_to: "${today} 23:59:59"
-
-  - scenario_id: S006_C
-    title: 日期查询 — 明天
-    category: query_date
-    dialogue:
-      - role: user
-        text: 明天的开庭安排
-    expected:
-      key_params:
         date_from: "${tomorrow} 00:00:00"
         date_to: "${tomorrow} 23:59:59"
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        tool: feishu.v1.bitable.search_date_range
+        field: 开庭日
+        no_confirm_prompt: true
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
 
-  - scenario_id: S006_D
-    title: 日期查询 — 指定区间
+  - scenario_id: S006_C
+    title: 日期查询 — 下个月开庭
     category: query_date
     dialogue:
       - role: user
-        text: 查6月1号到6月30号开庭的案件
+        text: ${sample_hearing_query_next_month}
     expected:
+      tool: feishu.v1.bitable.search_date_range
       key_params:
-        date_from: "2025-06-01"
-        date_to: "2025-06-30"
+        field_name: 开庭日
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        tool: feishu.v1.bitable.search_date_range
+        field: 开庭日
+        no_confirm_prompt: true
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
+
+  - scenario_id: S006_D
+    title: 日期查询 — 指定日期
+    category: query_date
+    dialogue:
+      - role: user
+        text: ${sample_hearing_query_explicit_day}
+    expected:
+      tool: feishu.v1.bitable.search_date_range
+      key_params:
+        field_name: 开庭日
+    live_test:
+      enabled: true
+      assert:
+        intent: QuerySkill
+        tool: feishu.v1.bitable.search_date_range
+        field: 开庭日
+        no_confirm_prompt: true
+        reply_should_not_contain:
+          - 查询失败
+          - 请确认表名
 
   - scenario_id: S006_E
     title: 日期查询 — 模糊表达

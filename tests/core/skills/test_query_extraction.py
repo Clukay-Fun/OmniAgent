@@ -77,6 +77,7 @@ def test_guess_date_field_supports_multiple_deadline_fields() -> None:
     assert skill._guess_date_field("查一下查封到期") == "查封到期日"
     assert skill._guess_date_field("本月上诉截止日") == "上诉截止日"
     assert skill._guess_date_field("明天上午有开庭吗") == "开庭日"
+    assert skill._guess_date_field("这周有什么庭要开") == "开庭日"
 
 
 def test_build_params_query_next_month_hearing_range() -> None:
@@ -111,3 +112,44 @@ def test_build_params_explicit_date_hearing() -> None:
     assert tool == "feishu.v1.bitable.search_date_range"
     assert params["field"] == "开庭日"
     assert params["date_from"] == params["date_to"]
+
+
+def test_build_params_search_with_hearing_phrase_upgrades_to_date_range() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "这周有什么庭要开",
+        extra={"planner_plan": {"tool": "search", "params": {}}},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "feishu.v1.bitable.search_date_range"
+    assert params["field"] == "开庭日"
+    assert "date_from" in params and "date_to" in params
+
+
+def test_is_case_domain_query_supports_hearing_phrase() -> None:
+    skill = _build_skill()
+    assert skill._is_case_domain_query("2月20号有什么庭要开") is True
+
+
+def test_build_params_company_query_downgrades_person_exact_to_keyword() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "帮我查一下深圳市神州红国际软装艺术有限公司的案子",
+        extra={
+            "planner_plan": {
+                "tool": "search_exact",
+                "params": {"field": "主办律师", "value": "深圳市神州红国际软装艺术有限公司"},
+            }
+        },
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "feishu.v1.bitable.search_keyword"
+    assert params["keyword"] == "深圳市神州红国际软装艺术有限公司"
+
+
+def test_empty_result_prefer_message_uses_message_text() -> None:
+    skill = _build_skill()
+    result = skill._empty_result("该时间范围内没有开庭安排", prefer_message=True)
+    assert result.reply_text == "该时间范围内没有开庭安排"
