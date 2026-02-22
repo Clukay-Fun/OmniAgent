@@ -1,0 +1,25 @@
+default_versions:
+  query.list: v1
+  query.detail: v1
+  action.confirm: v1
+  error.notice: v1
+  todo.reminder: v1
+  upload.result: v1
+  create.success: v1
+  update.success: v1
+  delete.confirm: v1
+  delete.success: v1
+  delete.cancelled: v1
+
+enabled:
+  query.list.v1: true
+  query.detail.v1: true
+  action.confirm.v1: true
+  error.notice.v1: true
+  todo.reminder.v1: true
+  upload.result.v1: true
+  create.success.v1: true
+  update.success.v1: true
+  delete.confirm.v1: true
+  delete.success.v1: true
+  delete.cancelled.v1: true

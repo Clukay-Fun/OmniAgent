@@ -229,7 +229,7 @@ class QuerySkill(BaseSkill):
                 total = len(records)
 
             table_id = str(params.get("table_id") or "").strip()
-            self._schema_cache.set_schema(table_id, schema)
+            self._sync_schema_cache(table_id, schema)
 
             pagination_extra = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
             current_page = int(pagination_extra.get("current_page") or 0) + 1 if pagination_extra else 1
@@ -296,7 +296,7 @@ class QuerySkill(BaseSkill):
                     records = result.get("records", [])
                     schema = result.get("schema")
                     table_id = str(fallback_params.get("table_id") or params.get("table_id") or "").strip()
-                    self._schema_cache.set_schema(table_id, schema)
+                    self._sync_schema_cache(table_id, schema)
                     if not records:
                         return self._empty_result("未找到相关案件记录")
                     records = self._apply_schema_formatting(records, table_id)
@@ -1215,6 +1215,7 @@ class QuerySkill(BaseSkill):
                             "table_id": table_id,
                             "field_name": str(field_name),
                             "field_type": result.field_type,
+                            "value_kind": type(field_value).__name__,
                         },
                     )
                 formatted_fields[str(field_name)] = result.text
@@ -1223,6 +1224,11 @@ class QuerySkill(BaseSkill):
             formatted_record["fields_text"] = formatted_fields
             formatted_records.append(formatted_record)
         return formatted_records
+
+    def _sync_schema_cache(self, table_id: str, schema: Any) -> None:
+        if not table_id:
+            return
+        self._schema_cache.set_schema(table_id, schema)
 
     def _format_doc_result(self, documents: list[dict[str, Any]]) -> SkillResult:
         """格式化文档查询结果"""

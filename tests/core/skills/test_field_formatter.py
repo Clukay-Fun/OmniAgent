@@ -35,6 +35,26 @@ def test_format_select_person_bool_attachment() -> None:
     assert attachment.text == "📎 合同.pdf"
 
 
+def test_format_multi_value_fields() -> None:
+    multi_select = format_field_value(
+        [{"label": "待处理"}, {"name": "高优先级"}],
+        {"type": 4, "name": "标签"},
+    )
+    person = format_field_value(
+        {"users": [{"name": "张三"}, {"open_id": "ou_001"}]},
+        {"type": 11, "name": "关注人"},
+    )
+    attachment = format_field_value(
+        {"files": [{"name": "证据A.pdf"}, {"file_name": "清单.xlsx"}]},
+        {"type": 17, "name": "附件"},
+    )
+
+    assert multi_select.field_type == "multi_select"
+    assert multi_select.text == "待处理、高优先级"
+    assert person.text == "@张三、ou_001"
+    assert attachment.text == "📎 证据A.pdf、📎 清单.xlsx"
+
+
 def test_format_unknown_and_malformed_fallback() -> None:
     unknown = format_field_value({"foo": "bar"}, {"type": 999, "name": "未知"})
     malformed_number = format_field_value("abc", {"type": 2, "name": "数量"})

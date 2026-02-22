@@ -28,9 +28,11 @@ class _FakeMCPClient:
                             "委托人及联系方式": {"name": "张三"},
                             "对方当事人": "李四",
                             "金额": "1234.56",
+                            "标签": [{"label": "重点"}, {"name": "本周"}],
                             "案号": "(2026)粤0101民初100号",
                             "审理法院": "深圳市南山区人民法院",
                             "程序阶段": True,
+                            "附件": {"files": [{"name": "证据A.pdf"}]},
                         },
                     }
                 ],
@@ -38,9 +40,11 @@ class _FakeMCPClient:
                     {"name": "委托人及联系方式", "type": 11},
                     {"name": "对方当事人", "type": 1},
                     {"name": "金额", "type": 2, "type_name": "货币"},
+                    {"name": "标签", "type": 4},
                     {"name": "案号", "type": 1},
                     {"name": "审理法院", "type": 1},
                     {"name": "程序阶段", "type": 7},
+                    {"name": "附件", "type": 17},
                 ],
                 "has_more": False,
                 "page_token": "",
@@ -79,3 +83,5 @@ def test_query_skill_formats_fields_with_schema_cache() -> None:
 
     records = result.data.get("records") or []
     assert records[0]["fields_text"]["金额"] == "¥1,234.56"
+    assert records[0]["fields_text"]["标签"] == "重点、本周"
+    assert records[0]["fields_text"]["附件"] == "📎 证据A.pdf"

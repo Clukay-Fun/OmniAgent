@@ -10,6 +10,7 @@ _LOCAL_TZ = timezone(timedelta(hours=8))
 _FIELD_TYPE_TEXT = {1}
 _FIELD_TYPE_NUMBER = {2}
 _FIELD_TYPE_SINGLE_SELECT = {3}
+_FIELD_TYPE_MULTI_SELECT = {4}
 _FIELD_TYPE_DATE = {5, 6, 23, 1003}
 _FIELD_TYPE_BOOL = {7}
 _FIELD_TYPE_PERSON = {11, 1001, 1002}
@@ -115,7 +116,18 @@ def _format_select(value: Any) -> str:
     return _safe_text(value)
 
 
+def _format_multi_select(value: Any) -> tuple[str, str]:
+    text = _format_select(value)
+    if text:
+        return text, "success"
+    return _safe_text(value), "malformed"
+
+
 def _format_person(value: Any) -> tuple[str, str]:
+    if isinstance(value, dict):
+        nested_users = value.get("users") or value.get("value")
+        if isinstance(nested_users, list):
+            return _format_person(nested_users)
     if isinstance(value, list):
         rendered = [_format_person(item)[0] for item in value]
         rendered = [item for item in rendered if item]
@@ -158,6 +170,11 @@ def _format_attachment(value: Any) -> tuple[str, str]:
             return "", "malformed"
         return "、".join([f"📎 {name}" for name in names]), "success"
 
+    if isinstance(value, dict):
+        nested_files = value.get("files") or value.get("value")
+        if isinstance(nested_files, list):
+            return _format_attachment(nested_files)
+
     name = _extract_name(value)
     if not name:
         return _safe_text(value), "malformed"
@@ -195,6 +212,8 @@ def _resolve_kind(field_meta: dict[str, Any] | None) -> str:
         return "datetime"
     if field_type in _FIELD_TYPE_SINGLE_SELECT:
         return "single_select"
+    if field_type in _FIELD_TYPE_MULTI_SELECT:
+        return "multi_select"
     if field_type in _FIELD_TYPE_PERSON:
         return "person"
     if field_type in _FIELD_TYPE_BOOL:
@@ -219,6 +238,9 @@ def format_field_value(value: Any, field_meta: dict[str, Any] | None = None) -> 
         return FieldFormatResult(text=text, field_type=kind, status=status)
     if kind == "single_select":
         return FieldFormatResult(text=_format_select(value), field_type=kind, status="success")
+    if kind == "multi_select":
+        text, status = _format_multi_select(value)
+        return FieldFormatResult(text=text, field_type=kind, status=status)
     if kind == "person":
         text, status = _format_person(value)
         return FieldFormatResult(text=text, field_type=kind, status=status)
