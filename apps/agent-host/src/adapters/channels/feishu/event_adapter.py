@@ -35,6 +35,7 @@ class EventEnvelope:
     event_type: str
     event_id: str
     message: MessageEvent | None = None
+    event: dict[str, Any] | None = None
 
 
 class FeishuEventAdapter:
@@ -42,16 +43,22 @@ class FeishuEventAdapter:
 
     MESSAGE_EVENT_TYPE = "im.message.receive_v1"
 
+    @staticmethod
+    def _safe_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        return {}
+
     @classmethod
     def from_webhook_payload(cls, payload: dict[str, Any]) -> EventEnvelope:
-        header = payload.get("header") if isinstance(payload.get("header"), dict) else {}
-        event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+        header: dict[str, Any] = cls._safe_dict(payload.get("header"))
+        event: dict[str, Any] = cls._safe_dict(payload.get("event"))
         event_type = str(header.get("event_type") or payload.get("type") or "").strip()
         event_id = str(header.get("event_id") or payload.get("event_id") or "").strip()
 
-        message = event.get("message") if isinstance(event.get("message"), dict) else {}
-        sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
-        sender_id = sender.get("sender_id") if isinstance(sender.get("sender_id"), dict) else {}
+        message: dict[str, Any] = cls._safe_dict(event.get("message"))
+        sender: dict[str, Any] = cls._safe_dict(event.get("sender"))
+        sender_id: dict[str, Any] = cls._safe_dict(sender.get("sender_id"))
 
         message_id = str(message.get("message_id") or message.get("messageId") or "").strip()
         chat_id = str(message.get("chat_id") or "").strip()
@@ -79,7 +86,7 @@ class FeishuEventAdapter:
                 sender_type=sender_type,
             )
 
-        return EventEnvelope(event_type=event_type, event_id=event_id, message=message_event)
+        return EventEnvelope(event_type=event_type, event_id=event_id, message=message_event, event=event)
 
     @classmethod
     def from_ws_event(cls, data: Any) -> MessageEvent | None:

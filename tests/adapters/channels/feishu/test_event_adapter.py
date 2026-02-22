@@ -40,6 +40,7 @@ def test_from_webhook_payload_extracts_message_event() -> None:
     assert envelope.message is not None
     assert envelope.message.message_id == "omni_msg_1"
     assert envelope.message.sender_open_id == "ou_123"
+    assert isinstance(envelope.event, dict)
 
 
 def test_from_ws_event_extracts_message_event() -> None:
