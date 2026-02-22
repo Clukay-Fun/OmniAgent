@@ -89,3 +89,50 @@ def test_delete_skill_callback_confirm_executes_delete(monkeypatch) -> None:
     assert result.success is True
     assert len(writer.delete_calls) == 1
     assert writer.delete_calls[0]["record_id"] == "rec_2"
+
+
+def test_delete_skill_requires_full_confirm_phrase(monkeypatch) -> None:
+    monkeypatch.setenv("CRUD_DELETE_ENABLED", "true")
+    writer = _FakeWriter()
+    skill = DeleteSkill(mcp_client=_FakeMCP(), skills_config={}, data_writer=writer)
+    skill._linker = _FakeLinker()
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="删除",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "delete_record",
+                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1"},
+                    }
+                },
+            )
+        )
+    )
+    assert result.success is False
+    assert len(writer.delete_calls) == 0
+
+
+def test_delete_skill_passes_idempotency_key(monkeypatch) -> None:
+    monkeypatch.setenv("CRUD_DELETE_ENABLED", "true")
+    writer = _FakeWriter()
+    skill = DeleteSkill(mcp_client=_FakeMCP(), skills_config={}, data_writer=writer)
+    skill._linker = _FakeLinker()
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="确认删除",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "delete_record",
+                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1"},
+                    }
+                },
+            )
+        )
+    )
+    assert result.success is True
+    assert len(writer.delete_calls) == 1
+    assert writer.delete_calls[0]["idempotency_key"].startswith("delete-")

@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import hashlib
+import json
 from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
@@ -68,19 +70,6 @@ class DeleteSkill(BaseSkill):
         self._full_confirm_phrases = {
             str(x).strip().lower()
             for x in full_confirm_phrases
-            if str(x).strip()
-        }
-        self._confirm_phrases = {
-            str(x).strip().lower()
-            for x in delete_cfg.get("confirm_phrases", [
-            "确认删除",
-            "确认",
-            "是的",
-            "是",
-            "删除",
-            "ok",
-            "yes",
-        ])
             if str(x).strip()
         }
         self._confirm_ttl_seconds = 60
@@ -157,6 +146,10 @@ class DeleteSkill(BaseSkill):
                 planner_pending["table_id"] = table_ctx.table_id
             if table_ctx.table_name and not planner_pending.get("table_name"):
                 planner_pending["table_name"] = table_ctx.table_name
+            planner_pending["idempotency_key"] = self._build_delete_idempotency_key(
+                record_id=str(planner_pending.get("record_id") or ""),
+                table_id=str(planner_pending.get("table_id") or ""),
+            )
             return SkillResult(
                 success=True,
                 skill_name=self.name,
@@ -223,6 +216,7 @@ class DeleteSkill(BaseSkill):
             f"您即将删除案件：{case_no}\n\n"
             f"此操作不可撤销，请回复'确认删除'以继续。"
         )
+        idempotency_key = self._build_delete_idempotency_key(record_id=str(record_id), table_id=str(table_ctx.table_id or ""))
         
         # 保存待删除的记录 ID 到上下文
         return SkillResult(
@@ -242,6 +236,7 @@ class DeleteSkill(BaseSkill):
                         "case_no": case_no,
                         "table_id": table_ctx.table_id,
                         "table_name": table_ctx.table_name,
+                        "idempotency_key": idempotency_key,
                     },
                     "ttl_seconds": self._confirm_ttl_seconds,
                 },
@@ -282,6 +277,7 @@ class DeleteSkill(BaseSkill):
         record_id = pending.get("record_id")
         case_no = pending.get("case_no", "未知案号")
         table_id = pending.get("table_id")
+        idempotency_key = str(pending.get("idempotency_key") or "").strip() or None
         if not table_id:
             table_ctx = await self._table_adapter.resolve_table_context(
                 context.query,
@@ -289,12 +285,18 @@ class DeleteSkill(BaseSkill):
                 last_result,
             )
             table_id = table_ctx.table_id
+        if not idempotency_key:
+            idempotency_key = self._build_delete_idempotency_key(
+                record_id=str(record_id or ""),
+                table_id=str(table_id or ""),
+            )
         
         # 调用 MCP 删除工具
         try:
             write_result = await self._data_writer.delete(
                 table_id,
                 str(record_id),
+                idempotency_key=idempotency_key,
             )
 
             if not write_result.success:
@@ -351,9 +353,16 @@ class DeleteSkill(BaseSkill):
             是否为确认
         """
         normalized = query.strip().lower().strip("，。！？!?,. ")
-        if normalized in self._full_confirm_phrases:
-            return True
-        return normalized in self._confirm_phrases and "删除" in normalized
+        return normalized in self._full_confirm_phrases
+
+    def _build_delete_idempotency_key(self, *, record_id: str, table_id: str | None = None) -> str:
+        payload = {
+            "record_id": str(record_id or "").strip(),
+            "table_id": str(table_id or "").strip(),
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        digest = hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
+        return f"delete-{digest}"
 
     def _extract_pending_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any] | None:
         """从 planner 输出提取待删除目标。"""

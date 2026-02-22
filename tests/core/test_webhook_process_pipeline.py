@@ -414,3 +414,34 @@ def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
 
     assert result["status"] == "ok"
     assert "过期" in result["reason"]
+
+
+def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
+    class _FakeRequest:
+        async def json(self):
+            return {
+                "header": {"event_id": "evt_cb_3"},
+                "event": {
+                    "operator": {"operator_id": {"open_id": "ou_3"}},
+                    "open_chat_id": "oc_3",
+                    "action": {"value": {"callback_action": "delete_record_confirm"}},
+                },
+            }
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action):
+            _ = user_id, callback_action
+            raise RuntimeError("boom")
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+
+    result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
+
+    assert result["status"] == "ok"
+    assert "过期" in result["reason"]

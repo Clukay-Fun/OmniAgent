@@ -973,10 +973,23 @@ class AgentOrchestrator:
         if not skill_name:
             return {"status": "processed", "text": "已处理"}
 
-        is_confirm = callback_action.endswith("_confirm")
-        is_cancel = callback_action.endswith("_cancel")
-        if not is_confirm and not is_cancel:
-            return {"status": "processed", "text": "已处理"}
+        callback = str(callback_action or "").strip().lower()
+        expected_confirm = f"{action_name}_confirm"
+        expected_cancel = f"{action_name}_cancel"
+        if callback not in {expected_confirm, expected_cancel}:
+            logger.warning(
+                "callback action mismatch",
+                extra={
+                    "event_code": "orchestrator.callback.action_mismatch",
+                    "user_id": user_id,
+                    "pending_action": action_name,
+                    "callback_action": callback,
+                },
+            )
+            return {"status": "expired", "text": "操作已过期"}
+
+        is_confirm = callback == expected_confirm
+        is_cancel = callback == expected_cancel
 
         query = "确认" if is_confirm else "取消"
         if action_name == "delete_record" and is_confirm:

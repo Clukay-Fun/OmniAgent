@@ -88,12 +88,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.reminder_scheduler.start()
     else:
         logger.info("Reminder scheduler disabled (set REMINDER_SCHEDULER_ENABLED=true and POSTGRES_DSN to enable)")
-    
+
     # 启动开庭日提醒调度器
+    mcp_client = None
     if settings.reminder_scan_enabled and settings.hearing_reminder.reminder_chat_id:
         from src.jobs.hearing_reminder import HearingReminderScheduler
         from src.mcp.client import MCPClient
-        
+
         mcp_client = MCPClient(settings)
         app.state.hearing_reminder_scheduler = HearingReminderScheduler(
             settings=settings,
@@ -107,17 +108,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.hearing_reminder_scheduler.start()
         logger.info("Hearing reminder scheduler started")
+    elif settings.reminder_scan_enabled:
+        logger.warning("Hearing reminder scheduler skipped: HEARING_REMINDER_CHAT_ID is empty")
 
-        if settings.daily_digest_enabled:
-            app.state.daily_digest_scheduler = DailyDigestScheduler(
-                mcp_client=mcp_client,
-                reminder_chat_id=settings.hearing_reminder.reminder_chat_id,
-                schedule=settings.daily_digest_schedule,
-                timezone=settings.daily_digest_timezone,
-                dispatcher=app.state.reminder_dispatcher,
-            )
-            app.state.daily_digest_scheduler.start()
-            logger.info("Daily digest scheduler started")
+    if settings.daily_digest_enabled and settings.hearing_reminder.reminder_chat_id:
+        if mcp_client is None:
+            from src.mcp.client import MCPClient
+
+            mcp_client = MCPClient(settings)
+        app.state.daily_digest_scheduler = DailyDigestScheduler(
+            mcp_client=mcp_client,
+            reminder_chat_id=settings.hearing_reminder.reminder_chat_id,
+            schedule=settings.daily_digest_schedule,
+            timezone=settings.daily_digest_timezone,
+            dispatcher=app.state.reminder_dispatcher,
+        )
+        app.state.daily_digest_scheduler.start()
+        logger.info("Daily digest scheduler started")
+    elif settings.daily_digest_enabled:
+        logger.warning("Daily digest scheduler skipped: HEARING_REMINDER_CHAT_ID is empty")
     
     logger.info("Feishu Agent started with hot-reload enabled")
     

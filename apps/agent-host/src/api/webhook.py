@@ -489,10 +489,23 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             chat_id=chat_id,
             chat_type="p2p" if chat_id else "",
         )
-        result = await _get_agent_core().handle_card_action_callback(
-            user_id=user_id,
-            callback_action=str(callback_payload.get("callback_action") or ""),
-        )
+        try:
+            result = await _get_agent_core().handle_card_action_callback(
+                user_id=user_id,
+                callback_action=str(callback_payload.get("callback_action") or ""),
+            )
+        except Exception:
+            logger.exception(
+                "处理卡片回调失败",
+                extra={
+                    "event_code": "webhook.callback.handle_failed",
+                    "event_id": event_id,
+                    "callback_action": str(callback_payload.get("callback_action") or ""),
+                },
+            )
+            if event_id and settings.webhook.dedup.enabled:
+                _get_deduplicator().mark(event_id)
+            return {"status": "ok", "reason": "已过期"}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
         text = str(result.get("text") or "")
