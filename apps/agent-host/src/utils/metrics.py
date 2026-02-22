@@ -171,6 +171,18 @@ if PROMETHEUS_AVAILABLE:
         ["provider"],
         buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0),
     )
+
+    PROVIDER_ERROR_COUNT = Counter(
+        "provider_error_total",
+        "Total provider errors by provider and type",
+        ["provider", "error_type"],
+    )
+
+    COST_ALERT_TRIGGERED_COUNT = Counter(
+        "cost_alert_triggered_total",
+        "Total triggered cost alerts by window",
+        ["window"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -214,6 +226,8 @@ else:
     USAGE_LOG_WRITE_COUNT = DummyMetric()
     FILE_PIPELINE_STAGE_COUNT = DummyMetric()
     FILE_EXTRACTOR_DURATION = DummyMetric()
+    PROVIDER_ERROR_COUNT = DummyMetric()
+    COST_ALERT_TRIGGERED_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -323,6 +337,19 @@ def observe_file_extractor_duration(provider: str, duration_seconds: float) -> N
     if duration_seconds <= 0:
         return
     FILE_EXTRACTOR_DURATION.labels(provider=str(provider or "none")).observe(duration_seconds)
+
+
+def record_provider_error(provider: str, error_type: str) -> None:
+    """记录 Provider 错误指标。"""
+    PROVIDER_ERROR_COUNT.labels(
+        provider=str(provider or "none"),
+        error_type=str(error_type or "unknown"),
+    ).inc()
+
+
+def record_cost_alert_triggered(window: str) -> None:
+    """记录成本告警触发次数。"""
+    COST_ALERT_TRIGGERED_COUNT.labels(window=str(window or "unknown")).inc()
 
 
 def set_active_sessions(count: int) -> None:

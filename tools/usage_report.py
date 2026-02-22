@@ -48,6 +48,18 @@ def load_usage_records(path: Path, selected_date: str) -> list[dict[str, Any]]:
 
 
 def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     by_user: Counter[str] = Counter()
     by_user_cost: dict[str, float] = defaultdict(float)
     by_skill: Counter[str] = Counter()
@@ -64,8 +76,8 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
     by_model_latency_count: Counter[str] = Counter()
 
     for row in records:
-        token_count = int(row.get("token_count") or 0)
-        cost = float(row.get("cost") or 0.0)
+        token_count = _safe_int(row.get("token_count"), 0)
+        cost = _safe_float(row.get("cost"), 0.0)
         user_id = str(row.get("user_id") or "unknown")
         skill = str(row.get("skill") or "unknown")
         source = str(row.get("usage_source") or "unknown")
@@ -92,8 +104,8 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
         if latency_value is None:
             latency_value = metadata.get("latency_ms")
         try:
-            latency_ms = float(latency_value if latency_value is not None else 0.0)
-        except (TypeError, ValueError):
+            latency_ms = _safe_float(latency_value if latency_value is not None else 0.0, 0.0)
+        except Exception:
             latency_ms = 0.0
         if latency_ms > 0:
             by_model_latency_sum[model] += int(latency_ms)

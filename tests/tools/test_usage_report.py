@@ -83,3 +83,15 @@ def test_render_report_handles_missing_fields_robustly(tmp_path: Path) -> None:
     assert "Total cost:" in text
     assert "Source distribution:" in text
     assert "Route distribution:" in text
+
+
+def test_aggregate_usage_handles_malformed_metadata() -> None:
+    records = [
+        {"user_id": "u1", "skill": "QuerySkill", "model": "m1", "metadata": "broken", "token_count": "oops"},
+        {"user_id": "u2", "skill": "QuerySkill", "model": "m2", "route_label": "ab_simple"},
+    ]
+
+    aggregated = aggregate_usage(records)
+
+    assert aggregated["by_route"]["unknown"] == 1
+    assert aggregated["by_route"]["ab_simple"] == 1

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -46,10 +47,17 @@ class UsageRecord:
 
 
 class UsageLogger:
-    def __init__(self, enabled: bool, path_template: str, fail_open: bool = True) -> None:
+    def __init__(
+        self,
+        enabled: bool,
+        path_template: str,
+        fail_open: bool = True,
+        on_record_written: Callable[[UsageRecord], None] | None = None,
+    ) -> None:
         self._enabled = bool(enabled)
         self._path_template = str(path_template or "workspace/usage/usage_log-{date}.jsonl")
         self._fail_open = bool(fail_open)
+        self._on_record_written = on_record_written
 
     def log(self, record: UsageRecord) -> bool:
         if not self._enabled:
@@ -61,6 +69,15 @@ class UsageLogger:
             with path.open("a", encoding="utf-8") as f:
                 f.write(record.to_json())
                 f.write("\n")
+            if callable(self._on_record_written):
+                try:
+                    self._on_record_written(record)
+                except Exception as exc:
+                    logger.warning(
+                        "usage post-write hook failed: %s",
+                        exc,
+                        extra={"event_code": "usage_log.post_write_hook_failed"},
+                    )
             return True
         except Exception as exc:
             logger.warning(

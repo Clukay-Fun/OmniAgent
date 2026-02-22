@@ -214,3 +214,138 @@ def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatc
     assert isinstance(content, dict)
     payload = json.dumps(content, ensure_ascii=False)
     assert "未开启解析能力" in payload
+
+
+def test_process_image_message_sends_status_and_ocr_summary(monkeypatch) -> None:
+    sent_calls: list[dict[str, object]] = []
+
+    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
+        sent_calls.append(
+            {
+                "settings": settings,
+                "chat_id": chat_id,
+                "msg_type": msg_type,
+                "content": content,
+                "reply_message_id": reply_message_id,
+            }
+        )
+        return {"message_id": f"omni-msg-{len(sent_calls)}"}
+
+    class _FakeAgentCore:
+        async def handle_message(self, user_id, text, **kwargs):
+            assert user_id == "ou_test_user"
+            assert text == "[收到图片消息]"
+            assert kwargs["file_markdown"].startswith("## 图片识别结果")
+            return {"type": "text", "text": "已分析图片内容"}
+
+    class _FakeUserManager:
+        async def get_or_create_profile(self, **_kwargs):
+            return SimpleNamespace(name="张三")
+
+    settings = SimpleNamespace(
+        reply=SimpleNamespace(card_enabled=True),
+        file_pipeline=SimpleNamespace(enabled=True, max_bytes=1024, timeout_seconds=3),
+        file_extractor=SimpleNamespace(enabled=True, provider="llm", api_key="k", api_base="https://api.example.com", fail_open=True),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeAgentCore())
+    monkeypatch.setattr(webhook_module, "_get_user_manager", lambda: _FakeUserManager())
+    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
+
+    class _AlwaysProcessAssembler:
+        def ingest(self, **_kwargs):
+            return SimpleNamespace(should_process=True, text="[收到图片消息]", reason="fast_path")
+
+    monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
+
+    async def _fake_resolve_file_markdown(*_args, **_kwargs):
+        return "## 图片识别结果\n\n合同第1条", "", "llm"
+
+    monkeypatch.setattr(webhook_module, "resolve_file_markdown", _fake_resolve_file_markdown)
+
+    message = {
+        "chat_id": "oc_pipeline",
+        "chat_type": "p2p",
+        "message_id": "msg_image_1",
+        "message_type": "image",
+        "content": json.dumps({"image_key": "img1", "file_type": "png"}, ensure_ascii=False),
+    }
+    sender = {"sender_id": {"open_id": "ou_test_user"}}
+
+    ok = asyncio.run(webhook_module._process_message(message, sender))
+
+    assert ok is True
+    assert len(sent_calls) == 2
+    assert sent_calls[0]["msg_type"] == "text"
+    first_payload = sent_calls[0]["content"]
+    assert isinstance(first_payload, dict)
+    assert "正在识别图片内容" in str(first_payload.get("text") or "")
+    second_payload = json.dumps(sent_calls[1]["content"], ensure_ascii=False)
+    assert "图片识别完成" in second_payload
+
+
+def test_process_audio_message_transcript_flows_as_text(monkeypatch) -> None:
+    sent_calls: list[dict[str, object]] = []
+
+    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
+        sent_calls.append(
+            {
+                "settings": settings,
+                "chat_id": chat_id,
+                "msg_type": msg_type,
+                "content": content,
+                "reply_message_id": reply_message_id,
+            }
+        )
+        return {"message_id": f"omni-msg-{len(sent_calls)}"}
+
+    class _FakeAgentCore:
+        async def handle_message(self, user_id, text, **kwargs):
+            assert user_id == "ou_test_user"
+            assert text == "请帮我查一下今天案件"
+            assert kwargs["file_markdown"] == ""
+            return {"type": "text", "text": "好的，正在查询"}
+
+    class _FakeUserManager:
+        async def get_or_create_profile(self, **_kwargs):
+            return SimpleNamespace(name="张三")
+
+    settings = SimpleNamespace(
+        reply=SimpleNamespace(card_enabled=True),
+        file_pipeline=SimpleNamespace(enabled=True, max_bytes=1024, timeout_seconds=3),
+        file_extractor=SimpleNamespace(enabled=True, provider="llm", api_key="k", api_base="https://api.example.com", fail_open=True),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeAgentCore())
+    monkeypatch.setattr(webhook_module, "_get_user_manager", lambda: _FakeUserManager())
+    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
+
+    class _AlwaysProcessAssembler:
+        def ingest(self, **_kwargs):
+            return SimpleNamespace(should_process=True, text="[收到语音消息]", reason="fast_path")
+
+    monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
+
+    async def _fake_resolve_file_markdown(*_args, **_kwargs):
+        return "请帮我查一下今天案件", "", "llm"
+
+    monkeypatch.setattr(webhook_module, "resolve_file_markdown", _fake_resolve_file_markdown)
+
+    message = {
+        "chat_id": "oc_pipeline",
+        "chat_type": "p2p",
+        "message_id": "msg_audio_1",
+        "message_type": "audio",
+        "content": json.dumps({"audio_key": "aud1", "file_type": "mp3"}, ensure_ascii=False),
+    }
+    sender = {"sender_id": {"open_id": "ou_test_user"}}
+
+    ok = asyncio.run(webhook_module._process_message(message, sender))
+
+    assert ok is True
+    assert len(sent_calls) == 2
+    status_payload = sent_calls[0]["content"]
+    assert isinstance(status_payload, dict)
+    assert "正在识别语音内容" in str(status_payload.get("text") or "")

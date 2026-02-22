@@ -65,6 +65,7 @@ from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorM
 from src.skills_market import load_market_skills
 from src.core.usage_logger import UsageLogger, UsageRecord, now_iso
 from src.core.usage_cost import compute_usage_cost, load_model_pricing
+from src.core.cost_monitor import CostMonitorConfig, configure_cost_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -268,17 +269,29 @@ class AgentOrchestrator:
             enabled=bool(getattr(settings.usage_log, "enabled", False)),
             path_template=str(getattr(settings.usage_log, "path", "workspace/usage/usage_log-{date}.jsonl")),
             fail_open=bool(getattr(settings.usage_log, "fail_open", True)),
+            on_record_written=self._on_usage_record_written,
         )
         self._usage_model_pricing = load_model_pricing(
             model_pricing_path=str(getattr(settings.usage_log, "model_pricing_path", "") or ""),
             model_pricing_json=str(getattr(settings.usage_log, "model_pricing_json", "") or ""),
         )
+        self._cost_monitor = configure_cost_monitor(
+            CostMonitorConfig(
+                hourly_threshold=float(getattr(settings.cost_monitor, "alert_hourly_threshold", 5.0)),
+                daily_threshold=float(getattr(settings.cost_monitor, "alert_daily_threshold", 50.0)),
+                circuit_breaker_enabled=bool(getattr(settings.cost_monitor, "circuit_breaker_enabled", False)),
+            )
+        )
+        primary_model = str(getattr(settings.llm, "model_primary", "") or "").strip() or str(getattr(settings.llm, "model", "")).strip()
+        secondary_model = str(getattr(settings.llm, "model_secondary", "") or "").strip()
+        model_a = str(getattr(settings.ab_routing, "model_a", "") or "").strip()
+        model_b = str(getattr(settings.ab_routing, "model_b", "") or "").strip()
         self._model_router = ModelRouter(
             enabled=bool(getattr(settings.ab_routing, "enabled", False)),
             ratio=float(getattr(settings.ab_routing, "ratio", 0.0)),
-            primary_model=str(getattr(settings.llm, "model", "")),
-            model_a=getattr(settings.ab_routing, "model_a", None),
-            model_b=getattr(settings.ab_routing, "model_b", None),
+            primary_model=primary_model,
+            model_a=model_a or primary_model,
+            model_b=model_b or secondary_model,
         )
 
         # LLM 超时配置
@@ -632,6 +645,16 @@ class AgentOrchestrator:
         }
         
         try:
+            cost_monitor = getattr(self, "_cost_monitor", None)
+            if cost_monitor is not None:
+                allowed, guidance = cost_monitor.check_call_allowed("llm")
+                if not allowed:
+                    status = "success"
+                    return {
+                        "type": "text",
+                        "text": guidance or "当前服务预算已达到阈值，请稍后再试。",
+                    }
+
             # 清理过期会话和上下文
             self._sessions.cleanup_expired()
             self._context_manager.cleanup_expired()
@@ -965,22 +988,23 @@ class AgentOrchestrator:
         if latency_ms > 0:
             metadata["latency_ms"] = str(latency_ms)
         try:
-            ok = usage_logger.log(
-                UsageRecord(
-                    ts=now_iso(),
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    model=model,
-                    skill=str(skill_name or "unknown"),
-                    token_count=token_count,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    cost=usage_cost,
-                    usage_source=str(usage_source or "text"),
-                    estimated=estimated,
-                    metadata=metadata,
-                )
+            record = UsageRecord(
+                ts=now_iso(),
+                user_id=user_id,
+                conversation_id=conversation_id,
+                model=model,
+                skill=str(skill_name or "unknown"),
+                token_count=token_count,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=usage_cost,
+                usage_source=str(usage_source or "text"),
+                estimated=estimated,
+                metadata=metadata,
             )
+            ok = usage_logger.log(record)
+            if not ok:
+                self._on_usage_record_written(record)
             record_usage_log_write("ok" if ok else "noop")
         except Exception:
             record_usage_log_write("error")
@@ -1002,6 +1026,19 @@ class AgentOrchestrator:
         if not usages:
             return None
         return max(usages, key=lambda item: float(item.get("ts", 0.0)))
+
+    def _on_usage_record_written(self, record: UsageRecord) -> None:
+        try:
+            self._cost_monitor.record_cost(
+                skill=str(record.skill or "unknown"),
+                cost=float(record.cost or 0.0),
+                ts=str(record.ts or ""),
+            )
+        except Exception:
+            logger.warning(
+                "成本监控记录失败",
+                extra={"event_code": "cost.monitor.record_failed"},
+            )
 
     async def _build_extra(
         self,

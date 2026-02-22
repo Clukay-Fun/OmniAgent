@@ -79,6 +79,8 @@ class LLMSettings(BaseModel):
     """LLM 模型配置"""
     provider: str = "openai"
     model: str = "gpt-4o-mini"
+    model_primary: str = ""
+    model_secondary: str = ""
     api_key: str = ""
     api_base: str | None = None
     temperature: float = 0.3
@@ -222,7 +224,25 @@ class ABRoutingSettings(BaseModel):
     model_b: str | None = None
 
 
+class CostMonitorSettings(BaseModel):
+    alert_hourly_threshold: float = 5.0
+    alert_daily_threshold: float = 50.0
+    circuit_breaker_enabled: bool = False
+
+
 class OCRSettings(BaseModel):
+    enabled: bool = False
+    provider: str = "none"
+    api_key: str | None = None
+    api_base: str | None = None
+    mineru_path: str = "/v1/convert"
+    llm_path: str = "/v1/document/convert"
+    auth_style: str = "bearer"
+    api_key_header: str = "X-API-Key"
+    api_key_prefix: str = "Bearer "
+
+
+class ASRSettings(BaseModel):
     enabled: bool = False
     provider: str = "none"
     api_key: str | None = None
@@ -393,7 +413,9 @@ class Settings(BaseModel):
     file_context: FileContextSettings = Field(default_factory=FileContextSettings)
     usage_log: UsageLogSettings = Field(default_factory=UsageLogSettings)
     ab_routing: ABRoutingSettings = Field(default_factory=ABRoutingSettings)
+    cost_monitor: CostMonitorSettings = Field(default_factory=CostMonitorSettings)
     ocr: OCRSettings = Field(default_factory=OCRSettings)
+    asr: ASRSettings = Field(default_factory=ASRSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -464,6 +486,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     mapping = {
         "LLM_PROVIDER": ["llm", "provider"],
         "LLM_MODEL": ["llm", "model"],
+        "MODEL_PRIMARY": ["llm", "model_primary"],
+        "MODEL_SECONDARY": ["llm", "model_secondary"],
         "FEISHU_BOT_APP_ID": ["feishu", "app_id"],
         "FEISHU_BOT_APP_SECRET": ["feishu", "app_secret"],
         "FEISHU_BOT_ORG_B_APP_ID": ["feishu", "org_b_app_id"],
@@ -537,15 +561,29 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AB_ROUTING_RATIO": ["ab_routing", "ratio"],
         "AB_ROUTING_MODEL_A": ["ab_routing", "model_a"],
         "AB_ROUTING_MODEL_B": ["ab_routing", "model_b"],
+        "COST_ALERT_HOURLY_THRESHOLD": ["cost_monitor", "alert_hourly_threshold"],
+        "COST_ALERT_DAILY_THRESHOLD": ["cost_monitor", "alert_daily_threshold"],
+        "COST_CIRCUIT_BREAKER_ENABLED": ["cost_monitor", "circuit_breaker_enabled"],
         "OCR_ENABLED": ["ocr", "enabled"],
         "OCR_PROVIDER": ["ocr", "provider"],
         "OCR_API_KEY": ["ocr", "api_key"],
         "OCR_API_BASE": ["ocr", "api_base"],
+        "OCR_API_ENDPOINT": ["ocr", "api_base"],
         "OCR_MINERU_PATH": ["ocr", "mineru_path"],
         "OCR_LLM_PATH": ["ocr", "llm_path"],
         "OCR_AUTH_STYLE": ["ocr", "auth_style"],
         "OCR_API_KEY_HEADER": ["ocr", "api_key_header"],
         "OCR_API_KEY_PREFIX": ["ocr", "api_key_prefix"],
+        "ASR_ENABLED": ["asr", "enabled"],
+        "ASR_PROVIDER": ["asr", "provider"],
+        "ASR_API_KEY": ["asr", "api_key"],
+        "ASR_API_BASE": ["asr", "api_base"],
+        "ASR_API_ENDPOINT": ["asr", "api_base"],
+        "ASR_MINERU_PATH": ["asr", "mineru_path"],
+        "ASR_LLM_PATH": ["asr", "llm_path"],
+        "ASR_AUTH_STYLE": ["asr", "auth_style"],
+        "ASR_API_KEY_HEADER": ["asr", "api_key_header"],
+        "ASR_API_KEY_PREFIX": ["asr", "api_key_prefix"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

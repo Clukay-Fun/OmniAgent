@@ -59,3 +59,20 @@ def test_router_falls_back_when_scorer_errors() -> None:
     assert decision.model_selected == "primary"
     assert decision.complexity == "medium"
     assert decision.route_label == "primary_fallback"
+
+
+def test_router_respects_rollout_ratio_zero() -> None:
+    router = ModelRouter(enabled=True, ratio=0.0, primary_model="primary", model_a="small", model_b="large")
+
+    decision = router.decide(user_id="u3", query="请分析附件并给出建议")
+
+    assert decision.model_selected == "primary"
+    assert decision.route_label == "primary_default"
+
+
+def test_complexity_scorer_handles_empty_query() -> None:
+    scorer = RuleBasedComplexityScorer()
+
+    score = scorer.score("")
+
+    assert score.level == "simple"

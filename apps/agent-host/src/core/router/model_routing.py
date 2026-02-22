@@ -21,6 +21,16 @@ class ComplexityScorer(Protocol):
 
 
 class RuleBasedComplexityScorer:
+    _SIMPLE_KEYWORDS = (
+        "吗",
+        "好的",
+        "谢谢",
+        "收到",
+        "确认",
+        "在吗",
+        "hello",
+        "hi",
+    )
     _COMPLEX_KEYWORDS = (
         "对比",
         "比较",
@@ -33,6 +43,9 @@ class RuleBasedComplexityScorer:
         "历史",
         "原因",
         "方案",
+        "解释",
+        "推理",
+        "步骤",
         "report",
     )
     _MEDIUM_KEYWORDS = (
@@ -44,6 +57,10 @@ class RuleBasedComplexityScorer:
         "按",
         "统计",
         "条件",
+        "今天",
+        "本周",
+        "本月",
+        "最近",
         "list",
     )
 
@@ -51,6 +68,14 @@ class RuleBasedComplexityScorer:
         text = str(query or "").strip()
         lowered = text.lower()
         reasons: list[str] = []
+
+        if any(token in lowered for token in self._SIMPLE_KEYWORDS) and len(text) <= 24:
+            return ComplexityScore(level="simple", reasons=["simple_keyword"])
+
+        date_like = any(token in lowered for token in ("今天", "本周", "本月", "最近", "上周", "下周"))
+        query_like = any(token in lowered for token in ("查", "查询", "找", "列出", "有哪些"))
+        if date_like and query_like:
+            reasons.append("query_with_date_range")
 
         if len(text) >= 50:
             reasons.append("long_query")
@@ -138,6 +163,8 @@ class ModelRouter:
             "model_selected": model_selected,
             "complexity": complexity,
             "route_reason": reason,
+            "ab_ratio": f"{self._ratio:.3f}",
+            "in_ab_bucket": "true" if in_ab_bucket else "false",
         }
         return RoutingDecision(
             model_selected=model_selected,

@@ -31,6 +31,10 @@ def test_file_pipeline_defaults_safe() -> None:
     assert settings.ocr.provider == "none"
     assert settings.ocr.mineru_path == "/v1/convert"
     assert settings.ocr.llm_path == "/v1/document/convert"
+    assert settings.asr.enabled is False
+    assert settings.asr.provider == "none"
+    assert settings.asr.mineru_path == "/v1/convert"
+    assert settings.asr.llm_path == "/v1/document/convert"
 
 
 def test_file_pipeline_env_overrides(monkeypatch) -> None:
@@ -38,6 +42,8 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("FILE_PIPELINE_MAX_BYTES", "4096")
     monkeypatch.setenv("FILE_PIPELINE_TIMEOUT_SECONDS", "7")
     monkeypatch.setenv("FILE_PIPELINE_METRICS_ENABLED", "false")
+    monkeypatch.setenv("MODEL_PRIMARY", "model-primary")
+    monkeypatch.setenv("MODEL_SECONDARY", "model-secondary")
     monkeypatch.setenv("FILE_EXTRACTOR_ENABLED", "true")
     monkeypatch.setenv("FILE_EXTRACTOR_PROVIDER", "mineru")
     monkeypatch.setenv("FILE_EXTRACTOR_API_KEY", "k")
@@ -62,12 +68,21 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("OCR_ENABLED", "true")
     monkeypatch.setenv("OCR_PROVIDER", "mineru")
     monkeypatch.setenv("OCR_API_KEY", "ocr-key")
-    monkeypatch.setenv("OCR_API_BASE", "https://ocr.example.com")
+    monkeypatch.setenv("OCR_API_ENDPOINT", "https://ocr.example.com")
     monkeypatch.setenv("OCR_MINERU_PATH", "/ocr/mineru")
     monkeypatch.setenv("OCR_LLM_PATH", "/ocr/llm")
     monkeypatch.setenv("OCR_AUTH_STYLE", "x_api_key")
     monkeypatch.setenv("OCR_API_KEY_HEADER", "X-OCR-Key")
     monkeypatch.setenv("OCR_API_KEY_PREFIX", "Token ")
+    monkeypatch.setenv("ASR_ENABLED", "true")
+    monkeypatch.setenv("ASR_PROVIDER", "llm")
+    monkeypatch.setenv("ASR_API_ENDPOINT", "https://asr.example.com")
+    monkeypatch.setenv("ASR_API_KEY", "asr-key")
+    monkeypatch.setenv("ASR_MINERU_PATH", "/asr/mineru")
+    monkeypatch.setenv("ASR_LLM_PATH", "/asr/llm")
+    monkeypatch.setenv("ASR_AUTH_STYLE", "x_api_key")
+    monkeypatch.setenv("ASR_API_KEY_HEADER", "X-ASR-Key")
+    monkeypatch.setenv("ASR_API_KEY_PREFIX", "Token ")
 
     settings = load_settings(config_path="/path/not/exists/config.yaml")
 
@@ -75,6 +90,8 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     assert settings.file_pipeline.max_bytes == 4096
     assert settings.file_pipeline.timeout_seconds == 7
     assert settings.file_pipeline.metrics_enabled is False
+    assert settings.llm.model_primary == "model-primary"
+    assert settings.llm.model_secondary == "model-secondary"
     assert settings.file_extractor.enabled is True
     assert settings.file_extractor.provider == "mineru"
     assert settings.file_extractor.mineru_path == "/mineru/convert"
@@ -103,3 +120,12 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     assert settings.ocr.auth_style == "x_api_key"
     assert settings.ocr.api_key_header == "X-OCR-Key"
     assert settings.ocr.api_key_prefix == "Token "
+    assert settings.asr.enabled is True
+    assert settings.asr.provider == "llm"
+    assert settings.asr.api_key == "asr-key"
+    assert settings.asr.api_base == "https://asr.example.com"
+    assert settings.asr.mineru_path == "/asr/mineru"
+    assert settings.asr.llm_path == "/asr/llm"
+    assert settings.asr.auth_style == "x_api_key"
+    assert settings.asr.api_key_header == "X-ASR-Key"
+    assert settings.asr.api_key_prefix == "Token "

@@ -77,7 +77,7 @@ def normalize_content(
     elif normalized_type == "file":
         segments = ["[收到文件消息]"]
         if file_pipeline_enabled:
-            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes, message_type=normalized_type)
             if attachments and attachments[0].accepted:
                 _record_ingress("accepted")
             elif attachments:
@@ -89,7 +89,7 @@ def normalize_content(
     elif normalized_type == "audio":
         segments = ["[收到语音消息]"]
         if file_pipeline_enabled:
-            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes, message_type=normalized_type)
             if attachments and attachments[0].accepted:
                 _record_ingress("accepted")
             elif attachments:
@@ -101,7 +101,7 @@ def normalize_content(
     elif normalized_type == "image":
         segments = ["[收到图片消息]"]
         if file_pipeline_enabled:
-            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            attachments = _extract_attachment(content, max_file_bytes=max_file_bytes, message_type=normalized_type)
             if attachments and attachments[0].accepted:
                 _record_ingress("accepted")
             elif attachments:
@@ -184,7 +184,7 @@ def _extract_post_texts(content: str) -> list[str]:
     return texts
 
 
-def _extract_attachment(content: str, max_file_bytes: int) -> list[NormalizedAttachment]:
+def _extract_attachment(content: str, max_file_bytes: int, message_type: str) -> list[NormalizedAttachment]:
     if not content:
         return []
 
@@ -218,10 +218,11 @@ def _extract_attachment(content: str, max_file_bytes: int) -> list[NormalizedAtt
     file_type = _resolve_file_type(file_name=file_name, payload=payload)
     accepted = True
     reject_reason = ""
+    normalized_type = str(message_type or "").strip().lower()
     if file_size is not None and file_size > max(1, int(max_file_bytes)):
         accepted = False
         reject_reason = "file_too_large"
-    elif file_type and file_type not in _SUPPORTED_FILE_EXTENSIONS:
+    elif normalized_type == "file" and file_type and file_type not in _SUPPORTED_FILE_EXTENSIONS:
         accepted = False
         reject_reason = "unsupported_file_type"
 

@@ -55,13 +55,16 @@ class LLMClient:
             http_client=self._http_client,
         )
         self._last_usage: dict[str, Any] | None = None
+        configured_primary = str(getattr(settings, "model_primary", "") or "").strip()
+        configured_model = str(settings.model or "").strip()
+        self._primary_model = configured_primary or configured_model
         self._route_metadata_var: ContextVar[dict[str, Any]] = ContextVar(
             "llm_route_metadata", default={}
         )
 
     @property
     def model_name(self) -> str:
-        return str(self._settings.model)
+        return self._primary_model
 
     async def _log_response(self, response: httpx.Response) -> None:
         if response.status_code >= 400:
@@ -91,7 +94,7 @@ class LLMClient:
         start = time.perf_counter()
         status = "success"
         route_metadata = self._route_metadata_var.get({})
-        model_name = str(route_metadata.get("model_selected") or self._settings.model)
+        model_name = str(route_metadata.get("model_selected") or self._primary_model)
         try:
             response = await asyncio.wait_for(
                 self._client.chat.completions.create(
@@ -135,7 +138,7 @@ class LLMClient:
         total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-        model = str(getattr(response, "model", "") or route_metadata.get("model_selected") or self._settings.model)
+        model = str(getattr(response, "model", "") or route_metadata.get("model_selected") or self._primary_model)
         self._last_usage = {
             "model": model,
             "token_count": total_tokens,

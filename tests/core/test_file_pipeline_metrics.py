@@ -110,3 +110,10 @@ def test_build_file_context_records_applied_and_truncated_metrics(monkeypatch) -
     assert long_value.endswith("...")
     assert ("context", "applied", "llm") in recorded
     assert ("context", "truncated", "llm") in recorded
+
+
+def test_file_pipeline_media_guidance_and_status_text() -> None:
+    assert file_pipeline_module.build_processing_status_text("image").startswith("正在识别图片内容")
+    assert file_pipeline_module.build_processing_status_text("audio").startswith("正在识别语音内容")
+    assert "图片识别失败" in file_pipeline_module.build_file_unavailable_guidance("ocr_timeout")
+    assert file_pipeline_module.build_file_unavailable_guidance("asr_unconfigured") == "语音识别失败，请发送文字。"

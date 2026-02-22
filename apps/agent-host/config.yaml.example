@@ -72,6 +72,8 @@ llm:
   # 主模型配置
   provider: "openai"              # openai | anthropic | deepseek
   model: "gpt-4o-mini"            # 推荐性价比模型
+  model_primary: ${MODEL_PRIMARY:-}
+  model_secondary: ${MODEL_SECONDARY:-}
 
   # API 配置
   api_key: ${LLM_API_KEY}
@@ -226,16 +228,32 @@ ab_routing:
   model_a: ${AB_ROUTING_MODEL_A:-}
   model_b: ${AB_ROUTING_MODEL_B:-}
 
+cost_monitor:
+  alert_hourly_threshold: ${COST_ALERT_HOURLY_THRESHOLD:-5.0}
+  alert_daily_threshold: ${COST_ALERT_DAILY_THRESHOLD:-50.0}
+  circuit_breaker_enabled: ${COST_CIRCUIT_BREAKER_ENABLED:-false}
+
 ocr:
   enabled: ${OCR_ENABLED:-false}
   provider: ${OCR_PROVIDER:-none}   # none | mineru | llm
   api_key: ${OCR_API_KEY:-}
-  api_base: ${OCR_API_BASE:-}
+  api_base: ${OCR_API_ENDPOINT:-${OCR_API_BASE:-}}
   mineru_path: ${OCR_MINERU_PATH:-/v1/convert}
   llm_path: ${OCR_LLM_PATH:-/v1/document/convert}
   auth_style: ${OCR_AUTH_STYLE:-bearer}
   api_key_header: ${OCR_API_KEY_HEADER:-X-API-Key}
   api_key_prefix: ${OCR_API_KEY_PREFIX:-Bearer }
+
+asr:
+  enabled: ${ASR_ENABLED:-false}
+  provider: ${ASR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${ASR_API_KEY:-}
+  api_base: ${ASR_API_ENDPOINT:-${ASR_API_BASE:-}}
+  mineru_path: ${ASR_MINERU_PATH:-/v1/convert}
+  llm_path: ${ASR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${ASR_AUTH_STYLE:-bearer}
+  api_key_header: ${ASR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${ASR_API_KEY_PREFIX:-Bearer }
 
 # ------------------------------------------------------------
 # Webhook 配置

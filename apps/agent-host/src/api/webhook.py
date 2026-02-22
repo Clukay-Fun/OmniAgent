@@ -23,6 +23,8 @@ from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, Messa
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
 from src.api.file_pipeline import (
+    build_ocr_completion_text,
+    build_processing_status_text,
     build_file_unavailable_guidance,
     is_file_pipeline_message,
     resolve_file_markdown,
@@ -278,6 +280,23 @@ def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dic
             "msg_type": "text",
             "content": {"text": text_fallback},
         }
+
+
+def _prepend_reply_text(reply: dict[str, Any], prefix: str) -> dict[str, Any]:
+    text_prefix = str(prefix or "").strip()
+    if not text_prefix:
+        return reply
+    merged = dict(reply)
+    old_text = str(merged.get("text") or "").strip()
+    merged["text"] = text_prefix if not old_text else f"{text_prefix}\n\n{old_text}"
+    outbound = merged.get("outbound")
+    if isinstance(outbound, dict):
+        text_fallback = str(outbound.get("text_fallback") or "").strip()
+        outbound["text_fallback"] = text_prefix if not text_fallback else f"{text_prefix}\n\n{text_fallback}"
+        blocks = outbound.get("blocks")
+        if isinstance(blocks, list):
+            blocks.insert(0, {"type": "paragraph", "content": {"text": text_prefix}})
+    return merged
 
 
 # 公开访问器（供 main.py 等外部模块使用）
@@ -599,6 +618,27 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         logger.warning("缺少 chat_id，结束处理", extra={"event_code": "webhook.message.missing_chat_id"})
         return False
 
+    if (
+        normalized.message_type in {"image", "audio"}
+        and normalized.attachments
+        and normalized.attachments[0].accepted
+        and not str(chat_id).startswith("test-")
+    ):
+        try:
+            await send_message(
+                settings,
+                chat_id,
+                "text",
+                {"text": build_processing_status_text(normalized.message_type)},
+                reply_message_id=message_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "发送多模态处理中提示失败: %s",
+                exc,
+                extra={"event_code": "webhook.reply.media_status_failed"},
+            )
+
     logger.info(
         "消息上下文已就绪",
         extra={
@@ -631,6 +671,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     file_markdown = ""
     file_provider = "none"
     direct_reply_text = ""
+    ocr_completion_text = ""
     if normalized.attachments:
         file_markdown, guidance, file_provider = await resolve_file_markdown(
             attachments=normalized.attachments,
@@ -639,8 +680,18 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         )
         if guidance and not file_markdown and normalized.message_type in {"file", "audio", "image"}:
             direct_reply_text = guidance
+        elif normalized.message_type == "audio" and file_markdown:
+            text = file_markdown
+            file_markdown = ""
+        elif normalized.message_type == "image" and file_markdown:
+            ocr_completion_text = build_ocr_completion_text(file_markdown)
     elif normalized.message_type in {"file", "audio", "image"}:
-        direct_reply_text = build_file_unavailable_guidance("extractor_disabled")
+        reason = "extractor_disabled"
+        if normalized.message_type == "audio":
+            reason = "asr_unconfigured"
+        elif normalized.message_type == "image":
+            reason = "ocr_unconfigured"
+        direct_reply_text = build_file_unavailable_guidance(reason)
     
     try:
         # 静默获取用户信息（仅用于"我的案件"识别）
@@ -677,6 +728,8 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                 file_markdown=file_markdown,
                 file_provider=file_provider,
             )
+            if ocr_completion_text:
+                reply = _prepend_reply_text(reply, ocr_completion_text)
         
         if chat_id.startswith("test-"):
             logger.info(

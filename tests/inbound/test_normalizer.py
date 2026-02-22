@@ -86,3 +86,43 @@ def test_normalize_file_message_rejects_large_or_unsupported_file() -> None:
     attachment = normalized.attachments[0]
     assert attachment.accepted is False
     assert attachment.reject_reason == "file_too_large"
+
+
+def test_normalize_image_message_accepts_pipeline_attachment() -> None:
+    payload = {
+        "image_key": "img_x",
+        "source_url": "https://example.com/image.png",
+        "file_type": "png",
+    }
+
+    normalized = normalize_content(
+        "image",
+        json.dumps(payload, ensure_ascii=False),
+        file_pipeline_enabled=True,
+        max_file_bytes=4096,
+    )
+
+    assert normalized.message_type == "image"
+    assert normalized.text == "[收到图片消息]"
+    assert len(normalized.attachments) == 1
+    assert normalized.attachments[0].accepted is True
+
+
+def test_normalize_audio_message_accepts_pipeline_attachment() -> None:
+    payload = {
+        "audio_key": "aud_x",
+        "source_url": "https://example.com/audio.mp3",
+        "file_type": "mp3",
+    }
+
+    normalized = normalize_content(
+        "audio",
+        json.dumps(payload, ensure_ascii=False),
+        file_pipeline_enabled=True,
+        max_file_bytes=4096,
+    )
+
+    assert normalized.message_type == "audio"
+    assert normalized.text == "[收到语音消息]"
+    assert len(normalized.attachments) == 1
+    assert normalized.attachments[0].accepted is True
