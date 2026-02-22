@@ -8,11 +8,16 @@
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from src.config import SessionSettings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,6 +77,48 @@ class SessionManager:
         session.last_active = datetime.now(timezone.utc)
         if len(session.messages) > self._settings.max_rounds * 2:
             session.messages = session.messages[-self._settings.max_rounds * 2 :]
+
+    def trim_context_to_token_budget(
+        self,
+        user_id: str,
+        max_tokens: int,
+        keep_recent_messages: int = 2,
+    ) -> int:
+        """Trim oldest messages when estimated tokens exceed budget."""
+        session = self.get_or_create(user_id)
+        keep_recent_messages = max(0, keep_recent_messages)
+        max_tokens = max(1, max_tokens)
+
+        removed = 0
+        while (
+            len(session.messages) > keep_recent_messages
+            and self._estimate_messages_tokens(session.messages) > max_tokens
+        ):
+            session.messages.pop(0)
+            removed += 1
+
+        if removed > 0:
+            logger.warning(
+                "会话上下文超过 token 预算，已裁剪最旧消息",
+                extra={
+                    "event_code": "session.context.trimmed",
+                    "user_id": user_id,
+                    "removed_messages": removed,
+                    "remaining_messages": len(session.messages),
+                    "max_tokens": max_tokens,
+                },
+            )
+        return removed
+
+    def _estimate_messages_tokens(self, messages: list[dict[str, str]]) -> int:
+        return sum(self._estimate_message_tokens(message) for message in messages)
+
+    def _estimate_message_tokens(self, message: dict[str, str]) -> int:
+        role = str(message.get("role", "")).strip()
+        content = str(message.get("content", "")).strip()
+        role_tokens = math.ceil(len(role) / 4) if role else 1
+        content_tokens = math.ceil(len(content) / 4) if content else 1
+        return role_tokens + content_tokens + 4
 
     def get_context(self, user_id: str) -> list[dict[str, str]]:
         """获取当前上下文消息列表"""

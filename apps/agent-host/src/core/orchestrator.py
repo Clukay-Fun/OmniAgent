@@ -33,6 +33,7 @@ from src.core.router import SkillRouter, SkillContext, SkillResult, ContextManag
 from src.core.l0 import L0RuleEngine
 from src.core.planner import PlannerEngine, PlannerOutput
 from src.core.state import ConversationStateManager, MemoryStateStore
+from src.core.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
 from src.core.skills import (
     QuerySkill,
     SummarySkill,
@@ -177,6 +178,7 @@ class AgentOrchestrator:
         self._sessions = session_manager
         self._mcp = mcp_client
         self._llm = llm_client
+        self._context_trim_tokens = max(256, min(int(settings.session.max_context_tokens), 3800))
 
         # ============================================
         # region 任务模型初始化（意图识别/工具调用专用）
@@ -226,6 +228,16 @@ class AgentOrchestrator:
         self._soul_manager = SoulManager()
         self._memory_manager = MemoryManager(vector_memory=self._vector_memory)
         self._memory_manager.cleanup_logs()
+        self._midterm_extractor = RuleSummaryExtractor()
+        self._midterm_memory_store: SQLiteMidtermMemoryStore | None = None
+        try:
+            self._midterm_memory_store = SQLiteMidtermMemoryStore()
+        except Exception as exc:
+            logger.warning(
+                "初始化中期记忆存储失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.midterm_memory.init_failed"},
+            )
 
         # 加载技能配置（含技能市场）
         self._skills_config = self._load_skills_config(skills_config_path)
@@ -579,6 +591,7 @@ class AgentOrchestrator:
             
             # 记录用户消息
             self._sessions.add_message(user_id, "user", text)
+            self._trim_session_context(user_id)
 
             # Step 0: L0 规则硬约束
             l0_decision = self._l0_engine.evaluate(user_id, text)
@@ -902,6 +915,56 @@ class AgentOrchestrator:
         # ============================================
 
         self._record_event(user_id, skill_name, result_data, extra)
+        self._record_midterm_memory(user_id, user_text, skill_name, result_data)
+
+    def _trim_session_context(self, user_id: str) -> None:
+        trim_method = getattr(self._sessions, "trim_context_to_token_budget", None)
+        if not callable(trim_method):
+            return
+
+        max_tokens = int(getattr(self, "_context_trim_tokens", 3800))
+        try:
+            trim_method(
+                user_id=user_id,
+                max_tokens=max_tokens,
+                keep_recent_messages=2,
+            )
+        except Exception as exc:
+            logger.warning(
+                "会话上下文裁剪失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.session.trim_failed"},
+            )
+
+    def _record_midterm_memory(
+        self,
+        user_id: str,
+        user_text: str,
+        skill_name: str,
+        result_data: dict[str, Any],
+    ) -> None:
+        store = getattr(self, "_midterm_memory_store", None)
+        if store is None:
+            return
+
+        try:
+            extractor = getattr(self, "_midterm_extractor", None)
+            if extractor is None:
+                return
+            items = extractor.build_items(
+                user_text=user_text,
+                skill_name=skill_name,
+                result_data=result_data,
+            )
+            if not items:
+                return
+            store.write_items(user_id=user_id, items=items)
+        except Exception as exc:
+            logger.warning(
+                "写入中期记忆失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.midterm_memory.write_failed"},
+            )
 
     def _extract_memory_trigger(self, text: str) -> str | None:
         """识别并提取用户的长期记忆内容"""

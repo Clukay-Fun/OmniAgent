@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from src.adapters.channels.feishu.card_scaffold import build_card_payload, build_text_payload
 from src.core.response.models import Block, RenderedResponse
 
 
@@ -32,10 +33,7 @@ class FeishuFormatter:
         return card_payload
 
     def _text_payload(self, rendered: RenderedResponse) -> Dict[str, Any]:
-        return {
-            "msg_type": "text",
-            "content": {"text": rendered.text_fallback},
-        }
+        return build_text_payload(rendered.text_fallback)
 
     def _build_card(self, rendered: RenderedResponse) -> Dict[str, Any] | None:
         try:
@@ -50,12 +48,7 @@ class FeishuFormatter:
         if not elements:
             return None
 
-        return {
-            "msg_type": "interactive",
-            "card": {
-                "elements": elements,
-            },
-        }
+        return build_card_payload(elements)
 
     def _block_to_element(self, block: Block) -> Dict[str, Any] | None:
         content = block.content if isinstance(block.content, dict) else {}
