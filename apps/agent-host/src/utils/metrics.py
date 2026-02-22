@@ -152,6 +152,12 @@ if PROMETHEUS_AVAILABLE:
         "Total state store backend selection outcomes",
         ["backend", "status"],
     )
+
+    USAGE_LOG_WRITE_COUNT = Counter(
+        "usage_log_total",
+        "Total usage log write attempts by status",
+        ["status"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -192,6 +198,7 @@ else:
     FIELD_FORMAT_COUNT = DummyMetric()
     CARD_TEMPLATE_COUNT = DummyMetric()
     STATE_STORE_BACKEND_COUNT = DummyMetric()
+    USAGE_LOG_WRITE_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -280,6 +287,11 @@ def record_card_template(template_id: str, status: str) -> None:
 def record_state_store_backend(backend: str, status: str) -> None:
     """记录状态存储后端选择结果。"""
     STATE_STORE_BACKEND_COUNT.labels(backend=backend, status=status).inc()
+
+
+def record_usage_log_write(status: str) -> None:
+    """记录 usage log 写入结果。"""
+    USAGE_LOG_WRITE_COUNT.labels(status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:

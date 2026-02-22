@@ -17,6 +17,8 @@ def test_file_pipeline_defaults_safe() -> None:
     assert settings.file_extractor.provider == "none"
     assert settings.file_extractor.fail_open is True
     assert settings.file_context.injection_enabled is False
+    assert settings.usage_log.enabled is False
+    assert settings.usage_log.fail_open is True
 
 
 def test_file_pipeline_env_overrides(monkeypatch) -> None:
@@ -30,6 +32,9 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("FILE_CONTEXT_INJECTION_ENABLED", "true")
     monkeypatch.setenv("FILE_CONTEXT_MAX_CHARS", "999")
     monkeypatch.setenv("FILE_CONTEXT_MAX_TOKENS", "111")
+    monkeypatch.setenv("USAGE_LOG_ENABLED", "true")
+    monkeypatch.setenv("USAGE_LOG_PATH", "workspace/usage/custom-{date}.jsonl")
+    monkeypatch.setenv("USAGE_LOG_FAIL_OPEN", "false")
 
     settings = load_settings(config_path="/path/not/exists/config.yaml")
 
@@ -41,3 +46,6 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     assert settings.file_context.injection_enabled is True
     assert settings.file_context.max_chars == 999
     assert settings.file_context.max_tokens == 111
+    assert settings.usage_log.enabled is True
+    assert settings.usage_log.path == "workspace/usage/custom-{date}.jsonl"
+    assert settings.usage_log.fail_open is False

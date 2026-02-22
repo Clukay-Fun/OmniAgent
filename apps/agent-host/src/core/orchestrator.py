@@ -24,6 +24,7 @@ from src.utils.metrics import (
     record_chitchat_guard,
     record_intent_parse,
     record_request,
+    record_usage_log_write,
     set_active_sessions,
 )
 
@@ -53,6 +54,7 @@ from src.mcp.client import MCPClient
 from src.utils.time_parser import parse_time_range
 from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorMemoryManager
 from src.skills_market import load_market_skills
+from src.core.usage_logger import UsageLogger, UsageRecord, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +254,11 @@ class AgentOrchestrator:
         self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
         self._casual_responses = _load_casual_responses()
         self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
+        self._usage_logger = UsageLogger(
+            enabled=bool(getattr(settings.usage_log, "enabled", False)),
+            path_template=str(getattr(settings.usage_log, "path", "workspace/usage/usage_log-{date}.jsonl")),
+            fail_open=bool(getattr(settings.usage_log, "fail_open", True)),
+        )
 
         # LLM 超时配置
         self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))
@@ -583,6 +590,8 @@ class AgentOrchestrator:
         
         start_time = time.perf_counter()
         status = "success"
+        usage_skill = "unknown"
+        usage_source = "text"
         reply: dict[str, Any] = {
             "type": "text",
             "text": "请稍后重试。",
@@ -619,6 +628,7 @@ class AgentOrchestrator:
                 intent: IntentResult | None = None
 
                 if l0_decision.force_skill:
+                    usage_skill = l0_decision.force_skill
                     intent = IntentResult(
                         skills=[
                             SkillMatch(
@@ -640,6 +650,7 @@ class AgentOrchestrator:
                         },
                     )
                 elif l0_decision.intent_hint == "chitchat":
+                    usage_skill = "ChitchatSkill"
                     if not self._chitchat_allow_llm:
                         record_chitchat_guard("blocked")
                         reply = {
@@ -738,6 +749,7 @@ class AgentOrchestrator:
                     extra["chat_id"] = chat_id
                     extra["chat_type"] = chat_type
                     extra["user_profile"] = user_profile  # 添加用户档案
+                    usage_source = str(extra.get("usage_source") or "text")
 
                     force_last_result = l0_decision.force_last_result if l0_decision.force_skill else None
                     context = SkillContext(
@@ -759,6 +771,7 @@ class AgentOrchestrator:
                     else:
                         assert intent is not None
                         result = await self._router.route(intent, context)
+                    usage_skill = result.skill_name
 
                     # Step 4: 更新上下文（保存结果供后续链式调用）
                     if result.success and result.data:
@@ -839,8 +852,68 @@ class AgentOrchestrator:
         # 记录助手回复
         reply = _ensure_minimal_outbound(reply, assistant_name=self._assistant_name)
         self._sessions.add_message(user_id, "assistant", reply.get("text", ""))
+        try:
+            self._record_usage_log(
+                user_id=user_id,
+                conversation_id=chat_id or user_id,
+                skill_name=usage_skill,
+                usage_source=usage_source,
+            )
+        except Exception:
+            pass
         
         return reply
+
+    def _record_usage_log(
+        self,
+        user_id: str,
+        conversation_id: str,
+        skill_name: str,
+        usage_source: str,
+    ) -> None:
+        usage_logger = getattr(self, "_usage_logger", None)
+        if usage_logger is None:
+            return
+        usage = self._drain_latest_llm_usage()
+        model = str((usage or {}).get("model") or getattr(getattr(self, "_llm", None), "model_name", ""))
+        token_count = int((usage or {}).get("token_count") or 0)
+        cost = float((usage or {}).get("cost") or 0.0)
+        estimated = bool((usage or {}).get("estimated", True))
+        try:
+            ok = usage_logger.log(
+                UsageRecord(
+                    ts=now_iso(),
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    model=model,
+                    skill=str(skill_name or "unknown"),
+                    token_count=token_count,
+                    cost=cost,
+                    usage_source=str(usage_source or "text"),
+                    estimated=estimated,
+                )
+            )
+            record_usage_log_write("ok" if ok else "noop")
+        except Exception:
+            record_usage_log_write("error")
+
+    def _drain_latest_llm_usage(self) -> dict[str, Any] | None:
+        usages: list[dict[str, Any]] = []
+        for client in (getattr(self, "_llm", None), getattr(self, "_task_llm", None)):
+            if client is None:
+                continue
+            consume = getattr(client, "consume_last_usage", None)
+            if not callable(consume):
+                continue
+            try:
+                data = consume()
+            except Exception:
+                data = None
+            if isinstance(data, dict):
+                usages.append(data)
+        if not usages:
+            return None
+        return max(usages, key=lambda item: float(item.get("ts", 0.0)))
 
     async def _build_extra(
         self,

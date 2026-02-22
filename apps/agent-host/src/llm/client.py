@@ -52,6 +52,11 @@ class LLMClient:
             base_url=settings.api_base or None,
             http_client=self._http_client,
         )
+        self._last_usage: dict[str, Any] | None = None
+
+    @property
+    def model_name(self) -> str:
+        return str(self._settings.model)
 
     async def _log_response(self, response: httpx.Response) -> None:
         if response.status_code >= 400:
@@ -102,7 +107,29 @@ class LLMClient:
         finally:
             duration = time.perf_counter() - start
             record_llm_call("chat", status, duration)
+        self._capture_usage(response)
         return response.choices[0].message.content or ""
+
+    def consume_last_usage(self) -> dict[str, Any] | None:
+        value = self._last_usage
+        self._last_usage = None
+        return value
+
+    def _capture_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        model = str(getattr(response, "model", "") or self._settings.model)
+        self._last_usage = {
+            "model": model,
+            "token_count": total_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost": 0.0,
+            "estimated": total_tokens <= 0,
+            "ts": time.time(),
+        }
 
     async def chat_json(
         self,

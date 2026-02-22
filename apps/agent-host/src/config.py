@@ -201,6 +201,12 @@ class FileContextSettings(BaseModel):
     max_tokens: int = 500
 
 
+class UsageLogSettings(BaseModel):
+    enabled: bool = False
+    path: str = "workspace/usage/usage_log-{date}.jsonl"
+    fail_open: bool = True
+
+
 class CleanupSettings(BaseModel):
     interval_seconds: int = 300
     enabled: bool = True
@@ -358,6 +364,7 @@ class Settings(BaseModel):
     file_pipeline: FilePipelineSettings = Field(default_factory=FilePipelineSettings)
     file_extractor: FileExtractorSettings = Field(default_factory=FileExtractorSettings)
     file_context: FileContextSettings = Field(default_factory=FileContextSettings)
+    usage_log: UsageLogSettings = Field(default_factory=UsageLogSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -486,6 +493,9 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FILE_CONTEXT_INJECTION_ENABLED": ["file_context", "injection_enabled"],
         "FILE_CONTEXT_MAX_CHARS": ["file_context", "max_chars"],
         "FILE_CONTEXT_MAX_TOKENS": ["file_context", "max_tokens"],
+        "USAGE_LOG_ENABLED": ["usage_log", "enabled"],
+        "USAGE_LOG_PATH": ["usage_log", "path"],
+        "USAGE_LOG_FAIL_OPEN": ["usage_log", "fail_open"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

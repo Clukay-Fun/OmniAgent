@@ -207,6 +207,11 @@ file_context:
   max_chars: ${FILE_CONTEXT_MAX_CHARS:-2000}
   max_tokens: ${FILE_CONTEXT_MAX_TOKENS:-500}
 
+usage_log:
+  enabled: ${USAGE_LOG_ENABLED:-false}
+  path: ${USAGE_LOG_PATH:-workspace/usage/usage_log-{date}.jsonl}
+  fail_open: ${USAGE_LOG_FAIL_OPEN:-true}
+
 # ------------------------------------------------------------
 # Webhook 配置
 # ------------------------------------------------------------
