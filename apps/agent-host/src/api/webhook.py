@@ -23,6 +23,7 @@ from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, Messa
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
 from src.adapters.channels.feishu.formatter import FeishuFormatter
+from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_automation_enqueuer
 from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
@@ -48,6 +49,7 @@ _llm_client: Any = None
 _agent_core: AgentOrchestrator | None = None
 _deduplicator: "EventDeduplicator | None" = None
 _event_router: FeishuEventRouter | None = None
+_automation_enqueuer: QueueAutomationEnqueuer | None = None
 _chunk_assembler: ChunkAssembler | None = None
 _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
@@ -98,8 +100,18 @@ def _get_event_router() -> FeishuEventRouter:
     global _event_router
     if _event_router is None:
         settings = _get_settings()
-        _event_router = FeishuEventRouter(enabled_types=get_enabled_types(settings))
+        _event_router = FeishuEventRouter(
+            enabled_types=get_enabled_types(settings),
+            automation_enqueuer=_get_automation_enqueuer(),
+        )
     return _event_router
+
+
+def _get_automation_enqueuer() -> QueueAutomationEnqueuer:
+    global _automation_enqueuer
+    if _automation_enqueuer is None:
+        _automation_enqueuer = create_default_automation_enqueuer()
+    return _automation_enqueuer
 
 
 def _get_chunk_assembler() -> ChunkAssembler:
