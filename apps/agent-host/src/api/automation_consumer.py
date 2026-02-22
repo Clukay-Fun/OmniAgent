@@ -27,6 +27,9 @@ from src.api.automation_rules import (
 )
 from src.utils.metrics import record_automation_consumed
 from src.utils.workspace import get_workspace_root
+from src.config import get_settings
+from src.mcp.client import MCPClient
+from src.utils.feishu_api import send_message
 
 
 def _read_bool_env(key: str, default: bool) -> bool:
@@ -117,9 +120,38 @@ class AutomationConsumer:
         else:
             self._rule_set = list(rule_set)
         self._rule_matcher = rule_matcher or AutomationRuleMatcher()
+        settings = get_settings()
+        mcp_client = MCPClient(settings)
+
+        async def _send_message_action(**kwargs: Any) -> None:
+            receive_id = str(kwargs.get("receive_id") or "").strip()
+            if not receive_id:
+                return
+            await send_message(
+                settings=settings,
+                receive_id=receive_id,
+                msg_type=str(kwargs.get("msg_type") or "text"),
+                content=kwargs.get("content") if isinstance(kwargs.get("content"), dict) else {"text": ""},
+                receive_id_type=str(kwargs.get("receive_id_type") or "chat_id"),
+                credential_source="org_b",
+            )
+
+        async def _bitable_update_action(**kwargs: Any) -> None:
+            await mcp_client.call_tool(
+                "feishu.v1.bitable.record.update",
+                {
+                    "table_id": str(kwargs.get("table_id") or ""),
+                    "record_id": str(kwargs.get("record_id") or ""),
+                    "fields": kwargs.get("fields") if isinstance(kwargs.get("fields"), dict) else {},
+                },
+            )
+
         self._action_executor = action_executor or AutomationActionExecutor(
             dead_letter_path=_resolve_dead_letter_path(),
+            dry_run=_read_bool_env("AUTOMATION_DRY_RUN", True),
             status_write_enabled=_read_bool_env("AUTOMATION_STATUS_WRITE_ENABLED", False),
+            send_message_fn=_send_message_action,
+            bitable_update_fn=_bitable_update_action,
         )
         self._automation_enabled = _read_bool_env("AUTOMATION_ENABLED", True) if automation_enabled is None else automation_enabled
 

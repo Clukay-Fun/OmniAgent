@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -291,6 +292,8 @@ class AutomationActionExecutor:
         max_retries: int = 3,
         backoff_base_seconds: float = 0.2,
         sleeper: Callable[[float], None] | None = None,
+        send_message_fn: Callable[..., Any] | None = None,
+        bitable_update_fn: Callable[..., Any] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._dead_letter_path = dead_letter_path
@@ -299,6 +302,8 @@ class AutomationActionExecutor:
         self._max_retries = max_retries
         self._backoff_base_seconds = backoff_base_seconds
         self._sleeper = sleeper or time.sleep
+        self._send_message_fn = send_message_fn
+        self._bitable_update_fn = bitable_update_fn
         self._logger = logger or logging.getLogger(__name__)
 
     def execute_rule(self, rule: AutomationRule, payload: dict[str, Any]) -> dict[str, Any]:
@@ -392,21 +397,64 @@ class AutomationActionExecutor:
             return {"status": "success"}
 
         if action_type == "send_message":
-            self._logger.info(
-                "automation dry-run send_message",
-                extra={
-                    "event_code": "automation.action.dry_run_send_message",
-                    "action_type": action_type,
-                    "record_id": str(payload.get("record_id") or ""),
-                    "dry_run": self._dry_run,
-                },
+            if self._dry_run:
+                self._logger.info(
+                    "automation dry-run send_message",
+                    extra={
+                        "event_code": "automation.action.dry_run_send_message",
+                        "action_type": action_type,
+                        "record_id": str(payload.get("record_id") or ""),
+                        "dry_run": self._dry_run,
+                    },
+                )
+                return {"status": "success"}
+            sender = self._send_message_fn
+            if not callable(sender):
+                return {"status": "skipped_sender_unavailable"}
+            rendered_text = self._render_template(
+                str(action.get("message") or action.get("text") or "记录状态已更新"),
+                payload,
+            )
+            receive_id = str(action.get("receive_id") or payload.get("chat_id") or "").strip()
+            if not receive_id:
+                return {"status": "skipped_missing_receive_id"}
+            self._run_async(
+                sender(
+                    receive_id=receive_id,
+                    msg_type="text",
+                    content={"text": rendered_text},
+                    receive_id_type=str(action.get("receive_id_type") or "chat_id"),
+                    credential_source="org_b",
+                )
             )
             return {"status": "success"}
 
         if action_type in {"bitable.update", "bitable.upsert"}:
-            if not self._status_write_enabled:
-                return {"status": "skipped_status_write_disabled"}
-            return {"status": "skipped_unsupported"}
+            if self._dry_run:
+                if not self._status_write_enabled:
+                    return {"status": "skipped_status_write_disabled"}
+                return {"status": "skipped_unsupported"}
+            updater = self._bitable_update_fn
+            if not callable(updater):
+                return {"status": "skipped_updater_unavailable"}
+            table_id = str(action.get("table_id") or payload.get("table_id") or "").strip()
+            record_id = str(action.get("record_id") or payload.get("record_id") or "").strip()
+            fields = action.get("fields") if isinstance(action.get("fields"), dict) else {}
+            rendered_fields = {
+                str(k): self._render_template(str(v), payload)
+                for k, v in fields.items()
+            }
+            if not table_id or not record_id or not rendered_fields:
+                return {"status": "skipped_missing_update_payload"}
+            self._run_async(
+                updater(
+                    table_id=table_id,
+                    record_id=record_id,
+                    fields=rendered_fields,
+                    credential_source="org_a",
+                )
+            )
+            return {"status": "success"}
 
         return {"status": "skipped_unsupported"}
 
@@ -416,6 +464,17 @@ class AutomationActionExecutor:
             token = "{" + key + "}"
             rendered = rendered.replace(token, str(payload.get(key) or ""))
         return rendered
+
+    def _run_async(self, awaitable: Any) -> None:
+        if awaitable is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(awaitable)
+            return
+        except RuntimeError:
+            pass
+        asyncio.run(awaitable)
 
     def _append_dead_letter(
         self,

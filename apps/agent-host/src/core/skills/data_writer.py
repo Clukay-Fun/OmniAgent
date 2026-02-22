@@ -33,12 +33,29 @@ class DataWriter(Protocol):
     ) -> WriteResult:
         ...
 
+    async def delete(
+        self,
+        table_id: str | None,
+        record_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> WriteResult:
+        ...
+
 
 class MCPDataWriter:
-    def __init__(self, mcp_client: Any, *, create_tool_name: str, update_tool_name: str) -> None:
+    def __init__(
+        self,
+        mcp_client: Any,
+        *,
+        create_tool_name: str,
+        update_tool_name: str,
+        delete_tool_name: str,
+    ) -> None:
         self._mcp = mcp_client
         self._create_tool_name = str(create_tool_name).strip()
         self._update_tool_name = str(update_tool_name).strip()
+        self._delete_tool_name = str(delete_tool_name).strip()
 
     async def create(
         self,
@@ -80,11 +97,41 @@ class MCPDataWriter:
             return WriteResult(success=False, error=str(exc), fields=fields)
         return self._to_write_result(result, fallback_fields=fields)
 
+    async def delete(
+        self,
+        table_id: str | None,
+        record_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> WriteResult:
+        params: dict[str, Any] = {"record_id": record_id}
+        if table_id:
+            params["table_id"] = table_id
+        if idempotency_key:
+            params["idempotency_key"] = idempotency_key
+        try:
+            result = await self._mcp.call_tool(self._delete_tool_name, params)
+        except Exception as exc:
+            return WriteResult(success=False, error=str(exc), fields={})
+        fallback: dict[str, Any] = {}
+        if isinstance(result, dict):
+            raw_result_fields = result.get("fields")
+            fallback = dict(raw_result_fields) if isinstance(raw_result_fields, dict) else {}
+        write_result = self._to_write_result(result, fallback_fields=fallback)
+        if not write_result.record_id:
+            write_result.record_id = record_id
+        return write_result
+
     def _to_write_result(self, result: Any, *, fallback_fields: dict[str, Any]) -> WriteResult:
         if not isinstance(result, dict):
             return WriteResult(success=False, error="写入失败", fields=fallback_fields)
         success = bool(result.get("success"))
-        mapped_fields = result.get("fields") if isinstance(result.get("fields"), dict) else fallback_fields
+        raw_fields = result.get("fields")
+        mapped_fields: dict[str, Any] = {}
+        if isinstance(raw_fields, dict):
+            mapped_fields = dict(raw_fields)
+        else:
+            mapped_fields = dict(fallback_fields)
         return WriteResult(
             success=success,
             error=str(result.get("error") or "") or None,
@@ -100,4 +147,5 @@ def build_default_data_writer(mcp_client: Any) -> DataWriter:
         mcp_client,
         create_tool_name=f"{tool_prefix}.v1.bitable.record.create",
         update_tool_name=f"{tool_prefix}.v1.bitable.record.update",
+        delete_tool_name=f"{tool_prefix}.v1.bitable.record.delete",
     )

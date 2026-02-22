@@ -233,7 +233,7 @@ def test_format_crud_templates_from_renderer_skill_results() -> None:
     delete_success_payload = formatter.format(delete_success_rendered)
 
     assert create_payload["msg_type"] == "interactive"
-    assert "查看记录详情" in create_payload["card"]["elements"][-1]["content"]
+    assert "查看原记录" in create_payload["card"]["elements"][-1]["content"]
     assert update_payload["msg_type"] == "interactive"
     assert "->" in update_payload["card"]["elements"][1]["content"]
     assert delete_confirm_payload["card"]["elements"][-1]["tag"] == "action"

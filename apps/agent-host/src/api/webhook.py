@@ -405,6 +405,30 @@ def _get_text_content(message: dict[str, Any]) -> str:
         return payload.get("text") or ""
     except json.JSONDecodeError:
         return ""
+
+
+def _extract_card_action_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+    action = event.get("action") if isinstance(event.get("action"), dict) else {}
+    value = action.get("value") if isinstance(action.get("value"), dict) else {}
+    callback_action = str(value.get("callback_action") or "").strip()
+    if not callback_action:
+        callback_action = str(action.get("name") or "").strip()
+    if not callback_action:
+        return None
+    operator = event.get("operator") if isinstance(event.get("operator"), dict) else {}
+    op_open_id = ""
+    if isinstance(operator.get("operator_id"), dict):
+        op_open_id = str(operator.get("operator_id", {}).get("open_id") or "").strip()
+    if not op_open_id:
+        op_open_id = str(operator.get("open_id") or "").strip()
+    open_chat_id = str(event.get("open_chat_id") or "").strip()
+    return {
+        "callback_action": callback_action,
+        "event_id": str((payload.get("header") or {}).get("event_id") or payload.get("event_id") or "").strip(),
+        "open_id": op_open_id,
+        "chat_id": open_chat_id,
+    }
 # endregion
 
 
@@ -450,6 +474,31 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         if not settings.feishu.encrypt_key:
             raise HTTPException(status_code=400, detail="encrypt_key is required")
         payload = _decrypt_event(payload["encrypt"], settings.feishu.encrypt_key)
+
+    callback_payload = _extract_card_action_payload(payload)
+    if callback_payload is not None:
+        event_id = str(callback_payload.get("event_id") or "")
+        if event_id and settings.webhook.dedup.enabled and _get_deduplicator().is_duplicate(event_id):
+            return {"status": "ok", "reason": "已处理"}
+        open_id = str(callback_payload.get("open_id") or "").strip()
+        chat_id = str(callback_payload.get("chat_id") or "").strip()
+        if not open_id:
+            return {"status": "ok", "reason": "已过期"}
+        user_id = build_conversation_user_id(
+            user_id=open_id,
+            chat_id=chat_id,
+            chat_type="p2p" if chat_id else "",
+        )
+        result = await _get_agent_core().handle_card_action_callback(
+            user_id=user_id,
+            callback_action=str(callback_payload.get("callback_action") or ""),
+        )
+        if event_id and settings.webhook.dedup.enabled:
+            _get_deduplicator().mark(event_id)
+        text = str(result.get("text") or "")
+        if str(result.get("status") or "") == "expired":
+            return {"status": "ok", "reason": text or "已过期"}
+        return {"status": "ok", "reason": text or "已处理"}
 
     header = payload.get("header") or {}
     if settings.feishu.verification_token:

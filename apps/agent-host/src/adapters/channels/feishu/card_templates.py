@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from src.adapters.channels.feishu.record_links import build_record_link_line
+
 
 def _markdown(content: str) -> dict[str, Any]:
     return {"tag": "markdown", "content": content}
@@ -92,6 +94,9 @@ def render_query_list_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
         fields_text = record.get("fields_text")
         if isinstance(fields_text, Mapping):
             lines = _kv_lines(fields_text, max_items=4)
+            link_line = build_record_link_line(record.get("record_id"), record.get("record_url"))
+            if link_line:
+                lines.append(f"- {link_line}")
             body = "\n".join(lines) if lines else "- 记录详情"
         else:
             body = _safe_text(record.get("record_id")) or "记录详情"
@@ -107,6 +112,9 @@ def render_query_detail_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
 
     fields_text = record.get("fields_text")
     lines = _kv_lines(fields_text, max_items=12) if isinstance(fields_text, Mapping) else _kv_lines(record, max_items=12)
+    link_line = build_record_link_line(record.get("record_id"), record.get("record_url"))
+    if link_line:
+        lines.append(f"- {link_line}")
     body = "\n".join(lines) if lines else "暂无可展示字段"
     return [_markdown(f"**{title}**"), _markdown(body)]
 
@@ -116,7 +124,33 @@ def render_action_confirm_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
     message = _safe_text(params.get("message")) or "请确认是否继续。"
     action = _safe_text(params.get("action"))
     body = f"{message}\n\n- 操作: {action}" if action else message
-    return [_markdown(f"**{title}**"), _markdown(body)]
+    actions_raw = params.get("actions")
+    actions: Mapping[str, Any] = actions_raw if isinstance(actions_raw, Mapping) else {}
+    confirm_raw = actions.get("confirm")
+    cancel_raw = actions.get("cancel")
+    confirm_value: dict[str, Any] = dict(confirm_raw) if isinstance(confirm_raw, Mapping) else {}
+    cancel_value: dict[str, Any] = dict(cancel_raw) if isinstance(cancel_raw, Mapping) else {}
+    return [
+        _markdown(f"**{title}**"),
+        _markdown(body),
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "确认"},
+                    "type": "primary",
+                    "value": confirm_value,
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "取消"},
+                    "type": "default",
+                    "value": cancel_value,
+                },
+            ],
+        },
+    ]
 
 
 def render_error_notice_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -148,8 +182,10 @@ def render_create_success_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
 
     elements = [_markdown(f"**{title}**"), _markdown("\n".join(lines))]
     record_url = _safe_text(params.get("record_url") or record.get("record_url"))
-    if record_url:
-        elements.append(_markdown(f"[查看记录详情]({record_url})"))
+    record_id = _safe_text(record.get("record_id"))
+    link_line = build_record_link_line(record_id, record_url)
+    if link_line:
+        elements.append(_markdown(link_line))
     return elements
 
 
@@ -171,8 +207,10 @@ def render_update_success_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
 
     elements = [_markdown(f"**{title}**"), _markdown("\n".join(lines))]
     record_url = _safe_text(params.get("record_url"))
-    if record_url:
-        elements.append(_markdown(f"[查看记录详情]({record_url})"))
+    record_id = _safe_text(params.get("record_id"))
+    link_line = build_record_link_line(record_id, record_url)
+    if link_line:
+        elements.append(_markdown(link_line))
     return elements
 
 
@@ -182,9 +220,12 @@ def render_delete_confirm_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
     summary_lines = _kv_lines(summary, max_items=4)
     body = "\n".join(summary_lines) if summary_lines else "- 即将删除目标记录"
 
-    actions = params.get("actions") if isinstance(params.get("actions"), Mapping) else {}
-    confirm_value = actions.get("confirm") if isinstance(actions.get("confirm"), Mapping) else {}
-    cancel_value = actions.get("cancel") if isinstance(actions.get("cancel"), Mapping) else {}
+    actions_raw = params.get("actions")
+    actions: Mapping[str, Any] = actions_raw if isinstance(actions_raw, Mapping) else {}
+    confirm_raw = actions.get("confirm")
+    cancel_raw = actions.get("cancel")
+    confirm_value: dict[str, Any] = dict(confirm_raw) if isinstance(confirm_raw, Mapping) else {}
+    cancel_value: dict[str, Any] = dict(cancel_raw) if isinstance(cancel_raw, Mapping) else {}
 
     return [
         _markdown("🟥 **高风险操作：删除确认**"),
@@ -197,13 +238,13 @@ def render_delete_confirm_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "确认删除"},
                     "type": "danger",
-                    "value": dict(confirm_value),
+                    "value": confirm_value,
                 },
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "取消"},
                     "type": "default",
-                    "value": dict(cancel_value),
+                    "value": cancel_value,
                 },
             ],
         },

@@ -401,6 +401,13 @@ class Settings(BaseModel):
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     reminder_scheduler_enabled: bool = False
+    crud_delete_enabled: bool = False
+    automation_dry_run: bool = True
+    reminder_scan_enabled: bool = False
+    reminder_scan_interval_minutes: int = 60
+    daily_digest_enabled: bool = False
+    daily_digest_schedule: str = "09:00"
+    daily_digest_timezone: str = "Asia/Shanghai"
     llm: LLMSettings = Field(default_factory=LLMSettings)
     task_llm: TaskLLMSettings = Field(default_factory=TaskLLMSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
@@ -497,6 +504,13 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "MCP_SERVER_BASE": ["mcp", "base_url"],
         "POSTGRES_DSN": ["postgres", "dsn"],
         "REMINDER_SCHEDULER_ENABLED": ["reminder_scheduler_enabled"],
+        "CRUD_DELETE_ENABLED": ["crud_delete_enabled"],
+        "AUTOMATION_DRY_RUN": ["automation_dry_run"],
+        "REMINDER_SCAN_ENABLED": ["reminder_scan_enabled"],
+        "REMINDER_SCAN_INTERVAL_MINUTES": ["reminder_scan_interval_minutes"],
+        "DAILY_DIGEST_ENABLED": ["daily_digest_enabled"],
+        "DAILY_DIGEST_SCHEDULE": ["daily_digest_schedule"],
+        "DAILY_DIGEST_TIMEZONE": ["daily_digest_timezone"],
         "POSTGRES_MIN_SIZE": ["postgres", "min_size"],
         "POSTGRES_MAX_SIZE": ["postgres", "max_size"],
         "POSTGRES_TIMEOUT": ["postgres", "timeout"],

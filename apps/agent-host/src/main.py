@@ -27,6 +27,7 @@ from src.utils.workspace import ensure_workspace
 from src.utils.hot_reload import HotReloadManager
 from src.db.postgres import PostgresClient
 from src.jobs.reminder_dispatcher import ReminderDispatcher
+from src.jobs.daily_digest import DailyDigestScheduler
 from src.jobs.reminder_scheduler import ReminderScheduler
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Reminder scheduler disabled (set REMINDER_SCHEDULER_ENABLED=true and POSTGRES_DSN to enable)")
     
     # 启动开庭日提醒调度器
-    if settings.hearing_reminder.enabled and settings.hearing_reminder.reminder_chat_id:
+    if settings.reminder_scan_enabled and settings.hearing_reminder.reminder_chat_id:
         from src.jobs.hearing_reminder import HearingReminderScheduler
         from src.mcp.client import MCPClient
         
@@ -99,12 +100,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             mcp_client=mcp_client,
             reminder_chat_id=settings.hearing_reminder.reminder_chat_id,
             reminder_offsets=settings.hearing_reminder.reminder_offsets,
+            interval_minutes=settings.reminder_scan_interval_minutes,
             scan_hour=settings.hearing_reminder.scan_hour,
             scan_minute=settings.hearing_reminder.scan_minute,
             dispatcher=app.state.reminder_dispatcher,
         )
         app.state.hearing_reminder_scheduler.start()
         logger.info("Hearing reminder scheduler started")
+
+        if settings.daily_digest_enabled:
+            app.state.daily_digest_scheduler = DailyDigestScheduler(
+                mcp_client=mcp_client,
+                reminder_chat_id=settings.hearing_reminder.reminder_chat_id,
+                schedule=settings.daily_digest_schedule,
+                timezone=settings.daily_digest_timezone,
+                dispatcher=app.state.reminder_dispatcher,
+            )
+            app.state.daily_digest_scheduler.start()
+            logger.info("Daily digest scheduler started")
     
     logger.info("Feishu Agent started with hot-reload enabled")
     
@@ -118,6 +131,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     hearing_scheduler = getattr(app.state, "hearing_reminder_scheduler", None)
     if hearing_scheduler is not None:
         await hearing_scheduler.stop()
+    daily_digest_scheduler = getattr(app.state, "daily_digest_scheduler", None)
+    if daily_digest_scheduler is not None:
+        await daily_digest_scheduler.stop()
     logger.info("Feishu Agent shutdown complete")
 # endregion
 

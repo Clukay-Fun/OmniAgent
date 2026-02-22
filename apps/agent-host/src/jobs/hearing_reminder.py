@@ -40,6 +40,7 @@ class HearingReminderScheduler:
         mcp_client: MCPClient,
         reminder_chat_id: str,
         reminder_offsets: list[int] | None = None,
+        interval_minutes: int = 60,
         scan_hour: int = 8,
         scan_minute: int = 0,
         dispatcher: ReminderDispatcher | None = None,
@@ -59,6 +60,7 @@ class HearingReminderScheduler:
         self._mcp = mcp_client
         self._reminder_chat_id = reminder_chat_id
         self._reminder_offsets = reminder_offsets or [7, 3, 1, 0]
+        self._interval_minutes = max(1, int(interval_minutes))
         self._scan_hour = scan_hour
         self._scan_minute = scan_minute
         self._dispatcher = dispatcher or ReminderDispatcher(settings=settings)
@@ -67,20 +69,18 @@ class HearingReminderScheduler:
     
     def start(self) -> None:
         """启动调度器"""
-        # 每日定时扫描
         self._scheduler.add_job(
             self._scan_and_remind,
-            "cron",
-            hour=self._scan_hour,
-            minute=self._scan_minute,
-            misfire_grace_time=3600,  # 1小时容错
+            "interval",
+            minutes=self._interval_minutes,
+            misfire_grace_time=max(60, self._interval_minutes * 60),
             coalesce=True,
             max_instances=1,
         )
         self._scheduler.start()
         logger.info(
             f"Hearing reminder scheduler started: "
-            f"scan at {self._scan_hour:02d}:{self._scan_minute:02d}, "
+            f"scan interval={self._interval_minutes}m, "
             f"offsets={self._reminder_offsets}"
         )
     

@@ -145,7 +145,7 @@ class L0RuleEngine:
                 )
 
             force_skill = self._map_pending_action_skill(pending_action.action)
-            if force_skill and self._should_continue_pending_action(query):
+            if force_skill and self._should_continue_pending_action(query, pending_action.action):
                 return L0Decision(
                     handled=False,
                     force_skill=force_skill,
@@ -333,11 +333,16 @@ class L0RuleEngine:
         key = str(action or "").strip()
         return mapping.get(key)
 
-    def _should_continue_pending_action(self, query: str) -> bool:
+    def _should_continue_pending_action(self, query: str, action: str | None = None) -> bool:
         text = (query or "").strip()
         if not text:
             return False
         normalized = self._normalize_text(text)
+        action_key = str(action or "").strip()
+        if action_key == "delete_record":
+            if normalized in self._cancel_phrases:
+                return True
+            return normalized in self._confirm_phrases or normalized in {"确认删除"}
         if normalized in self._generic_confirm_tokens or normalized in self._cancel_phrases:
             return True
         if self._extract_ordinal_index(text) is not None:

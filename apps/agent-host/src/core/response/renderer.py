@@ -115,13 +115,15 @@ class ResponseRenderer:
 
         pending_action = data.get("pending_action")
         if isinstance(pending_action, Mapping):
+            action_name = str(pending_action.get("action") or "")
             return CardTemplateSpec(
                 template_id="action.confirm",
                 version="v1",
                 params={
                     "title": "请确认操作",
                     "message": text_fallback,
-                    "action": str(pending_action.get("action") or ""),
+                    "action": action_name,
+                    "actions": self._build_generic_actions(action_name),
                 },
             )
 
@@ -156,14 +158,14 @@ class ResponseRenderer:
                 version="v1",
                 params={
                     "title": "创建成功",
-                    "record": {
-                        "record_id": str(data.get("record_id") or ""),
+                        "record": {
+                            "record_id": str(data.get("record_id") or ""),
+                            "record_url": str(data.get("record_url") or ""),
+                            "fields_text": fields_text,
+                        },
                         "record_url": str(data.get("record_url") or ""),
-                        "fields_text": fields_text,
                     },
-                    "record_url": str(data.get("record_url") or ""),
-                },
-            )
+                )
 
         if skill_name == "UpdateSkill":
             changes = self._build_update_changes(data)
@@ -174,6 +176,7 @@ class ResponseRenderer:
                     "title": "更新成功",
                     "changes": changes,
                     "record_url": str(data.get("record_url") or ""),
+                    "record_id": str(data.get("record_id") or ""),
                 },
             )
 
@@ -269,6 +272,23 @@ class ResponseRenderer:
     def _is_delete_cancelled(self, text: str) -> bool:
         normalized = str(text or "").lower()
         return "取消" in normalized and "删除" in normalized
+
+    def _build_generic_actions(self, action_name: str) -> dict[str, Any]:
+        callback_prefix = {
+            "create_record": "create_record",
+            "update_record": "update_record",
+            "delete_record": "delete_record",
+        }.get(action_name, action_name or "pending_action")
+        return {
+            "confirm": {
+                "callback_action": f"{callback_prefix}_confirm",
+                "intent": "confirm",
+            },
+            "cancel": {
+                "callback_action": f"{callback_prefix}_cancel",
+                "intent": "cancel",
+            },
+        }
 
     def _load_templates(self, templates_path: str | Path | None) -> Dict[str, str]:
         path = Path(templates_path) if templates_path else self._default_template_path()

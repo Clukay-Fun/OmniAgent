@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -57,11 +58,18 @@ class DeleteSkill(BaseSkill):
         self._skills_config = skills_config or {}
         if data_writer is None:
             raise ValueError("DeleteSkill requires an injected data_writer")
+        self._data_writer: DataWriter = data_writer
         self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
         self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
+        full_confirm_phrases = delete_cfg.get("full_confirm_phrases", ["确认删除"])
+        self._full_confirm_phrases = {
+            str(x).strip().lower()
+            for x in full_confirm_phrases
+            if str(x).strip()
+        }
         self._confirm_phrases = {
             str(x).strip().lower()
             for x in delete_cfg.get("confirm_phrases", [
@@ -75,6 +83,11 @@ class DeleteSkill(BaseSkill):
         ])
             if str(x).strip()
         }
+        self._confirm_ttl_seconds = 60
+
+    def _delete_enabled(self) -> bool:
+        value = str(os.getenv("CRUD_DELETE_ENABLED", "false") or "false").strip().lower()
+        return value in {"1", "true", "yes", "on"}
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -91,6 +104,40 @@ class DeleteSkill(BaseSkill):
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+
+        if not self._delete_enabled():
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="删除能力已关闭",
+                reply_text="当前环境未开启删除能力，请联系管理员开启 CRUD_DELETE_ENABLED。",
+            )
+
+        pending_action_raw = extra.get("pending_action")
+        pending_action: dict[str, Any] = pending_action_raw if isinstance(pending_action_raw, dict) else {}
+        callback_intent = str(extra.get("callback_intent") or "").strip().lower()
+        pending_payload_raw = pending_action.get("payload")
+        pending_payload: dict[str, Any] = pending_payload_raw if isinstance(pending_payload_raw, dict) else {}
+        if str(pending_action.get("action") or "") == "delete_record" and pending_payload:
+            if callback_intent == "cancel":
+                return SkillResult(
+                    success=True,
+                    skill_name=self.name,
+                    data={"clear_pending_action": True, "clear_pending_delete": True},
+                    message="已取消删除",
+                    reply_text="好的，已取消删除操作。",
+                )
+            if callback_intent == "confirm":
+                merged_last = dict(last_result)
+                merged_last["pending_delete"] = pending_payload
+                callback_ctx = SkillContext(
+                    query="确认删除",
+                    user_id=context.user_id,
+                    last_result=merged_last,
+                    last_skill=context.last_skill,
+                    extra=context.extra,
+                )
+                return await self._execute_delete(callback_ctx)
         
         # 检查是否为确认回复
         if self._is_confirmation(query):
@@ -115,6 +162,11 @@ class DeleteSkill(BaseSkill):
                 skill_name=self.name,
                 data={
                     "pending_delete": planner_pending,
+                    "pending_action": {
+                        "action": "delete_record",
+                        "payload": planner_pending,
+                        "ttl_seconds": self._confirm_ttl_seconds,
+                    },
                     "records": records,
                 },
                 message="等待用户确认删除",
@@ -183,6 +235,16 @@ class DeleteSkill(BaseSkill):
                     "table_id": table_ctx.table_id,
                     "table_name": table_ctx.table_name,
                 },
+                "pending_action": {
+                    "action": "delete_record",
+                    "payload": {
+                        "record_id": record_id,
+                        "case_no": case_no,
+                        "table_id": table_ctx.table_id,
+                        "table_name": table_ctx.table_name,
+                    },
+                    "ttl_seconds": self._confirm_ttl_seconds,
+                },
                 "records": records,  # 保留记录供确认后使用
             },
             message="等待用户确认删除",
@@ -202,6 +264,12 @@ class DeleteSkill(BaseSkill):
         # 从上下文获取待删除的记录
         last_result = context.last_result or {}
         pending = last_result.get("pending_delete")
+        if not pending:
+            pending_action = context.extra.get("pending_action") if isinstance(context.extra, dict) else None
+            if isinstance(pending_action, dict) and str(pending_action.get("action") or "") == "delete_record":
+                payload = pending_action.get("payload")
+                if isinstance(payload, dict):
+                    pending = payload
         
         if not pending:
             return SkillResult(
@@ -224,19 +292,13 @@ class DeleteSkill(BaseSkill):
         
         # 调用 MCP 删除工具
         try:
-            params: dict[str, Any] = {
-                "record_id": record_id,
-            }
-            if table_id:
-                params["table_id"] = table_id
-
-            result = await self._mcp.call_tool(
-                "feishu.v1.bitable.record.delete",
-                params,
+            write_result = await self._data_writer.delete(
+                table_id,
+                str(record_id),
             )
-            
-            if not result.get("success"):
-                error = result.get("error", "未知错误")
+
+            if not write_result.success:
+                error = write_result.error or "未知错误"
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
@@ -261,7 +323,9 @@ class DeleteSkill(BaseSkill):
                     "record_id": record_id,
                     "case_no": case_no,
                     "table_id": table_id,
+                    "record_url": write_result.record_url or "",
                     "link_sync": link_sync,
+                    "clear_pending_action": True,
                 },
                 message="删除成功",
                 reply_text=reply_text,
@@ -287,7 +351,9 @@ class DeleteSkill(BaseSkill):
             是否为确认
         """
         normalized = query.strip().lower().strip("，。！？!?,. ")
-        return normalized in self._confirm_phrases
+        if normalized in self._full_confirm_phrases:
+            return True
+        return normalized in self._confirm_phrases and "删除" in normalized
 
     def _extract_pending_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any] | None:
         """从 planner 输出提取待删除目标。"""

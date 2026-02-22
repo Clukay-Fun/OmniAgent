@@ -955,6 +955,66 @@ class AgentOrchestrator:
         
         return reply
 
+    async def handle_card_action_callback(
+        self,
+        user_id: str,
+        callback_action: str,
+    ) -> dict[str, Any]:
+        pending = self._state_manager.get_pending_action(user_id)
+        if pending is None:
+            return {"status": "expired", "text": "操作已过期"}
+
+        action_name = pending.action
+        skill_name = {
+            "create_record": "CreateSkill",
+            "update_record": "UpdateSkill",
+            "delete_record": "DeleteSkill",
+        }.get(action_name)
+        if not skill_name:
+            return {"status": "processed", "text": "已处理"}
+
+        is_confirm = callback_action.endswith("_confirm")
+        is_cancel = callback_action.endswith("_cancel")
+        if not is_confirm and not is_cancel:
+            return {"status": "processed", "text": "已处理"}
+
+        query = "确认" if is_confirm else "取消"
+        if action_name == "delete_record" and is_confirm:
+            query = "确认删除"
+        if action_name == "delete_record" and is_cancel:
+            query = "取消"
+
+        skill = self._router.get_skill(skill_name)
+        if skill is None:
+            return {"status": "expired", "text": "操作已过期"}
+
+        last_result: dict[str, Any] = {}
+        if action_name == "delete_record":
+            last_result = {
+                "pending_delete": pending.payload,
+            }
+        context = SkillContext(
+            query=query,
+            user_id=user_id,
+            last_result=last_result,
+            last_skill=skill_name,
+            extra={
+                "pending_action": {
+                    "action": action_name,
+                    "payload": pending.payload,
+                },
+                "callback_intent": "confirm" if is_confirm else "cancel",
+            },
+        )
+        result = await skill.execute(context)
+        self._sync_state_after_result(user_id, query, result)
+        rendered = self._response_renderer.render(result)
+        return {
+            "status": "processed" if result.success else "expired",
+            "text": rendered.text_fallback if result.success else "操作已过期",
+            "outbound": rendered.to_dict(),
+        }
+
     def _record_usage_log(
         self,
         user_id: str,

@@ -349,3 +349,68 @@ def test_process_audio_message_transcript_flows_as_text(monkeypatch) -> None:
     status_payload = sent_calls[0]["content"]
     assert isinstance(status_payload, dict)
     assert "正在识别语音内容" in str(status_payload.get("text") or "")
+
+
+def test_webhook_card_callback_returns_processed(monkeypatch) -> None:
+    class _FakeRequest:
+        async def json(self):
+            return {
+                "header": {"event_id": "evt_cb_1"},
+                "event": {
+                    "operator": {"operator_id": {"open_id": "ou_1"}},
+                    "open_chat_id": "oc_1",
+                    "action": {"value": {"callback_action": "delete_record_confirm"}},
+                },
+            }
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action):
+            assert "ou_1" in user_id
+            assert callback_action == "delete_record_confirm"
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+    monkeypatch.setattr(webhook_module, "_deduplicator", None)
+
+    result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
+
+    assert result["status"] == "ok"
+    assert "已处理" in result["reason"]
+
+
+def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
+    class _FakeRequest:
+        async def json(self):
+            return {
+                "header": {"event_id": "evt_cb_2"},
+                "event": {
+                    "operator": {"operator_id": {"open_id": "ou_2"}},
+                    "open_chat_id": "oc_2",
+                    "action": {"value": {"callback_action": "update_record_confirm"}},
+                },
+            }
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action):
+            assert "ou_2" in user_id
+            assert callback_action == "update_record_confirm"
+            return {"status": "expired", "text": "已过期"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+
+    result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
+
+    assert result["status"] == "ok"
+    assert "过期" in result["reason"]

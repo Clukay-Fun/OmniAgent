@@ -103,7 +103,7 @@ def test_render_create_success_v1() -> None:
 
     assert "创建成功" in elements[0]["content"]
     assert "案号" in elements[1]["content"]
-    assert "查看记录详情" in elements[2]["content"]
+    assert "查看原记录" in elements[2]["content"]
 
 
 def test_render_update_success_v1() -> None:
@@ -117,13 +117,14 @@ def test_render_update_success_v1() -> None:
                 {"field": "状态", "old": "待办", "new": "已完成"},
                 {"field": "负责人", "old": "张三", "new": "李四"},
             ],
+            "record_id": "rec_002",
             "record_url": "https://example.com/rec_002",
         },
     )
 
     assert "状态" in elements[1]["content"]
     assert "待办 -> 已完成" in elements[1]["content"]
-    assert "查看记录详情" in elements[2]["content"]
+    assert "查看原记录" in elements[2]["content"]
 
 
 def test_render_delete_confirm_v1() -> None:
