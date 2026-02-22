@@ -93,6 +93,18 @@ if PROMETHEUS_AVAILABLE:
         "Total number of chitchat guard routing decisions",
         ["route"],
     )
+
+    SCHEMA_WATCHER_ALERT_COUNT = Counter(
+        "schema_watcher_alerts_total",
+        "Total schema watcher alerts by change type",
+        ["change_type"],
+    )
+
+    AUTOMATION_ENQUEUE_COUNT = Counter(
+        "automation_enqueue_total",
+        "Total automation enqueue attempts by event type and status",
+        ["event_type", "status"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -124,6 +136,8 @@ else:
     MCP_TOOL_CALL_COUNT = DummyMetric()
     FEISHU_EVENT_COUNT = DummyMetric()
     CHITCHAT_GUARD_COUNT = DummyMetric()
+    SCHEMA_WATCHER_ALERT_COUNT = DummyMetric()
+    AUTOMATION_ENQUEUE_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -166,6 +180,16 @@ def record_feishu_event(event_type: str, status: str) -> None:
 def record_chitchat_guard(route: str) -> None:
     """记录闲聊门控决策。"""
     CHITCHAT_GUARD_COUNT.labels(route=route).inc()
+
+
+def record_schema_watcher_alert(change_type: str) -> None:
+    """记录 schema watcher 告警事件。"""
+    SCHEMA_WATCHER_ALERT_COUNT.labels(change_type=change_type).inc()
+
+
+def record_automation_enqueue(event_type: str, status: str) -> None:
+    """记录 automation enqueue 结果。"""
+    AUTOMATION_ENQUEUE_COUNT.labels(event_type=event_type, status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:
