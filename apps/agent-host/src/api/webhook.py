@@ -20,6 +20,8 @@ from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
+from src.api.chunk_assembler import ChunkAssembler
+from src.api.conversation_scope import build_conversation_user_id
 from src.adapters.channels.feishu.formatter import FeishuFormatter
 from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
@@ -46,6 +48,7 @@ _llm_client: Any = None
 _agent_core: AgentOrchestrator | None = None
 _deduplicator: "EventDeduplicator | None" = None
 _event_router: FeishuEventRouter | None = None
+_chunk_assembler: ChunkAssembler | None = None
 _user_manager: Any = None  # 用户管理器
 
 
@@ -95,6 +98,21 @@ def _get_event_router() -> FeishuEventRouter:
         settings = _get_settings()
         _event_router = FeishuEventRouter(enabled_types=get_enabled_types(settings))
     return _event_router
+
+
+def _get_chunk_assembler() -> ChunkAssembler:
+    """延迟初始化分片聚合器。"""
+    global _chunk_assembler
+    if _chunk_assembler is None:
+        settings = _get_settings()
+        cfg = settings.webhook.chunk_assembler
+        _chunk_assembler = ChunkAssembler(
+            enabled=cfg.enabled,
+            window_seconds=cfg.window_seconds,
+            max_segments=cfg.max_segments,
+            max_chars=cfg.max_chars,
+        )
+    return _chunk_assembler
 
 
 def _get_user_manager():
@@ -477,6 +495,8 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         user_id = f"chat:{chat_id}:anon"
     else:
         user_id = "unknown"
+    scoped_user_id = build_conversation_user_id(user_id=user_id, chat_id=str(chat_id or ""), chat_type=str(chat_type or ""))
+
     if sender_id.get("open_id"):
         logger.info(
             "Webhook 发送者 open_id 已识别",
@@ -492,10 +512,27 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         extra={
             "event_code": "webhook.message.context_ready",
             "chat_id": chat_id,
-            "user_id": user_id,
+            "user_id": scoped_user_id,
             "text": text,
         },
     )
+
+    chunk_decision = _get_chunk_assembler().ingest(
+        scope_key=scoped_user_id,
+        text=text,
+    )
+    if not chunk_decision.should_process:
+        logger.info(
+            "消息分片已缓存，等待聚合窗口",
+            extra={
+                "event_code": "webhook.chunk_assembler.buffering",
+                "chat_id": chat_id,
+                "user_id": scoped_user_id,
+                "reason": chunk_decision.reason,
+            },
+        )
+        return True
+    text = chunk_decision.text
     
     settings = _get_settings()
     agent_core = _get_agent_core()
@@ -525,7 +562,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         
         # 处理消息
         reply = await agent_core.handle_message(
-            user_id,
+            scoped_user_id,
             text,
             chat_id=chat_id,
             chat_type=chat_type,

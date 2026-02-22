@@ -207,11 +207,19 @@ class WebhookEventSettings(BaseModel):
     )
 
 
+class WebhookChunkAssemblerSettings(BaseModel):
+    enabled: bool = False
+    window_seconds: float = 3.0
+    max_segments: int = 5
+    max_chars: int = 500
+
+
 class WebhookSettings(BaseModel):
     path: str = "/feishu/webhook"
     dedup: WebhookDedupSettings = Field(default_factory=WebhookDedupSettings)
     filter: WebhookFilterSettings = Field(default_factory=WebhookFilterSettings)
     events: WebhookEventSettings = Field(default_factory=WebhookEventSettings)
+    chunk_assembler: WebhookChunkAssemblerSettings = Field(default_factory=WebhookChunkAssemblerSettings)
 
 
 class ReplyTemplateSettings(BaseModel):
@@ -400,6 +408,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "HEARING_REMINDER_OFFSETS": ["hearing_reminder", "reminder_offsets"],
         "HEARING_REMINDER_SCAN_HOUR": ["hearing_reminder", "scan_hour"],
         "HEARING_REMINDER_SCAN_MINUTE": ["hearing_reminder", "scan_minute"],
+        "CHUNK_ASSEMBLER_ENABLED": ["webhook", "chunk_assembler", "enabled"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

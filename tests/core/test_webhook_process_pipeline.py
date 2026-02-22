@@ -68,6 +68,12 @@ def test_process_message_sends_formatter_payload(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "_get_user_manager", lambda: _FakeUserManager())
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
+    class _AlwaysProcessAssembler:
+        def ingest(self, **_kwargs):
+            return SimpleNamespace(should_process=True, text="请帮我看一下案件进展", reason="fast_path")
+
+    monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
+
     message = {
         "chat_id": "oc_pipeline",
         "chat_type": "p2p",
@@ -87,3 +93,56 @@ def test_process_message_sends_formatter_payload(monkeypatch) -> None:
     assert isinstance(content, dict)
     assert content["elements"][0]["tag"] == "markdown"
     assert "来自 outbound 的正文" in content["elements"][0]["content"]
+
+
+def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
+    sent_calls: list[dict[str, object]] = []
+
+    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
+        sent_calls.append(
+            {
+                "settings": settings,
+                "chat_id": chat_id,
+                "msg_type": msg_type,
+                "content": content,
+                "reply_message_id": reply_message_id,
+            }
+        )
+        return {"message_id": "omni-msg-2"}
+
+    class _FakeAgentCore:
+        async def handle_message(self, user_id, text, **kwargs):
+            assert user_id == "group:oc_group_1:user:ou_test_user"
+            assert text == "删除第一个。"
+            assert kwargs["chat_id"] == "oc_group_1"
+            return {"type": "text", "text": "ok"}
+
+    class _FakeUserManager:
+        async def get_or_create_profile(self, **_kwargs):
+            return SimpleNamespace(name="张三")
+
+    settings = SimpleNamespace(reply=SimpleNamespace(card_enabled=True))
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeAgentCore())
+    monkeypatch.setattr(webhook_module, "_get_user_manager", lambda: _FakeUserManager())
+    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
+
+    class _AlwaysProcessAssembler:
+        def ingest(self, **_kwargs):
+            return SimpleNamespace(should_process=True, text="删除第一个。", reason="fast_path")
+
+    monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
+
+    message = {
+        "chat_id": "oc_group_1",
+        "chat_type": "group",
+        "message_id": "msg_group_1",
+        "content": json.dumps({"text": "删除第一个。"}, ensure_ascii=False),
+    }
+    sender = {"sender_id": {"open_id": "ou_test_user"}}
+
+    ok = asyncio.run(webhook_module._process_message(message, sender))
+
+    assert ok is True
+    assert len(sent_calls) == 1

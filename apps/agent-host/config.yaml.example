@@ -189,6 +189,13 @@ webhook:
     # 忽略机器人自身消息
     ignore_bot_message: true
 
+  # 分片聚合（多条短消息 3 秒窗口聚合）
+  chunk_assembler:
+    enabled: ${CHUNK_ASSEMBLER_ENABLED:-false}
+    window_seconds: 3
+    max_segments: 5
+    max_chars: 500
+
 # ------------------------------------------------------------
 # 回复格式配置
 # ------------------------------------------------------------

@@ -27,6 +27,8 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.api.chunk_assembler import ChunkAssembler
+from src.api.conversation_scope import build_conversation_user_id
 from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
 from src.core.orchestrator import AgentOrchestrator
@@ -54,6 +56,12 @@ agent_core = AgentOrchestrator(
     mcp_client=mcp_client,
     llm_client=llm_client,
     skills_config_path="config/skills.yaml",
+)
+chunk_assembler = ChunkAssembler(
+    enabled=bool(settings.webhook.chunk_assembler.enabled),
+    window_seconds=float(settings.webhook.chunk_assembler.window_seconds),
+    max_segments=int(settings.webhook.chunk_assembler.max_segments),
+    max_chars=int(settings.webhook.chunk_assembler.max_chars),
 )
 # endregion
 # ============================================
@@ -204,11 +212,25 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         else:
             user_id = "unknown"
         
+        scoped_user_id = build_conversation_user_id(user_id=user_id, chat_id=chat_id, chat_type=chat_type)
+        chunk_decision = chunk_assembler.ingest(scope_key=scoped_user_id, text=text)
+        if not chunk_decision.should_process:
+            logger.info(
+                "长连接消息分片已缓存，等待聚合窗口",
+                extra={
+                    "event_code": "ws.chunk_assembler.buffering",
+                    "chat_id": chat_id,
+                    "user_id": scoped_user_id,
+                },
+            )
+            return
+        text = chunk_decision.text
+
         logger.info(
             "收到长连接消息",
             extra={
                 "event_code": "ws.message.received",
-                "user_id": user_id,
+                "user_id": scoped_user_id,
                 "chat_id": chat_id,
                 "text": text[:50],
             },
@@ -216,7 +238,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         
         # 异步处理消息
         asyncio.create_task(
-            handle_message_async(user_id, chat_id, chat_type, text, message_id)
+            handle_message_async(scoped_user_id, chat_id, chat_type, text, message_id)
         )
         
     except Exception as e:
