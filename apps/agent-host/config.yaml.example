@@ -111,6 +111,13 @@ agent:
   # Agent 名称（用于日志标识）
   name: "feishu-case-assistant"
 
+  # 中期记忆（SQLite + 可选注入）
+  midterm_memory:
+    sqlite_path: ${MIDTERM_MEMORY_SQLITE_PATH:-workspace/memory/midterm_memory.sqlite3}
+    inject_to_llm: ${MIDTERM_MEMORY_INJECT_TO_LLM:-false}
+    llm_recent_limit: ${MIDTERM_MEMORY_LLM_RECENT_LIMIT:-6}
+    llm_max_chars: ${MIDTERM_MEMORY_LLM_MAX_CHARS:-240}
+
   # 系统提示词配置
   prompt:
     # 角色定义

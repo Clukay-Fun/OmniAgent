@@ -229,9 +229,13 @@ class AgentOrchestrator:
         self._memory_manager = MemoryManager(vector_memory=self._vector_memory)
         self._memory_manager.cleanup_logs()
         self._midterm_extractor = RuleSummaryExtractor()
+        midterm_cfg = settings.agent.midterm_memory
+        self._midterm_memory_inject_to_llm = bool(midterm_cfg.inject_to_llm)
+        self._midterm_memory_llm_recent_limit = max(1, int(midterm_cfg.llm_recent_limit))
+        self._midterm_memory_llm_max_chars = max(80, int(midterm_cfg.llm_max_chars))
         self._midterm_memory_store: SQLiteMidtermMemoryStore | None = None
         try:
-            self._midterm_memory_store = SQLiteMidtermMemoryStore()
+            self._midterm_memory_store = SQLiteMidtermMemoryStore(db_path=midterm_cfg.sqlite_path)
         except Exception as exc:
             logger.warning(
                 "初始化中期记忆存储失败: %s",
@@ -1284,6 +1288,7 @@ class AgentOrchestrator:
             "shared_memory": "",
             "user_memory": "",
             "recent_logs": "",
+            "midterm_memory": "",
         }
         try:
             context["soul_prompt"] = self._soul_manager.build_system_prompt()
@@ -1318,7 +1323,64 @@ class AgentOrchestrator:
                 else:
                     context["user_memory"] = vector_hits
 
+        context["midterm_memory"] = self._build_midterm_memory_context(user_id)
+
         return context
+
+    def _build_midterm_memory_context(self, user_id: str) -> str:
+        if not getattr(self, "_midterm_memory_inject_to_llm", False):
+            return ""
+
+        store = getattr(self, "_midterm_memory_store", None)
+        if store is None:
+            return ""
+
+        recent_limit = max(1, int(getattr(self, "_midterm_memory_llm_recent_limit", 6)))
+        max_chars = max(80, int(getattr(self, "_midterm_memory_llm_max_chars", 240)))
+        try:
+            rows = store.list_recent(user_id=user_id, limit=recent_limit)
+        except Exception as exc:
+            logger.warning(
+                "读取中期记忆失败: %s",
+                exc,
+                extra={"event_code": "orchestrator.midterm_memory.read_failed"},
+            )
+            return ""
+
+        if not rows:
+            return ""
+
+        lines: list[str] = []
+        seen: set[str] = set()
+        for row in reversed(rows):
+            kind = str(row.get("kind") or "").strip()
+            value = str(row.get("value") or "").strip()
+            if not value:
+                continue
+            if kind == "event":
+                skill_name = row.get("metadata", {}).get("skill_name") if isinstance(row.get("metadata"), dict) else None
+                if skill_name:
+                    rendered = f"event:{skill_name}"
+                else:
+                    rendered = f"event:{value}"
+            else:
+                rendered = f"{kind}:{value}" if kind else value
+            if rendered in seen:
+                continue
+            seen.add(rendered)
+            lines.append(rendered)
+
+        if not lines:
+            return ""
+
+        text = "\n".join(lines)
+        if len(text) <= max_chars:
+            return text
+
+        clipped = text[: max_chars - 1].rstrip()
+        if not clipped:
+            return ""
+        return clipped + "..."
 
     def _format_llm_context(self, llm_context: dict[str, str] | None) -> str:
         if not llm_context:
@@ -1333,12 +1395,15 @@ class AgentOrchestrator:
         user_memory = llm_context.get("user_memory", "").strip()
         shared_memory = llm_context.get("shared_memory", "").strip()
         recent_logs = llm_context.get("recent_logs", "").strip()
+        midterm_memory = llm_context.get("midterm_memory", "").strip()
         if user_memory:
             memory_parts.append(f"用户记忆：\n{user_memory}")
         if shared_memory:
             memory_parts.append(f"团队共享记忆：\n{shared_memory}")
         if recent_logs:
             memory_parts.append(f"最近日志：\n{recent_logs}")
+        if midterm_memory:
+            memory_parts.append(f"中期记忆（摘要）：\n{midterm_memory}")
 
         if memory_parts:
             parts.append("参考记忆：\n" + "\n\n".join(memory_parts))

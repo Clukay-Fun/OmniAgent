@@ -171,3 +171,48 @@ def test_reload_config_refreshes_assistant_name_for_outbound(monkeypatch) -> Non
     reply = asyncio.run(orchestrator.handle_message(user_id="u3", text="hello"))
 
     assert reply["outbound"]["meta"]["assistant_name"] == "新助手"
+
+
+def test_build_llm_context_injects_midterm_memory_when_enabled() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._soul_manager = SimpleNamespace(build_system_prompt=lambda: "")
+    orchestrator._memory_manager = SimpleNamespace(
+        snapshot=lambda _user_id: SimpleNamespace(shared_memory="", user_memory="", recent_logs=""),
+        search_memory=lambda *_args, **_kwargs: asyncio.sleep(0, result=""),
+    )
+    orchestrator._vector_top_k = 3
+    orchestrator._midterm_memory_inject_to_llm = True
+    orchestrator._midterm_memory_llm_recent_limit = 5
+    orchestrator._midterm_memory_llm_max_chars = 40
+    orchestrator._midterm_memory_store = SimpleNamespace(
+        list_recent=lambda user_id, limit: [
+            {"kind": "event", "value": "skill:QuerySkill", "metadata": {"skill_name": "QuerySkill"}},
+            {"kind": "keyword", "value": "张三", "metadata": {}},
+            {"kind": "keyword", "value": "合同", "metadata": {}},
+        ]
+    )
+
+    context = asyncio.run(orchestrator._build_llm_context(user_id="u1", query="查一下"))
+
+    assert "midterm_memory" in context
+    assert "event:QuerySkill" in context["midterm_memory"]
+    assert "keyword:张三" in context["midterm_memory"]
+    assert len(context["midterm_memory"]) <= 43
+
+
+def test_build_llm_context_skips_midterm_memory_when_disabled() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._soul_manager = SimpleNamespace(build_system_prompt=lambda: "")
+    orchestrator._memory_manager = SimpleNamespace(
+        snapshot=lambda _user_id: SimpleNamespace(shared_memory="", user_memory="", recent_logs=""),
+        search_memory=lambda *_args, **_kwargs: asyncio.sleep(0, result=""),
+    )
+    orchestrator._vector_top_k = 3
+    orchestrator._midterm_memory_inject_to_llm = False
+    orchestrator._midterm_memory_store = SimpleNamespace(
+        list_recent=lambda user_id, limit: [{"kind": "keyword", "value": "不会出现", "metadata": {}}]
+    )
+
+    context = asyncio.run(orchestrator._build_llm_context(user_id="u2", query="查一下"))
+
+    assert context["midterm_memory"] == ""

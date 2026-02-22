@@ -163,11 +163,20 @@ class HearingReminderSettings(BaseModel):
     """每日扫描时间（分钟）"""
 
 
+class MidtermMemorySettings(BaseModel):
+    """中期记忆配置（SQLite + 可选上下文注入）"""
+    sqlite_path: str = "workspace/memory/midterm_memory.sqlite3"
+    inject_to_llm: bool = False
+    llm_recent_limit: int = 6
+    llm_max_chars: int = 240
+
+
 class AgentSettings(BaseModel):
     """Agent 核心行为配置"""
     name: str = "feishu-case-assistant"
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
+    midterm_memory: MidtermMemorySettings = Field(default_factory=MidtermMemorySettings)
 
 
 class CleanupSettings(BaseModel):
@@ -411,6 +420,10 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "HEARING_REMINDER_SCAN_MINUTE": ["hearing_reminder", "scan_minute"],
         "CHUNK_ASSEMBLER_ENABLED": ["webhook", "chunk_assembler", "enabled"],
         "CHUNK_ASSEMBLER_STALE_WINDOW_SECONDS": ["webhook", "chunk_assembler", "stale_window_seconds"],
+        "MIDTERM_MEMORY_SQLITE_PATH": ["agent", "midterm_memory", "sqlite_path"],
+        "MIDTERM_MEMORY_INJECT_TO_LLM": ["agent", "midterm_memory", "inject_to_llm"],
+        "MIDTERM_MEMORY_LLM_RECENT_LIMIT": ["agent", "midterm_memory", "llm_recent_limit"],
+        "MIDTERM_MEMORY_LLM_MAX_CHARS": ["agent", "midterm_memory", "llm_max_chars"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)
