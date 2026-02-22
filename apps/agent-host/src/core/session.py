@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Callable
 
 from src.config import SessionSettings
 
@@ -43,6 +43,11 @@ class SessionManager:
         """
         self._settings = settings
         self._sessions: dict[str, Session] = {}
+        self._expire_listeners: list[Callable[[str], None]] = []
+
+    def register_expire_listener(self, listener: Callable[[str], None]) -> None:
+        """注册会话过期回调监听器。"""
+        self._expire_listeners.append(listener)
 
     def get_or_create(self, user_id: str) -> Session:
         """获取或创建会话"""
@@ -84,4 +89,9 @@ class SessionManager:
         ]
         for user_id in expired:
             self._sessions.pop(user_id, None)
+            for listener in self._expire_listeners:
+                try:
+                    listener(user_id)
+                except Exception:
+                    continue
 # endregion

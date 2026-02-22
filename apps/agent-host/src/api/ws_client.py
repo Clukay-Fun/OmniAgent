@@ -60,9 +60,26 @@ agent_core = AgentOrchestrator(
 chunk_assembler = ChunkAssembler(
     enabled=bool(settings.webhook.chunk_assembler.enabled),
     window_seconds=float(settings.webhook.chunk_assembler.window_seconds),
+    stale_window_seconds=float(settings.webhook.chunk_assembler.stale_window_seconds),
     max_segments=int(settings.webhook.chunk_assembler.max_segments),
     max_chars=int(settings.webhook.chunk_assembler.max_chars),
 )
+
+
+def _flush_orphan_chunks(session_key: str) -> None:
+    decision = chunk_assembler.drain(session_key)
+    if decision.should_process:
+        logger.warning(
+            "检测到会话过期残留分片，已执行兜底冲刷",
+            extra={
+                "event_code": "ws.chunk_assembler.orphan_flushed",
+                "session_key": session_key,
+                "text_len": len(decision.text),
+            },
+        )
+
+
+session_manager.register_expire_listener(_flush_orphan_chunks)
 # endregion
 # ============================================
 

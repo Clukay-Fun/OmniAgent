@@ -38,11 +38,13 @@ class ChunkAssembler:
         self,
         enabled: bool,
         window_seconds: float = 3.0,
+        stale_window_seconds: float = 10.0,
         max_segments: int = 5,
         max_chars: int = 500,
     ) -> None:
         self._enabled = bool(enabled)
         self._window_seconds = max(float(window_seconds), 0.1)
+        self._stale_window_seconds = max(float(stale_window_seconds), self._window_seconds)
         self._max_segments = max(int(max_segments), 1)
         self._max_chars = max(int(max_chars), 1)
         self._buffers: dict[str, _ChunkBuffer] = {}
@@ -70,7 +72,13 @@ class ChunkAssembler:
                     return ChunkDecision(should_process=True, text=limited[0], reason="fuse_limit")
                 return ChunkDecision(should_process=False, reason="buffering")
 
-            if ts - existing.started_at > self._window_seconds:
+            age = ts - existing.started_at
+            if age > self._stale_window_seconds:
+                flushed, _ = self._apply_fuse(existing.segments)
+                self._buffers[key] = _ChunkBuffer(segments=[content], started_at=ts, last_at=ts)
+                return ChunkDecision(should_process=True, text=flushed, reason="stale_window_elapsed")
+
+            if age > self._window_seconds:
                 flushed, _ = self._apply_fuse(existing.segments)
                 self._buffers[key] = _ChunkBuffer(segments=[content], started_at=ts, last_at=ts)
                 return ChunkDecision(should_process=True, text=flushed, reason="window_elapsed")
@@ -87,6 +95,18 @@ class ChunkAssembler:
                 self._buffers.pop(key, None)
                 return ChunkDecision(should_process=True, text=merged, reason="fast_path")
             return ChunkDecision(should_process=False, reason="buffering")
+
+    def drain(self, scope_key: str) -> ChunkDecision:
+        """主动冲刷指定作用域残留分片。"""
+        key = str(scope_key or "").strip() or "default"
+        with self._lock:
+            existing = self._buffers.pop(key, None)
+        if existing is None:
+            return ChunkDecision(should_process=False, reason="empty")
+        merged, _ = self._apply_fuse(existing.segments)
+        if not merged.strip():
+            return ChunkDecision(should_process=False, reason="empty")
+        return ChunkDecision(should_process=True, text=merged, reason="manual_drain")
 
     def _is_fast_path(self, text: str) -> bool:
         stripped = text.strip()

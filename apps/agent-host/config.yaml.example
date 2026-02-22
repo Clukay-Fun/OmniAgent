@@ -193,6 +193,7 @@ webhook:
   chunk_assembler:
     enabled: ${CHUNK_ASSEMBLER_ENABLED:-false}
     window_seconds: 3
+    stale_window_seconds: ${CHUNK_ASSEMBLER_STALE_WINDOW_SECONDS:-10}
     max_segments: 5
     max_chars: 500
 

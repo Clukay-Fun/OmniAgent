@@ -49,6 +49,7 @@ _agent_core: AgentOrchestrator | None = None
 _deduplicator: "EventDeduplicator | None" = None
 _event_router: FeishuEventRouter | None = None
 _chunk_assembler: ChunkAssembler | None = None
+_chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
 
 
@@ -75,6 +76,7 @@ def _get_agent_core() -> AgentOrchestrator:
             llm_client=_llm_client,
             skills_config_path="config/skills.yaml",
         )
+        _bind_chunk_expire_hook()
         logger.info("Agent 编排器初始化完成", extra={"event_code": "webhook.agent_core.initialized"})
     return _agent_core
 
@@ -109,10 +111,37 @@ def _get_chunk_assembler() -> ChunkAssembler:
         _chunk_assembler = ChunkAssembler(
             enabled=cfg.enabled,
             window_seconds=cfg.window_seconds,
+            stale_window_seconds=cfg.stale_window_seconds,
             max_segments=cfg.max_segments,
             max_chars=cfg.max_chars,
         )
+        _bind_chunk_expire_hook()
     return _chunk_assembler
+
+
+def _bind_chunk_expire_hook() -> None:
+    """将会话过期清理与分片兜底冲刷绑定。"""
+    global _chunk_expire_hook_bound
+    if _chunk_expire_hook_bound:
+        return
+    if _session_manager is None or _chunk_assembler is None:
+        return
+    assembler = _chunk_assembler
+
+    def _on_session_expired(session_key: str) -> None:
+        decision = assembler.drain(session_key)
+        if decision.should_process:
+            logger.warning(
+                "检测到会话过期残留分片，已执行兜底冲刷",
+                extra={
+                    "event_code": "webhook.chunk_assembler.orphan_flushed",
+                    "session_key": session_key,
+                    "text_len": len(decision.text),
+                },
+            )
+
+    _session_manager.register_expire_listener(_on_session_expired)
+    _chunk_expire_hook_bound = True
 
 
 def _get_user_manager():
