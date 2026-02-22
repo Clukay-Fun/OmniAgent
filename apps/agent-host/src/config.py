@@ -191,6 +191,21 @@ class SessionSettings(BaseModel):
     cleanup: CleanupSettings = Field(default_factory=CleanupSettings)
 
 
+class RedisStateStoreSettings(BaseModel):
+    dsn: str = ""
+    host: str = "localhost"
+    port: int = 6379
+    db: int = 0
+    password: str | None = None
+    key_prefix: str = "omniagent:state:"
+    socket_timeout_seconds: float = 1.0
+
+
+class StateStoreSettings(BaseModel):
+    backend: str = "memory"
+    redis: RedisStateStoreSettings = Field(default_factory=RedisStateStoreSettings)
+
+
 class WebhookDedupSettings(BaseModel):
     enabled: bool = True
     ttl_seconds: int = 300
@@ -317,6 +332,7 @@ class Settings(BaseModel):
     user: UserSettings = Field(default_factory=UserSettings)
     hearing_reminder: HearingReminderSettings = Field(default_factory=HearingReminderSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
+    state_store: StateStoreSettings = Field(default_factory=StateStoreSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -424,6 +440,14 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "MIDTERM_MEMORY_INJECT_TO_LLM": ["agent", "midterm_memory", "inject_to_llm"],
         "MIDTERM_MEMORY_LLM_RECENT_LIMIT": ["agent", "midterm_memory", "llm_recent_limit"],
         "MIDTERM_MEMORY_LLM_MAX_CHARS": ["agent", "midterm_memory", "llm_max_chars"],
+        "STATE_STORE_BACKEND": ["state_store", "backend"],
+        "STATE_STORE_REDIS_DSN": ["state_store", "redis", "dsn"],
+        "STATE_STORE_REDIS_HOST": ["state_store", "redis", "host"],
+        "STATE_STORE_REDIS_PORT": ["state_store", "redis", "port"],
+        "STATE_STORE_REDIS_DB": ["state_store", "redis", "db"],
+        "STATE_STORE_REDIS_PASSWORD": ["state_store", "redis", "password"],
+        "STATE_STORE_REDIS_KEY_PREFIX": ["state_store", "redis", "key_prefix"],
+        "STATE_STORE_REDIS_SOCKET_TIMEOUT_SECONDS": ["state_store", "redis", "socket_timeout_seconds"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

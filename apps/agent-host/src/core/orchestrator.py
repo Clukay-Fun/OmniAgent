@@ -32,7 +32,7 @@ from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_
 from src.core.router import SkillRouter, SkillContext, SkillResult, ContextManager
 from src.core.l0 import L0RuleEngine
 from src.core.planner import PlannerEngine, PlannerOutput
-from src.core.state import ConversationStateManager, MemoryStateStore
+from src.core.state import ConversationStateManager, create_state_store
 from src.core.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
 from src.core.skills import (
     QuerySkill,
@@ -273,8 +273,9 @@ class AgentOrchestrator:
         self._context_manager = ContextManager()
 
         # 初始化会话状态管理（内存 + TTL，可替换为 Redis）
+        state_store = create_state_store(settings)
         self._state_manager = ConversationStateManager(
-            store=MemoryStateStore(),
+            store=state_store,
             default_ttl_seconds=max(int(settings.session.ttl_minutes * 60), 60),
             pending_delete_ttl_seconds=300,
             pagination_ttl_seconds=600,

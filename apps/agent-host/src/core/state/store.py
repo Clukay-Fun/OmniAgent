@@ -14,13 +14,16 @@ from src.core.state.models import ConversationState
 class StateStore(Protocol):
     """会话状态存储接口。"""
 
-    def get(self, user_id: str) -> ConversationState | None:
+    def get(self, session_key: str) -> ConversationState | None:
         ...
 
-    def set(self, user_id: str, state: ConversationState) -> None:
+    def set(self, session_key: str, state: ConversationState) -> None:
         ...
 
-    def delete(self, user_id: str) -> None:
+    def delete(self, session_key: str) -> None:
+        ...
+
+    def list_session_keys(self) -> list[str]:
         ...
 
     def cleanup_expired(self) -> None:

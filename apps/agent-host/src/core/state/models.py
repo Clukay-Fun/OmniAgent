@@ -88,5 +88,13 @@ class ConversationState:
     pending_action: PendingActionState | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def session_key(self) -> str:
+        return self.user_id
+
+    @session_key.setter
+    def session_key(self, value: str) -> None:
+        self.user_id = str(value)
+
     def is_expired(self, now: float) -> bool:
         return now >= self.expires_at

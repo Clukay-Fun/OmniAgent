@@ -172,6 +172,20 @@ session:
     enabled: true
 
 # ------------------------------------------------------------
+# 状态存储配置（默认 memory；redis 为可选占位）
+# ------------------------------------------------------------
+state_store:
+  backend: ${STATE_STORE_BACKEND:-memory}   # memory | redis
+  redis:
+    dsn: ${STATE_STORE_REDIS_DSN:-}
+    host: ${STATE_STORE_REDIS_HOST:-localhost}
+    port: ${STATE_STORE_REDIS_PORT:-6379}
+    db: ${STATE_STORE_REDIS_DB:-0}
+    password: ${STATE_STORE_REDIS_PASSWORD:-}
+    key_prefix: ${STATE_STORE_REDIS_KEY_PREFIX:-omniagent:state:}
+    socket_timeout_seconds: ${STATE_STORE_REDIS_SOCKET_TIMEOUT_SECONDS:-1.0}
+
+# ------------------------------------------------------------
 # Webhook 配置
 # ------------------------------------------------------------
 webhook:

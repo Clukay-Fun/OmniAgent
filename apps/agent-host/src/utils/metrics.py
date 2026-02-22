@@ -146,6 +146,12 @@ if PROMETHEUS_AVAILABLE:
         "Total card template render outcomes",
         ["template_id", "status"],
     )
+
+    STATE_STORE_BACKEND_COUNT = Counter(
+        "state_store_backend_total",
+        "Total state store backend selection outcomes",
+        ["backend", "status"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -185,6 +191,7 @@ else:
     AUTOMATION_DEAD_LETTER_COUNT = DummyMetric()
     FIELD_FORMAT_COUNT = DummyMetric()
     CARD_TEMPLATE_COUNT = DummyMetric()
+    STATE_STORE_BACKEND_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -268,6 +275,11 @@ def record_field_format(field_type: str, status: str) -> None:
 def record_card_template(template_id: str, status: str) -> None:
     """记录卡片模板渲染结果。"""
     CARD_TEMPLATE_COUNT.labels(template_id=template_id, status=status).inc()
+
+
+def record_state_store_backend(backend: str, status: str) -> None:
+    """记录状态存储后端选择结果。"""
+    STATE_STORE_BACKEND_COUNT.labels(backend=backend, status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:

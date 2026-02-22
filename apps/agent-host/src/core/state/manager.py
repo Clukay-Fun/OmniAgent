@@ -80,8 +80,16 @@ class ConversationStateManager:
         self._store.set(user_id, state)
         return state
 
+    def get_state_by_session_key(self, session_key: str) -> ConversationState:
+        """session_key 语义入口（兼容旧 get_state）。"""
+        return self.get_state(session_key)
+
     def clear_user(self, user_id: str) -> None:
         self._store.delete(user_id)
+
+    def clear_session(self, session_key: str) -> None:
+        """session_key 语义入口（兼容旧 clear_user）。"""
+        self.clear_user(session_key)
 
     def set_pending_delete(
         self,
