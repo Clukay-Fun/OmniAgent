@@ -509,6 +509,47 @@ def test_event_router_handles_calendar_changed_and_calls_hook() -> None:
     ]
 
 
+def test_event_router_calendar_prefers_enqueue_hook() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _ReminderEngine:
+        def enqueue_calendar_changed(self, **kwargs) -> bool:
+            calls.append(kwargs)
+            return True
+
+    payload = {
+        "header": {
+            "event_type": "calendar.calendar.event.changed_v4",
+            "event_id": "evt_calendar_enqueue_1",
+        },
+        "event": {
+            "calendar_id": "cal_enqueue_1",
+            "event_id": "event_enqueue_1",
+            "summary": "例会",
+        },
+    }
+    envelope = FeishuEventAdapter.from_webhook_payload(payload)
+    router = FeishuEventRouter(
+        enabled_types=["calendar.calendar.event.changed_v4"],
+        reminder_engine=_ReminderEngine(),
+    )
+
+    result = router.route(envelope)
+
+    assert result.status == "handled"
+    assert result.payload is not None
+    assert result.payload["reminder_hook"] == "enqueued"
+    assert calls == [
+        {
+            "event_id": "evt_calendar_enqueue_1",
+            "calendar_id": "cal_enqueue_1",
+            "calendar_event_id": "event_enqueue_1",
+            "summary": "例会",
+            "raw_event": payload["event"],
+        }
+    ]
+
+
 def test_event_router_handles_calendar_container_changed_without_event_id() -> None:
     payload = {
         "header": {

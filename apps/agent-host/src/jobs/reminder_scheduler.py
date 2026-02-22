@@ -15,7 +15,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.db.postgres import PostgresClient
-from src.utils.feishu_api import send_message
+from src.jobs.reminder_dispatcher import ReminderDispatchPayload, ReminderDispatcher
 from src.utils.metrics import record_reminder_push
 from src.config import Settings
 
@@ -32,6 +32,7 @@ class ReminderScheduler:
         lock_key: str = "reminder_scan",
         lock_timeout_seconds: int = 300,
         batch_limit: int = 50,
+        dispatcher: ReminderDispatcher | None = None,
     ) -> None:
         self._settings = settings
         self._db = db
@@ -40,6 +41,7 @@ class ReminderScheduler:
         self._lock_key = lock_key
         self._lock_timeout_seconds = lock_timeout_seconds
         self._batch_limit = batch_limit
+        self._dispatcher = dispatcher or ReminderDispatcher(settings=settings)
         self._scheduler = AsyncIOScheduler()
 
     def start(self) -> None:
@@ -87,6 +89,9 @@ class ReminderScheduler:
 
         target = chat_id or user_id
         receive_id_type = "chat_id" if chat_id else "open_id"
+        if not target:
+            logger.warning("Reminder target missing: reminder_id=%s", reminder_id)
+            return
 
         due_text = due_at.strftime("%Y-%m-%d %H:%M") if due_at else "未设置时间"
         message = {
@@ -95,17 +100,25 @@ class ReminderScheduler:
 
         status = "success"
         try:
-            await send_message(
-                settings=self._settings,
-                receive_id=target,
-                msg_type="text",
-                content=message,
-                receive_id_type=receive_id_type,
+            dispatch_result = await self._dispatcher.dispatch(
+                ReminderDispatchPayload(
+                    source="conversation",
+                    business_id=str(reminder_id or ""),
+                    trigger_date=due_at,
+                    offset=0,
+                    receive_id=str(target),
+                    msg_type="text",
+                    content=message,
+                    receive_id_type=receive_id_type,
+                )
             )
-            await self._db.mark_reminder_sent(reminder_id)
+            if isinstance(reminder_id, int):
+                if dispatch_result.status in {"dispatched", "deduped"}:
+                    await self._db.mark_reminder_sent(reminder_id)
         except Exception as exc:
             status = "failure"
-            await self._db.mark_reminder_failed(reminder_id, str(exc))
+            if isinstance(reminder_id, int):
+                await self._db.mark_reminder_failed(reminder_id, str(exc))
             logger.error("Reminder push failed: %s", exc)
         finally:
             record_reminder_push(status)

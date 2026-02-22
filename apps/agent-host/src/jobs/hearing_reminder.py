@@ -14,8 +14,8 @@ from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from src.jobs.reminder_dispatcher import ReminderDispatchPayload, ReminderDispatcher
 from src.mcp.client import MCPClient
-from src.utils.feishu_api import send_message
 from src.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class HearingReminderScheduler:
         reminder_offsets: list[int] | None = None,
         scan_hour: int = 8,
         scan_minute: int = 0,
+        dispatcher: ReminderDispatcher | None = None,
     ) -> None:
         """
         初始化调度器
@@ -60,9 +61,7 @@ class HearingReminderScheduler:
         self._reminder_offsets = reminder_offsets or [7, 3, 1, 0]
         self._scan_hour = scan_hour
         self._scan_minute = scan_minute
-        
-        # 去重集合：记录已发送的提醒 (case_id, offset)
-        self._sent_reminders: set[tuple[str, int]] = set()
+        self._dispatcher = dispatcher or ReminderDispatcher(settings=settings)
         
         self._scheduler = AsyncIOScheduler()
     
@@ -156,12 +155,6 @@ class HearingReminderScheduler:
         if not record_id:
             return
         
-        # 去重检查
-        dedup_key = (record_id, offset)
-        if dedup_key in self._sent_reminders:
-            logger.debug(f"Reminder already sent: {dedup_key}")
-            return
-        
         # 提取案件信息
         fields = record.get("fields_text", {})
         case_no = fields.get("案号", "未知案号")
@@ -183,16 +176,21 @@ class HearingReminderScheduler:
         
         # 发送消息
         try:
-            await send_message(
-                settings=self._settings,
-                receive_id=self._reminder_chat_id,
-                msg_type="text",
-                content={"text": message},
-                receive_id_type="chat_id",
+            result = await self._dispatcher.dispatch(
+                ReminderDispatchPayload(
+                    source="hearing",
+                    business_id=str(record_id),
+                    trigger_date=hearing_date,
+                    offset=offset,
+                    receive_id=self._reminder_chat_id,
+                    msg_type="text",
+                    content={"text": message},
+                    receive_id_type="chat_id",
+                )
             )
-            
-            # 标记已发送
-            self._sent_reminders.add(dedup_key)
+            if result.status == "deduped":
+                logger.info(f"Hearing reminder deduped: {case_no} (offset={offset})")
+                return
             logger.info(f"Hearing reminder sent: {case_no} (offset={offset})")
             
         except Exception as e:

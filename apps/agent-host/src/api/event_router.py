@@ -541,17 +541,36 @@ class CalendarChangedHandler:
     def _call_reminder_hook(self, payload: CalendarChangedPayload) -> str:
         if self._reminder_engine is None:
             return "not_available"
-        hook = getattr(self._reminder_engine, "on_calendar_changed", None)
-        if not callable(hook):
+        hook_payload = {
+            "event_id": payload.event_id,
+            "calendar_id": payload.calendar_id,
+            "calendar_event_id": payload.calendar_event_id,
+            "summary": payload.summary,
+            "raw_event": payload.raw_event,
+        }
+
+        enqueue_hook = getattr(self._reminder_engine, "enqueue_calendar_changed", None)
+        if callable(enqueue_hook):
+            try:
+                result = enqueue_hook(**hook_payload)
+                if result is False:
+                    return "not_available"
+                return "enqueued"
+            except Exception:
+                self._logger.exception(
+                    "reminder_engine enqueue_calendar_changed hook failed",
+                    extra={
+                        "event_code": "event_router.calendar_changed.hook_failed",
+                        "event_id": payload.event_id,
+                    },
+                )
+                return "failed"
+
+        legacy_hook = getattr(self._reminder_engine, "on_calendar_changed", None)
+        if not callable(legacy_hook):
             return "not_implemented"
         try:
-            hook(
-                event_id=payload.event_id,
-                calendar_id=payload.calendar_id,
-                calendar_event_id=payload.calendar_event_id,
-                summary=payload.summary,
-                raw_event=payload.raw_event,
-            )
+            legacy_hook(**hook_payload)
             return "called"
         except Exception:
             self._logger.exception(

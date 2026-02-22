@@ -74,6 +74,12 @@ if PROMETHEUS_AVAILABLE:
         "Total number of reminder pushes",
         ["status"],
     )
+
+    REMINDER_DISPATCH_COUNT = Counter(
+        "reminder_dispatch_total",
+        "Total reminder dispatch outcomes by source and status",
+        ["source", "status"],
+    )
     
     # MCP 工具调用计数
     MCP_TOOL_CALL_COUNT = Counter(
@@ -162,6 +168,7 @@ else:
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
+    REMINDER_DISPATCH_COUNT = DummyMetric()
 # endregion
 
 
@@ -241,6 +248,11 @@ def record_config_reload(config_file: str, status: str) -> None:
 def record_reminder_push(status: str) -> None:
     """记录提醒推送结果"""
     REMINDER_PUSH_COUNT.labels(status=status).inc()
+
+
+def record_reminder_dispatch(source: str, status: str) -> None:
+    """记录 reminder dispatcher 结果。"""
+    REMINDER_DISPATCH_COUNT.labels(source=source, status=status).inc()
 # endregion
 
 

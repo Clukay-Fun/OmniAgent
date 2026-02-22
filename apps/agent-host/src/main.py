@@ -26,6 +26,7 @@ from src.utils.logger import setup_logging
 from src.utils.workspace import ensure_workspace
 from src.utils.hot_reload import HotReloadManager
 from src.db.postgres import PostgresClient
+from src.jobs.reminder_dispatcher import ReminderDispatcher
 from src.jobs.reminder_scheduler import ReminderScheduler
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     skills_config = load_skills_config("config/skills.yaml")
     reminder_cfg = skills_config.get("reminder", {})
+    app.state.reminder_dispatcher = ReminderDispatcher(settings=settings)
     if settings.reminder_scheduler_enabled and settings.postgres.dsn:
         db = PostgresClient(settings.postgres)
         interval_seconds = int(reminder_cfg.get("scan_interval_seconds", 60))
@@ -80,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             interval_seconds=interval_seconds,
             instance_id=instance_id,
             lock_timeout_seconds=lock_timeout_seconds,
+            dispatcher=app.state.reminder_dispatcher,
         )
         app.state.reminder_scheduler.start()
     else:
@@ -98,6 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             reminder_offsets=settings.hearing_reminder.reminder_offsets,
             scan_hour=settings.hearing_reminder.scan_hour,
             scan_minute=settings.hearing_reminder.scan_minute,
+            dispatcher=app.state.reminder_dispatcher,
         )
         app.state.hearing_reminder_scheduler.start()
         logger.info("Hearing reminder scheduler started")

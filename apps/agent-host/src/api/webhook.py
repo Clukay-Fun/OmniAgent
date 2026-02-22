@@ -55,11 +55,26 @@ _chunk_assembler: ChunkAssembler | None = None
 _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
 _schema_sync_bridge: Any = None
+_reminder_refresh_bridge: Any = None
 
 
 class _SchemaSyncBridge:
     def __init__(self) -> None:
         self.schema_cache = get_global_schema_cache()
+
+
+class _ReminderRefreshBridge:
+    def enqueue_calendar_changed(self, **payload: Any) -> bool:
+        logger.info(
+            "calendar reminder refresh enqueued",
+            extra={
+                "event_code": "webhook.reminder_refresh.enqueued",
+                "event_id": str(payload.get("event_id") or ""),
+                "calendar_id": str(payload.get("calendar_id") or ""),
+                "calendar_event_id": str(payload.get("calendar_event_id") or ""),
+            },
+        )
+        return True
 
 
 def _get_settings() -> Any:
@@ -111,6 +126,7 @@ def _get_event_router() -> FeishuEventRouter:
             enabled_types=get_enabled_types(settings),
             automation_enqueuer=_get_automation_enqueuer(),
             schema_sync=_get_schema_sync_bridge(),
+            reminder_engine=_get_reminder_refresh_bridge(),
         )
     return _event_router
 
@@ -127,6 +143,13 @@ def _get_automation_enqueuer() -> QueueAutomationEnqueuer:
     if _automation_enqueuer is None:
         _automation_enqueuer = create_default_automation_enqueuer()
     return _automation_enqueuer
+
+
+def _get_reminder_refresh_bridge() -> Any:
+    global _reminder_refresh_bridge
+    if _reminder_refresh_bridge is None:
+        _reminder_refresh_bridge = _ReminderRefreshBridge()
+    return _reminder_refresh_bridge
 
 
 def _get_chunk_assembler() -> ChunkAssembler:
