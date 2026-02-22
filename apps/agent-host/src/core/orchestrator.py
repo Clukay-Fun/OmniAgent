@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import logging
 import random
 import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ContextManager as TypingContextManager, cast
 
 import yaml
 
@@ -30,7 +31,14 @@ from src.utils.metrics import (
 
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
-from src.core.router import SkillRouter, SkillContext, SkillResult, ContextManager
+from src.core.router import (
+    SkillRouter,
+    SkillContext,
+    SkillResult,
+    ContextManager,
+    ModelRouter,
+    RoutingDecision,
+)
 from src.core.l0 import L0RuleEngine
 from src.core.planner import PlannerEngine, PlannerOutput
 from src.core.state import ConversationStateManager, create_state_store
@@ -258,6 +266,13 @@ class AgentOrchestrator:
             enabled=bool(getattr(settings.usage_log, "enabled", False)),
             path_template=str(getattr(settings.usage_log, "path", "workspace/usage/usage_log-{date}.jsonl")),
             fail_open=bool(getattr(settings.usage_log, "fail_open", True)),
+        )
+        self._model_router = ModelRouter(
+            enabled=bool(getattr(settings.ab_routing, "enabled", False)),
+            ratio=float(getattr(settings.ab_routing, "ratio", 0.0)),
+            primary_model=str(getattr(settings.llm, "model", "")),
+            model_a=getattr(settings.ab_routing, "model_a", None),
+            model_b=getattr(settings.ab_routing, "model_b", None),
         )
 
         # LLM 超时配置
@@ -592,6 +607,18 @@ class AgentOrchestrator:
         status = "success"
         usage_skill = "unknown"
         usage_source = "text"
+        route_decision = RoutingDecision(
+            model_selected=str(getattr(getattr(self, "_llm", None), "model_name", "")),
+            route_label="primary_default",
+            complexity="medium",
+            reason="default",
+            in_ab_bucket=False,
+            metadata={
+                "route_label": "primary_default",
+                "complexity": "medium",
+                "route_reason": "default",
+            },
+        )
         reply: dict[str, Any] = {
             "type": "text",
             "text": "请稍后重试。",
@@ -611,193 +638,216 @@ class AgentOrchestrator:
             self._sessions.add_message(user_id, "user", text)
             self._trim_session_context(user_id)
 
-            # Step 0: L0 规则硬约束
-            l0_decision = self._l0_engine.evaluate(user_id, text)
-            if l0_decision.handled:
-                reply = l0_decision.reply or {
-                    "type": "text",
-                    "text": "请换一种说法再试试。",
-                }
-                status = "success"
-            else:
-                # Step 1: L0 强制技能 或 L1 Planner/IntentParser
-                llm_context: dict[str, str] | None = None
-                planner_output: PlannerOutput | None = None
-                planner_applied = False
-                should_execute = True
-                intent: IntentResult | None = None
+            model_router = getattr(self, "_model_router", None)
+            if model_router is not None and hasattr(model_router, "decide"):
+                route_decision = model_router.decide(user_id=user_id, query=text)
+            route_context = {
+                "model_selected": route_decision.model_selected,
+                "route_label": route_decision.route_label,
+                "complexity": route_decision.complexity,
+                "route_reason": route_decision.reason,
+            }
+            task_route_context = getattr(getattr(self, "_task_llm", None), "route_context", None)
+            llm_route_context = getattr(getattr(self, "_llm", None), "route_context", None)
+            task_ctx = cast(
+                TypingContextManager[Any],
+                task_route_context(**route_context) if callable(task_route_context) else nullcontext(),
+            )
+            llm_ctx = cast(
+                TypingContextManager[Any],
+                llm_route_context(**route_context) if callable(llm_route_context) else nullcontext(),
+            )
+            with task_ctx, llm_ctx:
+                # Step 0: L0 规则硬约束
+                l0_decision = self._l0_engine.evaluate(user_id, text)
+                if l0_decision.handled:
+                    reply = l0_decision.reply or {
+                        "type": "text",
+                        "text": "请换一种说法再试试。",
+                    }
+                    status = "success"
+                else:
+                    # Step 1: L0 强制技能 或 L1 Planner/IntentParser
+                    llm_context: dict[str, str] | None = None
+                    planner_output: PlannerOutput | None = None
+                    planner_applied = False
+                    should_execute = True
+                    intent: IntentResult | None = None
 
-                if l0_decision.force_skill:
-                    usage_skill = l0_decision.force_skill
-                    intent = IntentResult(
-                        skills=[
-                            SkillMatch(
-                                name=l0_decision.force_skill,
-                                score=1.0,
-                                reason="L0 rule matched",
-                            )
-                        ],
-                        is_chain=False,
-                        requires_llm_confirm=False,
-                        method="l0",
-                    )
-                    logger.info(
-                        "L0 规则强制指定意图",
-                        extra={
-                            "event_code": "orchestrator.intent.forced_by_l0",
-                            "query": text,
-                            "intent": intent.to_dict(),
-                        },
-                    )
-                elif l0_decision.intent_hint == "chitchat":
-                    usage_skill = "ChitchatSkill"
-                    if not self._chitchat_allow_llm:
-                        record_chitchat_guard("blocked")
-                        reply = {
-                            "type": "text",
-                            "text": self._pick_casual_response(),
-                        }
-                        status = "success"
-                        should_execute = False
-                    else:
+                    if l0_decision.force_skill:
+                        usage_skill = l0_decision.force_skill
                         intent = IntentResult(
                             skills=[
                                 SkillMatch(
-                                    name="ChitchatSkill",
+                                    name=l0_decision.force_skill,
                                     score=1.0,
-                                    reason="L0 chitchat hint",
+                                    reason="L0 rule matched",
                                 )
                             ],
                             is_chain=False,
                             requires_llm_confirm=False,
-                            method="l0_hint",
+                            method="l0",
                         )
-                else:
-                    llm_context = await self._build_llm_context(
-                        user_id,
-                        query=text,
-                        file_markdown=file_markdown,
-                    )
-
-                    planner_start = time.perf_counter()
-                    planner_output = await self._planner.plan(text)
-                    planner_duration = time.perf_counter() - planner_start
-
-                    if planner_output and planner_output.intent == "clarify_needed":
-                        reply = {
-                            "type": "text",
-                            "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
-                        }
-                        status = "success"
-                        should_execute = False
+                        logger.info(
+                            "L0 规则强制指定意图",
+                            extra={
+                                "event_code": "orchestrator.intent.forced_by_l0",
+                                "query": text,
+                                "intent": intent.to_dict(),
+                            },
+                        )
+                    elif l0_decision.intent_hint == "chitchat":
+                        usage_skill = "ChitchatSkill"
+                        if not self._chitchat_allow_llm:
+                            record_chitchat_guard("blocked")
+                            reply = {
+                                "type": "text",
+                                "text": self._pick_casual_response(),
+                            }
+                            status = "success"
+                            should_execute = False
+                        else:
+                            intent = IntentResult(
+                                skills=[
+                                    SkillMatch(
+                                        name="ChitchatSkill",
+                                        score=1.0,
+                                        reason="L0 chitchat hint",
+                                    )
+                                ],
+                                is_chain=False,
+                                requires_llm_confirm=False,
+                                method="l0_hint",
+                            )
                     else:
-                        if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
-                            intent = self._build_intent_from_planner(planner_output)
-                            if intent:
-                                planner_applied = True
-                                record_intent_parse("planner", planner_duration)
+                        llm_context = await self._build_llm_context(
+                            user_id,
+                            query=text,
+                            file_markdown=file_markdown,
+                        )
+
+                        planner_start = time.perf_counter()
+                        planner_output = await self._planner.plan(text)
+                        planner_duration = time.perf_counter() - planner_start
+
+                        if planner_output and planner_output.intent == "clarify_needed":
+                            reply = {
+                                "type": "text",
+                                "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
+                            }
+                            status = "success"
+                            should_execute = False
+                        else:
+                            if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
+                                intent = self._build_intent_from_planner(planner_output)
+                                if intent:
+                                    planner_applied = True
+                                    record_intent_parse("planner", planner_duration)
+                                    logger.info(
+                                        "Planner 意图解析完成",
+                                        extra={
+                                            "event_code": "orchestrator.intent.parsed_planner",
+                                            "query": text,
+                                            "intent": intent.to_dict(),
+                                            "planner": planner_output.to_context(),
+                                        },
+                                    )
+
+                            if intent is None:
+                                intent_start = time.perf_counter()
+                                intent = await self._intent_parser.parse(text, llm_context=llm_context)
+                                record_intent_parse(intent.method, time.perf_counter() - intent_start)
                                 logger.info(
-                                    "Planner 意图解析完成",
+                                    "意图解析完成",
                                     extra={
-                                        "event_code": "orchestrator.intent.parsed_planner",
+                                        "event_code": "orchestrator.intent.parsed",
                                         "query": text,
                                         "intent": intent.to_dict(),
-                                        "planner": planner_output.to_context(),
                                     },
                                 )
 
-                        if intent is None:
-                            intent_start = time.perf_counter()
-                            intent = await self._intent_parser.parse(text, llm_context=llm_context)
-                            record_intent_parse(intent.method, time.perf_counter() - intent_start)
-                            logger.info(
-                                "意图解析完成",
-                                extra={
-                                    "event_code": "orchestrator.intent.parsed",
-                                    "query": text,
-                                    "intent": intent.to_dict(),
-                                },
-                            )
+                    if should_execute:
+                        # Step 2: 构建执行上下文
+                        prev_context = self._context_manager.get(user_id)
+                        state_last_result = self._state_manager.get_last_result_payload(user_id)
+                        state_last_skill = self._state_manager.get_last_skill(user_id)
+                        active_table = self._state_manager.get_active_table(user_id)
+                        active_record = self._state_manager.get_active_record(user_id)
+                        pending_action = self._state_manager.get_pending_action(user_id)
+                        if l0_decision.force_skill:
+                            extra = dict(l0_decision.force_extra or {})
+                        else:
+                            extra = await self._build_extra(text, user_id, llm_context)
+                            if planner_applied and planner_output:
+                                extra["planner_plan"] = planner_output.to_context()
 
-                if should_execute:
-                    # Step 2: 构建执行上下文
-                    prev_context = self._context_manager.get(user_id)
-                    state_last_result = self._state_manager.get_last_result_payload(user_id)
-                    state_last_skill = self._state_manager.get_last_skill(user_id)
-                    active_table = self._state_manager.get_active_table(user_id)
-                    active_record = self._state_manager.get_active_record(user_id)
-                    pending_action = self._state_manager.get_pending_action(user_id)
-                    if l0_decision.force_skill:
-                        extra = dict(l0_decision.force_extra or {})
-                    else:
-                        extra = await self._build_extra(text, user_id, llm_context)
-                        if planner_applied and planner_output:
-                            extra["planner_plan"] = planner_output.to_context()
+                        if active_table.get("table_id"):
+                            extra["active_table_id"] = active_table.get("table_id")
+                        if active_table.get("table_name"):
+                            extra["active_table_name"] = active_table.get("table_name")
+                        if active_record and active_record.record:
+                            extra["active_record"] = active_record.record
+                        if pending_action:
+                            extra["pending_action"] = {
+                                "action": pending_action.action,
+                                "payload": pending_action.payload,
+                            }
 
-                    if active_table.get("table_id"):
-                        extra["active_table_id"] = active_table.get("table_id")
-                    if active_table.get("table_name"):
-                        extra["active_table_name"] = active_table.get("table_name")
-                    if active_record and active_record.record:
-                        extra["active_record"] = active_record.record
-                    if pending_action:
-                        extra["pending_action"] = {
-                            "action": pending_action.action,
-                            "payload": pending_action.payload,
-                        }
+                        extra["chat_id"] = chat_id
+                        extra["chat_type"] = chat_type
+                        extra["user_profile"] = user_profile  # 添加用户档案
+                        extra["complexity"] = route_decision.complexity
+                        extra["route_label"] = route_decision.route_label
+                        extra["model_selected"] = route_decision.model_selected
+                        usage_source = str(extra.get("usage_source") or "text")
 
-                    extra["chat_id"] = chat_id
-                    extra["chat_type"] = chat_type
-                    extra["user_profile"] = user_profile  # 添加用户档案
-                    usage_source = str(extra.get("usage_source") or "text")
-
-                    force_last_result = l0_decision.force_last_result if l0_decision.force_skill else None
-                    context = SkillContext(
-                        query=text,
-                        user_id=user_id,
-                        last_result=force_last_result if force_last_result is not None else (state_last_result or (prev_context.last_result if prev_context else None)),
-                        last_skill=state_last_skill or (prev_context.last_skill if prev_context else None),
-                        extra=extra,
-                    )
-
-                    # Step 3: 路由并执行技能
-                    if intent is None:
-                        result = SkillResult(
-                            success=False,
-                            skill_name="fallback",
-                            message="未能识别意图",
-                            reply_text="抱歉，我没理解您的意思。您可以试试：查所有案件、我的案件、查案号 XXX。",
+                        force_last_result = l0_decision.force_last_result if l0_decision.force_skill else None
+                        context = SkillContext(
+                            query=text,
+                            user_id=user_id,
+                            last_result=force_last_result if force_last_result is not None else (state_last_result or (prev_context.last_result if prev_context else None)),
+                            last_skill=state_last_skill or (prev_context.last_skill if prev_context else None),
+                            extra=extra,
                         )
-                    else:
-                        assert intent is not None
-                        result = await self._router.route(intent, context)
-                    usage_skill = result.skill_name
 
-                    # Step 4: 更新上下文（保存结果供后续链式调用）
-                    if result.success and result.data:
-                        self._context_manager.update_result(user_id, result.skill_name, result.data)
-                        self._context_manager.set(user_id, context.with_result(result.skill_name, result.data))
+                        # Step 3: 路由并执行技能
+                        if intent is None:
+                            result = SkillResult(
+                                success=False,
+                                skill_name="fallback",
+                                message="未能识别意图",
+                                reply_text="抱歉，我没理解您的意思。您可以试试：查所有案件、我的案件、查案号 XXX。",
+                            )
+                        else:
+                            assert intent is not None
+                            result = await self._router.route(intent, context)
+                        usage_skill = result.skill_name
 
-                    # Step 4.1: 同步会话状态机（L0 使用）
-                    self._sync_state_after_result(user_id, text, result)
+                        # Step 4: 更新上下文（保存结果供后续链式调用）
+                        if result.success and result.data:
+                            self._context_manager.update_result(user_id, result.skill_name, result.data)
+                            self._context_manager.set(user_id, context.with_result(result.skill_name, result.data))
 
-                    if not result.success:
-                        status = "failure"
+                        # Step 4.1: 同步会话状态机（L0 使用）
+                        self._sync_state_after_result(user_id, text, result)
 
-                    # Step 5: 构建回复
-                    reply = result.to_reply()
-                    rendered = self._response_renderer.render(result)
-                    reply["outbound"] = rendered.to_dict()
+                        if not result.success:
+                            status = "failure"
 
-                    # Step 6: 写入记忆（日志 + 关键偏好）
-                    self._record_memory(
-                        user_id,
-                        text,
-                        reply.get("text", ""),
-                        result.skill_name,
-                        result.data or {},
-                        context.extra,
-                    )
+                        # Step 5: 构建回复
+                        reply = result.to_reply()
+                        rendered = self._response_renderer.render(result)
+                        reply["outbound"] = rendered.to_dict()
+
+                        # Step 6: 写入记忆（日志 + 关键偏好）
+                        self._record_memory(
+                            user_id,
+                            text,
+                            reply.get("text", ""),
+                            result.skill_name,
+                            result.data or {},
+                            context.extra,
+                        )
             
         except asyncio.TimeoutError:
             status = "timeout"
@@ -858,6 +908,7 @@ class AgentOrchestrator:
                 conversation_id=chat_id or user_id,
                 skill_name=usage_skill,
                 usage_source=usage_source,
+                route_decision=route_decision,
             )
         except Exception:
             pass
@@ -870,6 +921,7 @@ class AgentOrchestrator:
         conversation_id: str,
         skill_name: str,
         usage_source: str,
+        route_decision: RoutingDecision,
     ) -> None:
         usage_logger = getattr(self, "_usage_logger", None)
         if usage_logger is None:
@@ -879,6 +931,18 @@ class AgentOrchestrator:
         token_count = int((usage or {}).get("token_count") or 0)
         cost = float((usage or {}).get("cost") or 0.0)
         estimated = bool((usage or {}).get("estimated", True))
+        latency_ms = int((usage or {}).get("latency_ms") or 0)
+        usage_metadata = (usage or {}).get("metadata") if isinstance(usage, dict) else None
+        metadata = {
+            "route_label": route_decision.route_label,
+            "model_selected": route_decision.model_selected,
+            "complexity": route_decision.complexity,
+            "route_reason": route_decision.reason,
+        }
+        if isinstance(usage_metadata, dict):
+            metadata.update({str(k): str(v) for k, v in usage_metadata.items()})
+        if latency_ms > 0:
+            metadata["latency_ms"] = str(latency_ms)
         try:
             ok = usage_logger.log(
                 UsageRecord(
@@ -891,6 +955,7 @@ class AgentOrchestrator:
                     cost=cost,
                     usage_source=str(usage_source or "text"),
                     estimated=estimated,
+                    metadata=metadata,
                 )
             )
             record_usage_log_write("ok" if ok else "noop")

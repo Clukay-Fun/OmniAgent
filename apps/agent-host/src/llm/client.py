@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 import json
 import logging
 import time
@@ -53,6 +55,9 @@ class LLMClient:
             http_client=self._http_client,
         )
         self._last_usage: dict[str, Any] | None = None
+        self._route_metadata_var: ContextVar[dict[str, Any]] = ContextVar(
+            "llm_route_metadata", default={}
+        )
 
     @property
     def model_name(self) -> str:
@@ -61,6 +66,14 @@ class LLMClient:
     async def _log_response(self, response: httpx.Response) -> None:
         if response.status_code >= 400:
             self._logger.error("LLM http %s response: %s", response.status_code, response.text)
+
+    @contextmanager
+    def route_context(self, **metadata: Any):
+        token: Token[dict[str, Any]] = self._route_metadata_var.set(dict(metadata))
+        try:
+            yield
+        finally:
+            self._route_metadata_var.reset(token)
 
     async def chat(self, messages: list[dict[str, str]], timeout: float | None = None) -> str:
         """
@@ -77,10 +90,12 @@ class LLMClient:
         timeout_seconds = timeout if timeout is not None else self._settings.timeout
         start = time.perf_counter()
         status = "success"
+        route_metadata = self._route_metadata_var.get({})
+        model_name = str(route_metadata.get("model_selected") or self._settings.model)
         try:
             response = await asyncio.wait_for(
                 self._client.chat.completions.create(
-                    model=self._settings.model,
+                    model=model_name,
                     messages=cast(list[ChatCompletionMessageParam], messages),
                     temperature=self._settings.temperature,
                     max_tokens=self._settings.max_tokens,
@@ -107,7 +122,7 @@ class LLMClient:
         finally:
             duration = time.perf_counter() - start
             record_llm_call("chat", status, duration)
-        self._capture_usage(response)
+        self._capture_usage(response, duration, route_metadata)
         return response.choices[0].message.content or ""
 
     def consume_last_usage(self) -> dict[str, Any] | None:
@@ -115,12 +130,12 @@ class LLMClient:
         self._last_usage = None
         return value
 
-    def _capture_usage(self, response: Any) -> None:
+    def _capture_usage(self, response: Any, duration_seconds: float, route_metadata: dict[str, Any]) -> None:
         usage = getattr(response, "usage", None)
         total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-        model = str(getattr(response, "model", "") or self._settings.model)
+        model = str(getattr(response, "model", "") or route_metadata.get("model_selected") or self._settings.model)
         self._last_usage = {
             "model": model,
             "token_count": total_tokens,
@@ -128,6 +143,8 @@ class LLMClient:
             "completion_tokens": completion_tokens,
             "cost": 0.0,
             "estimated": total_tokens <= 0,
+            "latency_ms": int(duration_seconds * 1000),
+            "metadata": dict(route_metadata or {}),
             "ts": time.time(),
         }
 

@@ -19,6 +19,10 @@ def test_file_pipeline_defaults_safe() -> None:
     assert settings.file_context.injection_enabled is False
     assert settings.usage_log.enabled is False
     assert settings.usage_log.fail_open is True
+    assert settings.ab_routing.enabled is False
+    assert settings.ab_routing.ratio == 0.0
+    assert settings.ocr.enabled is False
+    assert settings.ocr.provider == "none"
 
 
 def test_file_pipeline_env_overrides(monkeypatch) -> None:
@@ -35,6 +39,14 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("USAGE_LOG_ENABLED", "true")
     monkeypatch.setenv("USAGE_LOG_PATH", "workspace/usage/custom-{date}.jsonl")
     monkeypatch.setenv("USAGE_LOG_FAIL_OPEN", "false")
+    monkeypatch.setenv("AB_ROUTING_ENABLED", "true")
+    monkeypatch.setenv("AB_ROUTING_RATIO", "0.2")
+    monkeypatch.setenv("AB_ROUTING_MODEL_A", "model-small")
+    monkeypatch.setenv("AB_ROUTING_MODEL_B", "model-large")
+    monkeypatch.setenv("OCR_ENABLED", "true")
+    monkeypatch.setenv("OCR_PROVIDER", "mineru")
+    monkeypatch.setenv("OCR_API_KEY", "ocr-key")
+    monkeypatch.setenv("OCR_API_BASE", "https://ocr.example.com")
 
     settings = load_settings(config_path="/path/not/exists/config.yaml")
 
@@ -49,3 +61,11 @@ def test_file_pipeline_env_overrides(monkeypatch) -> None:
     assert settings.usage_log.enabled is True
     assert settings.usage_log.path == "workspace/usage/custom-{date}.jsonl"
     assert settings.usage_log.fail_open is False
+    assert settings.ab_routing.enabled is True
+    assert settings.ab_routing.ratio == 0.2
+    assert settings.ab_routing.model_a == "model-small"
+    assert settings.ab_routing.model_b == "model-large"
+    assert settings.ocr.enabled is True
+    assert settings.ocr.provider == "mineru"
+    assert settings.ocr.api_key == "ocr-key"
+    assert settings.ocr.api_base == "https://ocr.example.com"

@@ -22,7 +22,7 @@ def build_file_unavailable_guidance(reason: str = "") -> str:
         return "已收到文件，但文件体积超过当前限制，请压缩后重试。"
     if reason_key == "unsupported_file_type":
         return "已收到文件，但当前仅支持 PDF/Word/TXT/Markdown/CSV。"
-    if reason_key in {"extractor_disabled", "extractor_unconfigured"}:
+    if reason_key in {"extractor_disabled", "extractor_unconfigured", "ocr_unconfigured"}:
         return "已收到文件，但当前未开启解析能力，请稍后再试或补充文字说明。"
     return "已收到文件，但暂时无法完成解析。请稍后重试或直接描述你的问题。"
 
@@ -30,6 +30,7 @@ def build_file_unavailable_guidance(reason: str = "") -> str:
 async def resolve_file_markdown(
     attachments: list[Any],
     settings: Any,
+    message_type: str = "file",
 ) -> tuple[str, str]:
     if not attachments:
         return "", ""
@@ -41,6 +42,7 @@ async def resolve_file_markdown(
     extractor = ExternalFileExtractor(
         settings=settings.file_extractor,
         timeout_seconds=int(settings.file_pipeline.timeout_seconds),
+        ocr_settings=getattr(settings, "ocr", None),
     )
     result = await extractor.extract(
         ExtractorRequest(
@@ -48,6 +50,7 @@ async def resolve_file_markdown(
             file_name=attachment.file_name,
             file_type=attachment.file_type,
             source_url=attachment.source_url,
+            message_type=message_type,
         )
     )
     if result.success:

@@ -212,6 +212,18 @@ usage_log:
   path: ${USAGE_LOG_PATH:-workspace/usage/usage_log-{date}.jsonl}
   fail_open: ${USAGE_LOG_FAIL_OPEN:-true}
 
+ab_routing:
+  enabled: ${AB_ROUTING_ENABLED:-false}
+  ratio: ${AB_ROUTING_RATIO:-0.0}
+  model_a: ${AB_ROUTING_MODEL_A:-}
+  model_b: ${AB_ROUTING_MODEL_B:-}
+
+ocr:
+  enabled: ${OCR_ENABLED:-false}
+  provider: ${OCR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${OCR_API_KEY:-}
+  api_base: ${OCR_API_BASE:-}
+
 # ------------------------------------------------------------
 # Webhook 配置
 # ------------------------------------------------------------

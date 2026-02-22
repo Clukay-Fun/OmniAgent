@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.usage_report import aggregate_usage, load_usage_records
+from tools.usage_report import aggregate_usage, load_usage_records, render_report
 
 
 def test_load_usage_records_skips_malformed_and_filters_date(tmp_path: Path) -> None:
@@ -23,9 +23,29 @@ def test_load_usage_records_skips_malformed_and_filters_date(tmp_path: Path) -> 
 
 def test_aggregate_usage_groups_user_skill_and_model() -> None:
     records = [
-        {"user_id": "u1", "skill": "QuerySkill", "model": "m1", "token_count": 70},
-        {"user_id": "u2", "skill": "QuerySkill", "model": "m2", "token_count": 20},
-        {"user_id": "u1", "skill": "SummarySkill", "model": "m1", "token_count": 30},
+        {
+            "user_id": "u1",
+            "skill": "QuerySkill",
+            "model": "m1",
+            "token_count": 70,
+            "latency_ms": 100,
+            "metadata": {"route_label": "ab_simple", "complexity": "simple"},
+        },
+        {
+            "user_id": "u2",
+            "skill": "QuerySkill",
+            "model": "m2",
+            "token_count": 20,
+            "metadata": {"route_label": "primary_default", "complexity": "medium"},
+        },
+        {
+            "user_id": "u1",
+            "skill": "SummarySkill",
+            "model": "m1",
+            "token_count": 30,
+            "latency_ms": 300,
+            "metadata": {"route_label": "ab_complex", "complexity": "complex"},
+        },
     ]
 
     data = aggregate_usage(records)
@@ -34,4 +54,18 @@ def test_aggregate_usage_groups_user_skill_and_model() -> None:
     assert data["total_tokens"] == 120
     assert data["by_user"]["u1"] == 100
     assert data["by_skill"]["QuerySkill"] == 90
-    assert data["by_model"]["m1"] == 2
+    assert data["by_model"]["m1"]["calls"] == 2
+    assert data["by_model"]["m1"]["tokens"] == 100
+    assert data["by_model"]["m1"]["avg_latency_ms"] == 200
+    assert data["by_route"]["ab_simple"] == 1
+    assert data["by_complexity"]["complex"] == 1
+
+
+def test_render_report_handles_missing_fields_robustly(tmp_path: Path) -> None:
+    records = [{"user_id": "u1", "skill": "QuerySkill", "model": "m1"}]
+    aggregated = aggregate_usage(records)
+
+    text = render_report(aggregated, "2026-02-22", tmp_path / "usage.jsonl")
+
+    assert "Model comparison:" in text
+    assert "Route distribution:" in text

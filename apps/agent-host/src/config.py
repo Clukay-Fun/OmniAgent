@@ -207,6 +207,20 @@ class UsageLogSettings(BaseModel):
     fail_open: bool = True
 
 
+class ABRoutingSettings(BaseModel):
+    enabled: bool = False
+    ratio: float = 0.0
+    model_a: str | None = None
+    model_b: str | None = None
+
+
+class OCRSettings(BaseModel):
+    enabled: bool = False
+    provider: str = "none"
+    api_key: str | None = None
+    api_base: str | None = None
+
+
 class CleanupSettings(BaseModel):
     interval_seconds: int = 300
     enabled: bool = True
@@ -365,6 +379,8 @@ class Settings(BaseModel):
     file_extractor: FileExtractorSettings = Field(default_factory=FileExtractorSettings)
     file_context: FileContextSettings = Field(default_factory=FileContextSettings)
     usage_log: UsageLogSettings = Field(default_factory=UsageLogSettings)
+    ab_routing: ABRoutingSettings = Field(default_factory=ABRoutingSettings)
+    ocr: OCRSettings = Field(default_factory=OCRSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -496,6 +512,14 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "USAGE_LOG_ENABLED": ["usage_log", "enabled"],
         "USAGE_LOG_PATH": ["usage_log", "path"],
         "USAGE_LOG_FAIL_OPEN": ["usage_log", "fail_open"],
+        "AB_ROUTING_ENABLED": ["ab_routing", "enabled"],
+        "AB_ROUTING_RATIO": ["ab_routing", "ratio"],
+        "AB_ROUTING_MODEL_A": ["ab_routing", "model_a"],
+        "AB_ROUTING_MODEL_B": ["ab_routing", "model_b"],
+        "OCR_ENABLED": ["ocr", "enabled"],
+        "OCR_PROVIDER": ["ocr", "provider"],
+        "OCR_API_KEY": ["ocr", "api_key"],
+        "OCR_API_BASE": ["ocr", "api_base"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

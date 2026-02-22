@@ -49,20 +49,60 @@ def load_usage_records(path: Path, selected_date: str) -> list[dict[str, Any]]:
 def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
     by_user: Counter[str] = Counter()
     by_skill: Counter[str] = Counter()
-    by_model: Counter[str] = Counter()
+    by_route: Counter[str] = Counter()
+    by_complexity: Counter[str] = Counter()
+    by_model_calls: Counter[str] = Counter()
+    by_model_tokens: Counter[str] = Counter()
+    by_model_latency_sum: Counter[str] = Counter()
+    by_model_latency_count: Counter[str] = Counter()
 
     for row in records:
         token_count = int(row.get("token_count") or 0)
         by_user[str(row.get("user_id") or "unknown")] += token_count
         by_skill[str(row.get("skill") or "unknown")] += token_count
-        by_model[str(row.get("model") or "unknown")] += 1
+        model = str(row.get("model") or "unknown")
+        by_model_calls[model] += 1
+        by_model_tokens[model] += token_count
+
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+        route_label = str(row.get("route_label") or metadata.get("route_label") or "unknown")
+        complexity = str(row.get("complexity") or metadata.get("complexity") or "unknown")
+        by_route[route_label] += 1
+        by_complexity[complexity] += 1
+
+        latency_value = row.get("latency_ms")
+        if latency_value is None:
+            latency_value = metadata.get("latency_ms")
+        try:
+            latency_ms = float(latency_value if latency_value is not None else 0.0)
+        except (TypeError, ValueError):
+            latency_ms = 0.0
+        if latency_ms > 0:
+            by_model_latency_sum[model] += int(latency_ms)
+            by_model_latency_count[model] += 1
+
+    model_stats: dict[str, dict[str, float | int | None]] = {}
+    for model, calls in by_model_calls.items():
+        latency_count = int(by_model_latency_count.get(model, 0))
+        latency_sum = int(by_model_latency_sum.get(model, 0))
+        avg_latency_ms: int | None = None
+        if latency_count > 0:
+            avg_latency_ms = int(round(latency_sum / latency_count))
+        model_stats[model] = {
+            "calls": int(calls),
+            "tokens": int(by_model_tokens.get(model, 0)),
+            "avg_latency_ms": avg_latency_ms,
+        }
 
     return {
         "total_records": len(records),
         "total_tokens": sum(by_user.values()),
         "by_user": by_user,
         "by_skill": by_skill,
-        "by_model": by_model,
+        "by_model": model_stats,
+        "by_route": by_route,
+        "by_complexity": by_complexity,
     }
 
 
@@ -88,10 +128,31 @@ def render_report(aggregated: dict[str, Any], selected_date: str, path: Path) ->
         lines.append("- (none)")
 
     lines.append("")
-    lines.append("Model distribution:")
-    for model, count in aggregated["by_model"].most_common():
-        lines.append(f"- {model}: {count}")
+    lines.append("Model comparison:")
+    model_items = sorted(aggregated["by_model"].items(), key=lambda item: int(item[1].get("calls") or 0), reverse=True)
+    for model, stats in model_items:
+        calls = int(stats.get("calls") or 0)
+        tokens = int(stats.get("tokens") or 0)
+        avg_latency = stats.get("avg_latency_ms")
+        if avg_latency is None:
+            lines.append(f"- {model}: calls={calls}, tokens={tokens}, avg_latency_ms=n/a")
+        else:
+            lines.append(f"- {model}: calls={calls}, tokens={tokens}, avg_latency_ms={int(avg_latency)}")
     if not aggregated["by_model"]:
+        lines.append("- (none)")
+
+    lines.append("")
+    lines.append("Route distribution:")
+    for route_label, count in aggregated["by_route"].most_common():
+        lines.append(f"- {route_label}: {count}")
+    if not aggregated["by_route"]:
+        lines.append("- (none)")
+
+    lines.append("")
+    lines.append("Complexity distribution:")
+    for complexity, count in aggregated["by_complexity"].most_common():
+        lines.append(f"- {complexity}: {count}")
+    if not aggregated["by_complexity"]:
         lines.append("- (none)")
 
     return "\n".join(lines)

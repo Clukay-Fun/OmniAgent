@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from src.config import FileExtractorSettings
+from src.config import FileExtractorSettings, OCRSettings
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ class ExtractorRequest:
     file_name: str
     file_type: str
     source_url: str
+    message_type: str = "file"
 
 
 @dataclass
@@ -31,12 +32,18 @@ class ExtractorResult:
 
 
 class ExternalFileExtractor:
-    def __init__(self, settings: FileExtractorSettings, timeout_seconds: int = 12) -> None:
+    def __init__(
+        self,
+        settings: FileExtractorSettings,
+        timeout_seconds: int = 12,
+        ocr_settings: OCRSettings | None = None,
+    ) -> None:
         self._settings = settings
         self._timeout_seconds = max(2, int(timeout_seconds))
+        self._ocr = ocr_settings or OCRSettings()
 
     async def extract(self, request: ExtractorRequest) -> ExtractorResult:
-        provider = self._normalize_provider(self._settings.provider)
+        provider, mode = self._select_provider(request)
         if not self._settings.enabled or provider == "none":
             return ExtractorResult(
                 success=False,
@@ -47,12 +54,17 @@ class ExternalFileExtractor:
 
         api_key = str(self._settings.api_key or "").strip()
         api_base = str(self._settings.api_base or "").strip()
+        reason_unconfigured = "extractor_unconfigured"
+        if mode == "ocr":
+            api_key = str(self._ocr.api_key or "").strip()
+            api_base = str(self._ocr.api_base or "").strip()
+            reason_unconfigured = "ocr_unconfigured"
         if not api_key or not api_base:
             return ExtractorResult(
                 success=False,
                 available=False,
                 provider=provider,
-                reason="extractor_unconfigured",
+                reason=reason_unconfigured,
             )
 
         start = time.perf_counter()
@@ -62,6 +74,7 @@ class ExternalFileExtractor:
                 request=request,
                 api_base=api_base,
                 api_key=api_key,
+                mode=mode,
             )
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
             logger.info(
@@ -105,6 +118,7 @@ class ExternalFileExtractor:
         request: ExtractorRequest,
         api_base: str,
         api_key: str,
+        mode: str,
     ) -> str:
         last_error: Exception | None = None
         attempts = 2
@@ -116,6 +130,7 @@ class ExternalFileExtractor:
                         request=request,
                         api_base=api_base,
                         api_key=api_key,
+                        mode=mode,
                     ),
                     timeout=float(self._timeout_seconds),
                 )
@@ -133,12 +148,13 @@ class ExternalFileExtractor:
         request: ExtractorRequest,
         api_base: str,
         api_key: str,
+        mode: str,
     ) -> str:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        payload = self._build_payload(request)
+        payload = self._build_payload(request, mode=mode)
         timeout = httpx.Timeout(self._timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             if provider == "mineru":
@@ -155,14 +171,17 @@ class ExternalFileExtractor:
             return markdown
         raise ValueError("empty_markdown")
 
-    def _build_payload(self, request: ExtractorRequest) -> dict[str, Any]:
-        return {
+    def _build_payload(self, request: ExtractorRequest, mode: str) -> dict[str, Any]:
+        payload = {
             "source_url": request.source_url,
             "file_key": request.file_key,
             "file_name": request.file_name,
             "file_type": request.file_type,
             "target_format": "markdown",
         }
+        if mode == "ocr":
+            payload["mode"] = "ocr"
+        return payload
 
     def _extract_markdown(self, payload: Any) -> str:
         if not isinstance(payload, dict):
@@ -182,3 +201,11 @@ class ExternalFileExtractor:
         if normalized not in {"none", "mineru", "llm"}:
             return "none"
         return normalized
+
+    def _select_provider(self, request: ExtractorRequest) -> tuple[str, str]:
+        message_type = str(getattr(request, "message_type", "") or "").strip().lower()
+        if message_type == "image" and bool(getattr(self._ocr, "enabled", False)):
+            provider = self._normalize_provider(getattr(self._ocr, "provider", "none"))
+            if provider != "none":
+                return provider, "ocr"
+        return self._normalize_provider(self._settings.provider), "extract"

@@ -123,7 +123,11 @@ async def handle_message_async(
         
         file_markdown = ""
         if attachments:
-            file_markdown, guidance = await resolve_file_markdown(attachments=attachments, settings=settings)
+            file_markdown, guidance = await resolve_file_markdown(
+                attachments=attachments,
+                settings=settings,
+                message_type=message_type,
+            )
             if guidance and not file_markdown and message_type in {"file", "audio", "image"}:
                 text = guidance
         elif message_type in {"file", "audio", "image"}:

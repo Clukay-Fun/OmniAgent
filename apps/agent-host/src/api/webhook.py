@@ -630,7 +630,11 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     file_markdown = ""
     direct_reply_text = ""
     if normalized.attachments:
-        file_markdown, guidance = await resolve_file_markdown(attachments=normalized.attachments, settings=settings)
+        file_markdown, guidance = await resolve_file_markdown(
+            attachments=normalized.attachments,
+            settings=settings,
+            message_type=normalized.message_type,
+        )
         if guidance and not file_markdown and normalized.message_type in {"file", "audio", "image"}:
             direct_reply_text = guidance
     elif normalized.message_type in {"file", "audio", "image"}:
