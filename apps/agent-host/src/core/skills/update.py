@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from src.core.skills.base import BaseSkill
-from src.core.skills.data_writer import DataWriter, build_default_data_writer
+from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
 from src.core.skills.table_adapter import TableAdapter
@@ -41,7 +41,8 @@ class UpdateSkill(BaseSkill):
         mcp_client: Any,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
-        data_writer: DataWriter | None = None,
+        *,
+        data_writer: DataWriter,
     ) -> None:
         """
         初始化更新技能
@@ -53,7 +54,9 @@ class UpdateSkill(BaseSkill):
         self._mcp = mcp_client
         self._settings = settings
         self._skills_config = skills_config or {}
-        self._data_writer = data_writer or build_default_data_writer(mcp_client)
+        if data_writer is None:
+            raise ValueError("UpdateSkill requires an injected data_writer")
+        self._data_writer = data_writer
         self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
         self._linker = MultiTableLinker(
             mcp_client,

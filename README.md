@@ -79,6 +79,30 @@ python run_dev.py up --all
 
 容器名冲突或历史残留时，先执行 `python run_dev.py clean` 再 `up`。
 
+## 启动装配要求
+
+`AgentOrchestrator` 初始化时必须注入 `data_writer` 实例，否则启动会直接报错。
+
+```python
+from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
+
+
+writer = BitableWriter(mcp_client)
+orchestrator = AgentOrchestrator(data_writer=writer, ...)
+```
+
+如需在测试中使用 mock：
+
+```python
+from unittest.mock import AsyncMock
+
+from src.core.skills.data_writer import DataWriter
+
+
+mock_writer = AsyncMock(spec=DataWriter)
+orchestrator = AgentOrchestrator(data_writer=mock_writer, ...)
+```
+
 默认端口：
 
 - MCP：`8081`

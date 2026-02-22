@@ -13,6 +13,7 @@ from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
@@ -41,6 +42,7 @@ class DeleteSkill(BaseSkill):
         mcp_client: Any,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
+        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化删除技能
@@ -53,8 +55,10 @@ class DeleteSkill(BaseSkill):
         self._mcp = mcp_client
         self._settings = settings
         self._skills_config = skills_config or {}
+        if data_writer is None:
+            raise ValueError("DeleteSkill requires an injected data_writer")
         self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
-        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
+        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})

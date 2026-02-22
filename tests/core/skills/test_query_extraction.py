@@ -10,11 +10,20 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.core.skills.query import QuerySkill  # noqa: E402
+from src.core.skills.data_writer import WriteResult  # noqa: E402
 from src.utils.time_parser import parse_time_range  # noqa: E402
 
 
+class _NoopWriter:
+    async def create(self, table_id, fields, *, idempotency_key=None):
+        return WriteResult(success=True, record_id="rec_noop", fields=fields)
+
+    async def update(self, table_id, record_id, fields, *, idempotency_key=None):
+        return WriteResult(success=True, record_id=record_id, fields=fields)
+
+
 def _build_skill() -> QuerySkill:
-    return QuerySkill(mcp_client=object(), skills_config={})
+    return QuerySkill(mcp_client=object(), skills_config={}, data_writer=_NoopWriter())
 
 
 def test_extract_entity_keyword_strips_action_noise() -> None:

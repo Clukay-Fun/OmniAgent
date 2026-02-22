@@ -176,8 +176,8 @@ class AgentOrchestrator:
         session_manager: SessionManager,
         mcp_client: MCPClient,
         llm_client: LLMClient,
+        data_writer: DataWriter,
         skills_config_path: str = "config/skills.yaml",
-        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化编排器
@@ -193,7 +193,9 @@ class AgentOrchestrator:
         self._sessions = session_manager
         self._mcp = mcp_client
         self._llm = llm_client
-        self._data_writer = data_writer
+        if data_writer is None:
+            raise ValueError("AgentOrchestrator requires an injected data_writer")
+        self._data_writer: DataWriter = data_writer
         self._context_trim_tokens = max(256, min(int(settings.session.max_context_tokens), 3800))
 
         # ============================================
@@ -364,6 +366,7 @@ class AgentOrchestrator:
                 settings=self._settings,
                 llm_client=self._task_llm,
                 skills_config=self._skills_config,
+                data_writer=self._data_writer,
             ),
             CreateSkill(
                 mcp_client=self._mcp,
@@ -381,6 +384,7 @@ class AgentOrchestrator:
                 mcp_client=self._mcp,
                 settings=self._settings,
                 skills_config=self._skills_config,
+                data_writer=self._data_writer,
             ),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
             ReminderSkill(db_client=self._db, mcp_client=self._mcp, skills_config=self._skills_config),

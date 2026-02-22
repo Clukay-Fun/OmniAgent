@@ -6,6 +6,8 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
@@ -13,6 +15,7 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.core.skills.create import CreateSkill  # noqa: E402
 from src.core.skills.data_writer import WriteResult  # noqa: E402
+from src.core.skills.multi_table_linker import MultiTableLinker  # noqa: E402
 from src.core.skills.update import UpdateSkill  # noqa: E402
 from src.core.types import SkillContext  # noqa: E402
 
@@ -152,3 +155,18 @@ def test_create_skill_writer_failure_returns_skill_failure() -> None:
 
     assert result.success is False
     assert "boom" in result.message
+
+
+def test_create_skill_requires_data_writer_injection() -> None:
+    with pytest.raises(TypeError, match="data_writer"):
+        CreateSkill(mcp_client=object(), skills_config={})
+
+
+def test_update_skill_requires_data_writer_injection() -> None:
+    with pytest.raises(TypeError, match="data_writer"):
+        UpdateSkill(mcp_client=object(), skills_config={})
+
+
+def test_multi_table_linker_requires_data_writer_injection() -> None:
+    with pytest.raises(TypeError, match="data_writer"):
+        MultiTableLinker(mcp_client=object(), skills_config={})

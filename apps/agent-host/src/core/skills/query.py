@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.data_writer import DataWriter
 from src.core.skills.field_formatter import format_field_value
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.schema_cache import SchemaCache, get_global_schema_cache
@@ -49,6 +50,7 @@ class QuerySkill(BaseSkill):
         llm_client: Any = None,
         skills_config: dict[str, Any] | None = None,
         schema_cache: SchemaCache | None = None,
+        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化查询技能
@@ -62,7 +64,9 @@ class QuerySkill(BaseSkill):
         self._llm = llm_client
         self._skills_config = skills_config or {}
         self._schema_cache = schema_cache or get_global_schema_cache()
-        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
+        if data_writer is None:
+            raise ValueError("QuerySkill requires an injected data_writer")
+        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
 
         self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
         self._alias_lookup = self._build_alias_lookup(self._table_aliases)

@@ -14,7 +14,7 @@ import re
 import time
 from typing import Any
 
-from src.core.skills.data_writer import DataWriter, build_default_data_writer
+from src.core.skills.data_writer import DataWriter
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,13 @@ class MultiTableLinker:
         self,
         mcp_client: Any,
         skills_config: dict[str, Any] | None = None,
-        data_writer: DataWriter | None = None,
+        *,
+        data_writer: DataWriter,
     ) -> None:
         self._mcp = mcp_client
-        self._data_writer = data_writer or build_default_data_writer(mcp_client)
+        if data_writer is None:
+            raise ValueError("MultiTableLinker requires an injected data_writer")
+        self._data_writer = data_writer
         self._skills_config = skills_config or {}
         cfg = self._skills_config.get("multi_table") if isinstance(self._skills_config, dict) else {}
         self._enabled = bool((cfg or {}).get("enabled", False))
