@@ -185,6 +185,7 @@ class FilePipelineSettings(BaseModel):
     enabled: bool = False
     max_bytes: int = 5 * 1024 * 1024
     timeout_seconds: int = 12
+    metrics_enabled: bool = True
 
 
 class FileExtractorSettings(BaseModel):
@@ -192,6 +193,11 @@ class FileExtractorSettings(BaseModel):
     provider: str = "none"
     api_key: str | None = None
     api_base: str | None = None
+    mineru_path: str = "/v1/convert"
+    llm_path: str = "/v1/document/convert"
+    auth_style: str = "bearer"
+    api_key_header: str = "X-API-Key"
+    api_key_prefix: str = "Bearer "
     fail_open: bool = True
 
 
@@ -205,6 +211,8 @@ class UsageLogSettings(BaseModel):
     enabled: bool = False
     path: str = "workspace/usage/usage_log-{date}.jsonl"
     fail_open: bool = True
+    model_pricing_path: str = ""
+    model_pricing_json: str = ""
 
 
 class ABRoutingSettings(BaseModel):
@@ -219,6 +227,11 @@ class OCRSettings(BaseModel):
     provider: str = "none"
     api_key: str | None = None
     api_base: str | None = None
+    mineru_path: str = "/v1/convert"
+    llm_path: str = "/v1/document/convert"
+    auth_style: str = "bearer"
+    api_key_header: str = "X-API-Key"
+    api_key_prefix: str = "Bearer "
 
 
 class CleanupSettings(BaseModel):
@@ -501,10 +514,16 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FILE_PIPELINE_ENABLED": ["file_pipeline", "enabled"],
         "FILE_PIPELINE_MAX_BYTES": ["file_pipeline", "max_bytes"],
         "FILE_PIPELINE_TIMEOUT_SECONDS": ["file_pipeline", "timeout_seconds"],
+        "FILE_PIPELINE_METRICS_ENABLED": ["file_pipeline", "metrics_enabled"],
         "FILE_EXTRACTOR_ENABLED": ["file_extractor", "enabled"],
         "FILE_EXTRACTOR_PROVIDER": ["file_extractor", "provider"],
         "FILE_EXTRACTOR_API_KEY": ["file_extractor", "api_key"],
         "FILE_EXTRACTOR_API_BASE": ["file_extractor", "api_base"],
+        "FILE_EXTRACTOR_MINERU_PATH": ["file_extractor", "mineru_path"],
+        "FILE_EXTRACTOR_LLM_PATH": ["file_extractor", "llm_path"],
+        "FILE_EXTRACTOR_AUTH_STYLE": ["file_extractor", "auth_style"],
+        "FILE_EXTRACTOR_API_KEY_HEADER": ["file_extractor", "api_key_header"],
+        "FILE_EXTRACTOR_API_KEY_PREFIX": ["file_extractor", "api_key_prefix"],
         "FILE_EXTRACTOR_FAIL_OPEN": ["file_extractor", "fail_open"],
         "FILE_CONTEXT_INJECTION_ENABLED": ["file_context", "injection_enabled"],
         "FILE_CONTEXT_MAX_CHARS": ["file_context", "max_chars"],
@@ -512,6 +531,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "USAGE_LOG_ENABLED": ["usage_log", "enabled"],
         "USAGE_LOG_PATH": ["usage_log", "path"],
         "USAGE_LOG_FAIL_OPEN": ["usage_log", "fail_open"],
+        "USAGE_MODEL_PRICING_PATH": ["usage_log", "model_pricing_path"],
+        "USAGE_MODEL_PRICING_JSON": ["usage_log", "model_pricing_json"],
         "AB_ROUTING_ENABLED": ["ab_routing", "enabled"],
         "AB_ROUTING_RATIO": ["ab_routing", "ratio"],
         "AB_ROUTING_MODEL_A": ["ab_routing", "model_a"],
@@ -520,6 +541,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "OCR_PROVIDER": ["ocr", "provider"],
         "OCR_API_KEY": ["ocr", "api_key"],
         "OCR_API_BASE": ["ocr", "api_base"],
+        "OCR_MINERU_PATH": ["ocr", "mineru_path"],
+        "OCR_LLM_PATH": ["ocr", "llm_path"],
+        "OCR_AUTH_STYLE": ["ocr", "auth_style"],
+        "OCR_API_KEY_HEADER": ["ocr", "api_key_header"],
+        "OCR_API_KEY_PREFIX": ["ocr", "api_key_prefix"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

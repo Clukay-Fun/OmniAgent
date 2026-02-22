@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 import sys
 
+import httpx
+
 
 ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
@@ -79,3 +81,110 @@ def test_extractor_falls_back_to_file_provider_when_ocr_disabled() -> None:
     )
 
     assert result.provider == "mineru"
+
+
+def test_extractor_parses_nested_markdown_variants(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "data": {
+                    "choices": [
+                        {"message": {"content": "# 提取结果\nhello"}},
+                    ]
+                }
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    extractor = ExternalFileExtractor(
+        settings=FileExtractorSettings(
+            enabled=True,
+            provider="llm",
+            api_key="k",
+            api_base="https://api.example.com",
+            llm_path="/custom/document/convert",
+            auth_style="x_api_key",
+            api_key_header="X-API-Key",
+            fail_open=True,
+        ),
+    )
+
+    result = asyncio.run(
+        extractor.extract(
+            ExtractorRequest(file_key="f", file_name="a.pdf", file_type="pdf", source_url="https://example.com/a.pdf")
+        )
+    )
+
+    assert result.success is True
+    assert result.markdown.startswith("# 提取结果")
+    assert captured["url"] == "https://api.example.com/custom/document/convert"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers.get("X-API-Key") == "k"
+
+
+def test_extractor_maps_http_error_to_reason(monkeypatch) -> None:
+    class _FakeResponse:
+        status_code = 401
+        text = '{"error_code":"invalid_api_key"}'
+
+        def json(self):
+            return {"error_code": "invalid_api_key"}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            del url, headers, json
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    extractor = ExternalFileExtractor(
+        settings=FileExtractorSettings(
+            enabled=True,
+            provider="mineru",
+            api_key="k",
+            api_base="https://mineru.example.com",
+            fail_open=True,
+        ),
+    )
+
+    result = asyncio.run(
+        extractor.extract(
+            ExtractorRequest(file_key="f", file_name="a.pdf", file_type="pdf", source_url="https://example.com/a.pdf")
+        )
+    )
+
+    assert result.success is False
+    assert result.reason == "extractor_auth_failed_fail_open"

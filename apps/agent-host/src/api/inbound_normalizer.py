@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from src.utils.metrics import record_file_pipeline
+
 
 _SUPPORTED_FILE_EXTENSIONS = {
     "pdf",
@@ -55,12 +57,18 @@ def normalize_content(
     max_chars: int = 500,
     file_pipeline_enabled: bool = False,
     max_file_bytes: int = 5 * 1024 * 1024,
+    metrics_enabled: bool = True,
 ) -> NormalizedInput:
     """将飞书消息 content 标准化为文本输入。"""
     normalized_type = str(message_type or "").strip().lower()
     segments: list[str]
 
     attachments: list[NormalizedAttachment] = []
+
+    def _record_ingress(status: str) -> None:
+        if not metrics_enabled:
+            return
+        record_file_pipeline("ingress", status, "none")
 
     if normalized_type == "text":
         segments = [_extract_text(content)]
@@ -70,14 +78,38 @@ def normalize_content(
         segments = ["[收到文件消息]"]
         if file_pipeline_enabled:
             attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            if attachments and attachments[0].accepted:
+                _record_ingress("accepted")
+            elif attachments:
+                _record_ingress("rejected")
+            else:
+                _record_ingress("rejected")
+        else:
+            _record_ingress("skipped")
     elif normalized_type == "audio":
         segments = ["[收到语音消息]"]
         if file_pipeline_enabled:
             attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            if attachments and attachments[0].accepted:
+                _record_ingress("accepted")
+            elif attachments:
+                _record_ingress("rejected")
+            else:
+                _record_ingress("rejected")
+        else:
+            _record_ingress("skipped")
     elif normalized_type == "image":
         segments = ["[收到图片消息]"]
         if file_pipeline_enabled:
             attachments = _extract_attachment(content, max_file_bytes=max_file_bytes)
+            if attachments and attachments[0].accepted:
+                _record_ingress("accepted")
+            elif attachments:
+                _record_ingress("rejected")
+            else:
+                _record_ingress("rejected")
+        else:
+            _record_ingress("skipped")
     else:
         segments = [_extract_text(content)]
 

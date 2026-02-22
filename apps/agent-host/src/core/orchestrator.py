@@ -23,6 +23,7 @@ import yaml
 from src.utils.logger import set_request_context, clear_request_context, generate_request_id
 from src.utils.metrics import (
     record_chitchat_guard,
+    record_file_pipeline,
     record_intent_parse,
     record_request,
     record_usage_log_write,
@@ -63,6 +64,7 @@ from src.utils.time_parser import parse_time_range
 from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorMemoryManager
 from src.skills_market import load_market_skills
 from src.core.usage_logger import UsageLogger, UsageRecord, now_iso
+from src.core.usage_cost import compute_usage_cost, load_model_pricing
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +268,10 @@ class AgentOrchestrator:
             enabled=bool(getattr(settings.usage_log, "enabled", False)),
             path_template=str(getattr(settings.usage_log, "path", "workspace/usage/usage_log-{date}.jsonl")),
             fail_open=bool(getattr(settings.usage_log, "fail_open", True)),
+        )
+        self._usage_model_pricing = load_model_pricing(
+            model_pricing_path=str(getattr(settings.usage_log, "model_pricing_path", "") or ""),
+            model_pricing_json=str(getattr(settings.usage_log, "model_pricing_json", "") or ""),
         )
         self._model_router = ModelRouter(
             enabled=bool(getattr(settings.ab_routing, "enabled", False)),
@@ -583,6 +589,7 @@ class AgentOrchestrator:
         chat_type: str | None = None,
         user_profile: Any = None,
         file_markdown: str = "",
+        file_provider: str = "none",
     ) -> dict[str, Any]:
         """
         处理用户消息
@@ -724,6 +731,7 @@ class AgentOrchestrator:
                             user_id,
                             query=text,
                             file_markdown=file_markdown,
+                            file_provider=file_provider,
                         )
 
                         planner_start = time.perf_counter()
@@ -929,7 +937,9 @@ class AgentOrchestrator:
         usage = self._drain_latest_llm_usage()
         model = str((usage or {}).get("model") or getattr(getattr(self, "_llm", None), "model_name", ""))
         token_count = int((usage or {}).get("token_count") or 0)
-        cost = float((usage or {}).get("cost") or 0.0)
+        prompt_tokens = int((usage or {}).get("prompt_tokens") or 0)
+        completion_tokens = int((usage or {}).get("completion_tokens") or 0)
+        usage_cost = float((usage or {}).get("cost") or 0.0)
         estimated = bool((usage or {}).get("estimated", True))
         latency_ms = int((usage or {}).get("latency_ms") or 0)
         usage_metadata = (usage or {}).get("metadata") if isinstance(usage, dict) else None
@@ -939,6 +949,17 @@ class AgentOrchestrator:
             "complexity": route_decision.complexity,
             "route_reason": route_decision.reason,
         }
+        computed_cost, computed_estimated, warning_label = compute_usage_cost(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            token_count=token_count,
+            pricing_map=getattr(self, "_usage_model_pricing", {}),
+        )
+        usage_cost = computed_cost
+        estimated = computed_estimated
+        if warning_label:
+            metadata["cost_warning"] = warning_label
         if isinstance(usage_metadata, dict):
             metadata.update({str(k): str(v) for k, v in usage_metadata.items()})
         if latency_ms > 0:
@@ -952,7 +973,9 @@ class AgentOrchestrator:
                     model=model,
                     skill=str(skill_name or "unknown"),
                     token_count=token_count,
-                    cost=cost,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost=usage_cost,
                     usage_source=str(usage_source or "text"),
                     estimated=estimated,
                     metadata=metadata,
@@ -1435,6 +1458,7 @@ class AgentOrchestrator:
         user_id: str,
         query: str | None = None,
         file_markdown: str = "",
+        file_provider: str = "none",
     ) -> dict[str, str]:
         context: dict[str, str] = {
             "soul_prompt": "",
@@ -1478,17 +1502,24 @@ class AgentOrchestrator:
                     context["user_memory"] = vector_hits
 
         context["midterm_memory"] = self._build_midterm_memory_context(user_id)
-        context["file_context"] = self._build_file_context(user_id=user_id, file_markdown=file_markdown)
+        context["file_context"] = self._build_file_context(
+            user_id=user_id,
+            file_markdown=file_markdown,
+            provider=file_provider,
+        )
 
         return context
 
-    def _build_file_context(self, user_id: str, file_markdown: str) -> str:
+    def _build_file_context(self, user_id: str, file_markdown: str, provider: str = "none") -> str:
         del user_id
+        provider_name = str(provider or "none")
         if not bool(getattr(self, "_file_context_enabled", False)):
+            record_file_pipeline("context", "skipped", provider_name)
             return ""
 
         text = str(file_markdown or "").strip()
         if not text:
+            record_file_pipeline("context", "skipped", provider_name)
             return ""
 
         char_budget = max(20, int(getattr(self, "_file_context_max_chars", 2000)))
@@ -1496,9 +1527,11 @@ class AgentOrchestrator:
         token_char_budget = token_budget * 4
         hard_limit = max(8, min(char_budget, token_char_budget))
         if len(text) <= hard_limit:
+            record_file_pipeline("context", "applied", provider_name)
             return text
 
         clipped = text[: max(1, hard_limit - 3)].rstrip()
+        record_file_pipeline("context", "truncated", provider_name)
         return f"{clipped}..."
 
     def _build_midterm_memory_context(self, user_id: str) -> str:

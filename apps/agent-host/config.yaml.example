@@ -194,12 +194,18 @@ file_pipeline:
   enabled: ${FILE_PIPELINE_ENABLED:-false}
   max_bytes: ${FILE_PIPELINE_MAX_BYTES:-5242880}
   timeout_seconds: ${FILE_PIPELINE_TIMEOUT_SECONDS:-12}
+  metrics_enabled: ${FILE_PIPELINE_METRICS_ENABLED:-true}
 
 file_extractor:
   enabled: ${FILE_EXTRACTOR_ENABLED:-false}
   provider: ${FILE_EXTRACTOR_PROVIDER:-none}   # none | mineru | llm
   api_key: ${FILE_EXTRACTOR_API_KEY:-}
   api_base: ${FILE_EXTRACTOR_API_BASE:-}
+  mineru_path: ${FILE_EXTRACTOR_MINERU_PATH:-/v1/convert}
+  llm_path: ${FILE_EXTRACTOR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${FILE_EXTRACTOR_AUTH_STYLE:-bearer}  # bearer | x_api_key | none
+  api_key_header: ${FILE_EXTRACTOR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${FILE_EXTRACTOR_API_KEY_PREFIX:-Bearer }
   fail_open: ${FILE_EXTRACTOR_FAIL_OPEN:-true}
 
 file_context:
@@ -211,6 +217,8 @@ usage_log:
   enabled: ${USAGE_LOG_ENABLED:-false}
   path: ${USAGE_LOG_PATH:-workspace/usage/usage_log-{date}.jsonl}
   fail_open: ${USAGE_LOG_FAIL_OPEN:-true}
+  model_pricing_path: ${USAGE_MODEL_PRICING_PATH:-}
+  model_pricing_json: ${USAGE_MODEL_PRICING_JSON:-}
 
 ab_routing:
   enabled: ${AB_ROUTING_ENABLED:-false}
@@ -223,6 +231,11 @@ ocr:
   provider: ${OCR_PROVIDER:-none}   # none | mineru | llm
   api_key: ${OCR_API_KEY:-}
   api_base: ${OCR_API_BASE:-}
+  mineru_path: ${OCR_MINERU_PATH:-/v1/convert}
+  llm_path: ${OCR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${OCR_AUTH_STYLE:-bearer}
+  api_key_header: ${OCR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${OCR_API_KEY_PREFIX:-Bearer }
 
 # ------------------------------------------------------------
 # Webhook 配置

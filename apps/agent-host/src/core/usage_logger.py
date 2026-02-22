@@ -21,6 +21,8 @@ class UsageRecord:
     token_count: int
     cost: float
     usage_source: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     estimated: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -32,6 +34,8 @@ class UsageRecord:
             "model": self.model,
             "skill": self.skill,
             "token_count": max(0, int(self.token_count)),
+            "prompt_tokens": max(0, int(self.prompt_tokens)),
+            "completion_tokens": max(0, int(self.completion_tokens)),
             "cost": float(self.cost),
             "usage_source": self.usage_source,
             "estimated": bool(self.estimated),

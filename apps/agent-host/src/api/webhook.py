@@ -554,6 +554,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         content=str(message.get("content") or ""),
         file_pipeline_enabled=file_pipeline_enabled,
         max_file_bytes=max_file_bytes,
+        metrics_enabled=bool(getattr(file_pipeline_cfg, "metrics_enabled", True)),
     )
     text = normalized.text
     logger.info(
@@ -628,9 +629,10 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     agent_core = _get_agent_core()
     user_manager = _get_user_manager()
     file_markdown = ""
+    file_provider = "none"
     direct_reply_text = ""
     if normalized.attachments:
-        file_markdown, guidance = await resolve_file_markdown(
+        file_markdown, guidance, file_provider = await resolve_file_markdown(
             attachments=normalized.attachments,
             settings=settings,
             message_type=normalized.message_type,
@@ -673,6 +675,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                 chat_type=chat_type,
                 user_profile=user_profile,  # 传递用户档案
                 file_markdown=file_markdown,
+                file_provider=file_provider,
             )
         
         if chat_id.startswith("test-"):

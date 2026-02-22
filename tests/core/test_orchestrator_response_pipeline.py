@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,7 @@ from src.core.orchestrator import (
 )
 import src.core.orchestrator as orchestrator_module
 from src.core.types import SkillResult
+from src.core.router.model_routing import RoutingDecision
 
 
 def test_outbound_prefers_reply_text_as_text_fallback() -> None:
@@ -242,3 +244,70 @@ def test_build_llm_context_truncates_file_context_by_budget() -> None:
 
     assert context["file_context"].endswith("...")
     assert len(context["file_context"]) <= 12
+
+
+def test_record_usage_log_computes_cost_with_pricing_and_unknown_fallback() -> None:
+    records: list[dict[str, Any]] = []
+
+    class _DummyUsageLogger:
+        def log(self, record):
+            records.append(
+                {
+                    "model": record.model,
+                    "cost": record.cost,
+                    "estimated": record.estimated,
+                    "metadata": record.metadata,
+                }
+            )
+            return True
+
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._usage_logger = _DummyUsageLogger()
+    orchestrator._usage_model_pricing = {
+        "priced-model": orchestrator_module.load_model_pricing(
+            model_pricing_json='{"models":{"priced-model":{"input_per_1k":0.2,"output_per_1k":0.8}}}'
+        )["priced-model"]
+    }
+    usage_payloads = [
+        {
+            "model": "priced-model",
+            "token_count": 200,
+            "prompt_tokens": 100,
+            "completion_tokens": 100,
+            "cost": 0.0,
+            "estimated": True,
+            "latency_ms": 10,
+            "metadata": {},
+        },
+        {
+            "model": "unknown-model",
+            "token_count": 100,
+            "prompt_tokens": 50,
+            "completion_tokens": 50,
+            "cost": 0.0,
+            "estimated": True,
+            "latency_ms": 10,
+            "metadata": {},
+        },
+    ]
+    orchestrator._drain_latest_llm_usage = lambda: usage_payloads.pop(0)
+    orchestrator._llm = SimpleNamespace(model_name="fallback-model")
+
+    route_decision = RoutingDecision(
+        model_selected="priced-model",
+        route_label="primary_default",
+        complexity="medium",
+        reason="default",
+        in_ab_bucket=False,
+        metadata={},
+    )
+
+    orchestrator._record_usage_log("u1", "c1", "QuerySkill", "text", route_decision)
+    orchestrator._record_usage_log("u1", "c1", "QuerySkill", "text", route_decision)
+
+    assert len(records) == 2
+    assert records[0]["estimated"] is False
+    assert float(records[0]["cost"]) > 0.0
+    assert records[1]["estimated"] is True
+    assert float(records[1]["cost"]) == 0.0
+    assert records[1]["metadata"].get("cost_warning") == "unknown_model_pricing"

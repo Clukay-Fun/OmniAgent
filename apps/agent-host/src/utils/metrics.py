@@ -158,6 +158,19 @@ if PROMETHEUS_AVAILABLE:
         "Total usage log write attempts by status",
         ["status"],
     )
+
+    FILE_PIPELINE_STAGE_COUNT = Counter(
+        "file_pipeline_total",
+        "Total file pipeline outcomes by stage/status/provider",
+        ["stage", "status", "provider"],
+    )
+
+    FILE_EXTRACTOR_DURATION = Histogram(
+        "file_extractor_request_duration_seconds",
+        "File extractor request duration in seconds",
+        ["provider"],
+        buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0),
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -199,6 +212,8 @@ else:
     CARD_TEMPLATE_COUNT = DummyMetric()
     STATE_STORE_BACKEND_COUNT = DummyMetric()
     USAGE_LOG_WRITE_COUNT = DummyMetric()
+    FILE_PIPELINE_STAGE_COUNT = DummyMetric()
+    FILE_EXTRACTOR_DURATION = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -292,6 +307,22 @@ def record_state_store_backend(backend: str, status: str) -> None:
 def record_usage_log_write(status: str) -> None:
     """记录 usage log 写入结果。"""
     USAGE_LOG_WRITE_COUNT.labels(status=status).inc()
+
+
+def record_file_pipeline(stage: str, status: str, provider: str = "none") -> None:
+    """记录文件链路阶段指标。"""
+    FILE_PIPELINE_STAGE_COUNT.labels(
+        stage=str(stage or "unknown"),
+        status=str(status or "unknown"),
+        provider=str(provider or "none"),
+    ).inc()
+
+
+def observe_file_extractor_duration(provider: str, duration_seconds: float) -> None:
+    """记录文件提取耗时。"""
+    if duration_seconds <= 0:
+        return
+    FILE_EXTRACTOR_DURATION.labels(provider=str(provider or "none")).observe(duration_seconds)
 
 
 def set_active_sessions(count: int) -> None:

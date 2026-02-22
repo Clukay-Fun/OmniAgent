@@ -192,7 +192,7 @@ def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatc
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
 
     async def _fake_resolve_file_markdown(*_args, **_kwargs):
-        return "", "已收到文件，但当前未开启解析能力，请稍后再试或补充文字说明。"
+        return "", "已收到文件，但当前未开启解析能力，请稍后再试或补充文字说明。", "none"
 
     monkeypatch.setattr(webhook_module, "resolve_file_markdown", _fake_resolve_file_markdown)
 

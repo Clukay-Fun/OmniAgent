@@ -122,8 +122,9 @@ async def handle_message_async(
         )
         
         file_markdown = ""
+        file_provider = "none"
         if attachments:
-            file_markdown, guidance = await resolve_file_markdown(
+            file_markdown, guidance, file_provider = await resolve_file_markdown(
                 attachments=attachments,
                 settings=settings,
                 message_type=message_type,
@@ -143,6 +144,7 @@ async def handle_message_async(
                 chat_id=chat_id,
                 chat_type=chat_type,
                 file_markdown=file_markdown,
+                file_provider=file_provider,
             )
         
         # 发送回复
@@ -242,6 +244,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             content=event.content,
             file_pipeline_enabled=bool(settings.file_pipeline.enabled),
             max_file_bytes=int(settings.file_pipeline.max_bytes),
+            metrics_enabled=bool(getattr(settings.file_pipeline, "metrics_enabled", True)),
         )
         text = normalized.text
         if not text:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -48,21 +49,37 @@ def load_usage_records(path: Path, selected_date: str) -> list[dict[str, Any]]:
 
 def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
     by_user: Counter[str] = Counter()
+    by_user_cost: dict[str, float] = defaultdict(float)
     by_skill: Counter[str] = Counter()
+    by_skill_cost: dict[str, float] = defaultdict(float)
+    by_source_calls: Counter[str] = Counter()
+    by_source_tokens: Counter[str] = Counter()
+    by_source_cost: dict[str, float] = defaultdict(float)
     by_route: Counter[str] = Counter()
     by_complexity: Counter[str] = Counter()
     by_model_calls: Counter[str] = Counter()
     by_model_tokens: Counter[str] = Counter()
+    by_model_cost: dict[str, float] = defaultdict(float)
     by_model_latency_sum: Counter[str] = Counter()
     by_model_latency_count: Counter[str] = Counter()
 
     for row in records:
         token_count = int(row.get("token_count") or 0)
-        by_user[str(row.get("user_id") or "unknown")] += token_count
-        by_skill[str(row.get("skill") or "unknown")] += token_count
+        cost = float(row.get("cost") or 0.0)
+        user_id = str(row.get("user_id") or "unknown")
+        skill = str(row.get("skill") or "unknown")
+        source = str(row.get("usage_source") or "unknown")
+        by_user[user_id] += token_count
+        by_user_cost[user_id] += cost
+        by_skill[skill] += token_count
+        by_skill_cost[skill] += cost
+        by_source_calls[source] += 1
+        by_source_tokens[source] += token_count
+        by_source_cost[source] += cost
         model = str(row.get("model") or "unknown")
         by_model_calls[model] += 1
         by_model_tokens[model] += token_count
+        by_model_cost[model] += cost
 
         metadata_raw = row.get("metadata")
         metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
@@ -92,15 +109,28 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
         model_stats[model] = {
             "calls": int(calls),
             "tokens": int(by_model_tokens.get(model, 0)),
+            "cost": round(float(by_model_cost.get(model, 0.0)), 6),
             "avg_latency_ms": avg_latency_ms,
+        }
+
+    source_stats: dict[str, dict[str, float | int]] = {}
+    for source, calls in by_source_calls.items():
+        source_stats[source] = {
+            "calls": int(calls),
+            "tokens": int(by_source_tokens.get(source, 0)),
+            "cost": round(float(by_source_cost.get(source, 0.0)), 6),
         }
 
     return {
         "total_records": len(records),
         "total_tokens": sum(by_user.values()),
+        "total_cost": round(float(sum(by_user_cost.values())), 6),
         "by_user": by_user,
+        "by_user_cost": by_user_cost,
         "by_skill": by_skill,
+        "by_skill_cost": by_skill_cost,
         "by_model": model_stats,
+        "by_source": source_stats,
         "by_route": by_route,
         "by_complexity": by_complexity,
     }
@@ -112,18 +142,21 @@ def render_report(aggregated: dict[str, Any], selected_date: str, path: Path) ->
     lines.append(f"Source: {path}")
     lines.append(f"Total records: {aggregated['total_records']}")
     lines.append(f"Total tokens: {aggregated['total_tokens']}")
+    lines.append(f"Total cost: {aggregated['total_cost']:.6f}")
     lines.append("")
 
     lines.append("Top users by tokens:")
     for user_id, tokens in aggregated["by_user"].most_common(5):
-        lines.append(f"- {user_id}: {tokens}")
+        user_cost = float(aggregated["by_user_cost"].get(user_id, 0.0))
+        lines.append(f"- {user_id}: tokens={tokens}, cost={user_cost:.6f}")
     if not aggregated["by_user"]:
         lines.append("- (none)")
 
     lines.append("")
     lines.append("Top skills by tokens:")
     for skill, tokens in aggregated["by_skill"].most_common(5):
-        lines.append(f"- {skill}: {tokens}")
+        skill_cost = float(aggregated["by_skill_cost"].get(skill, 0.0))
+        lines.append(f"- {skill}: tokens={tokens}, cost={skill_cost:.6f}")
     if not aggregated["by_skill"]:
         lines.append("- (none)")
 
@@ -133,12 +166,23 @@ def render_report(aggregated: dict[str, Any], selected_date: str, path: Path) ->
     for model, stats in model_items:
         calls = int(stats.get("calls") or 0)
         tokens = int(stats.get("tokens") or 0)
+        cost = float(stats.get("cost") or 0.0)
         avg_latency = stats.get("avg_latency_ms")
         if avg_latency is None:
-            lines.append(f"- {model}: calls={calls}, tokens={tokens}, avg_latency_ms=n/a")
+            lines.append(f"- {model}: calls={calls}, tokens={tokens}, cost={cost:.6f}, avg_latency_ms=n/a")
         else:
-            lines.append(f"- {model}: calls={calls}, tokens={tokens}, avg_latency_ms={int(avg_latency)}")
+            lines.append(f"- {model}: calls={calls}, tokens={tokens}, cost={cost:.6f}, avg_latency_ms={int(avg_latency)}")
     if not aggregated["by_model"]:
+        lines.append("- (none)")
+
+    lines.append("")
+    lines.append("Source distribution:")
+    source_items = sorted(aggregated["by_source"].items(), key=lambda item: int(item[1].get("calls") or 0), reverse=True)
+    for source, stats in source_items:
+        lines.append(
+            f"- {source}: calls={int(stats.get('calls') or 0)}, tokens={int(stats.get('tokens') or 0)}, cost={float(stats.get('cost') or 0.0):.6f}"
+        )
+    if not aggregated["by_source"]:
         lines.append("- (none)")
 
     lines.append("")
