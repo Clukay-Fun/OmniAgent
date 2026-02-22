@@ -111,6 +111,12 @@ if PROMETHEUS_AVAILABLE:
         "Total automation consumed records by event type and status",
         ["event_type", "status"],
     )
+
+    FIELD_FORMAT_COUNT = Counter(
+        "field_format_total",
+        "Total field formatting outcomes by type and status",
+        ["type", "status"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -145,6 +151,7 @@ else:
     SCHEMA_WATCHER_ALERT_COUNT = DummyMetric()
     AUTOMATION_ENQUEUE_COUNT = DummyMetric()
     AUTOMATION_CONSUMED_COUNT = DummyMetric()
+    FIELD_FORMAT_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -202,6 +209,11 @@ def record_automation_enqueue(event_type: str, status: str) -> None:
 def record_automation_consumed(event_type: str, status: str) -> None:
     """记录 automation consumer 处理结果。"""
     AUTOMATION_CONSUMED_COUNT.labels(event_type=event_type, status=status).inc()
+
+
+def record_field_format(field_type: str, status: str) -> None:
+    """记录字段格式化结果。"""
+    FIELD_FORMAT_COUNT.labels(type=field_type, status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:

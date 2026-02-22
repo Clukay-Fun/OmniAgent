@@ -18,8 +18,11 @@ from typing import Any
 import yaml
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.field_formatter import format_field_value
 from src.core.skills.multi_table_linker import MultiTableLinker
+from src.core.skills.schema_cache import SchemaCache, get_global_schema_cache
 from src.core.types import SkillContext, SkillResult
+from src.utils.metrics import record_field_format
 from src.utils.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,7 @@ class QuerySkill(BaseSkill):
         settings: Any = None,
         llm_client: Any = None,
         skills_config: dict[str, Any] | None = None,
+        schema_cache: SchemaCache | None = None,
     ) -> None:
         """
         初始化查询技能
@@ -57,6 +61,7 @@ class QuerySkill(BaseSkill):
         self._settings = settings
         self._llm = llm_client
         self._skills_config = skills_config or {}
+        self._schema_cache = schema_cache or get_global_schema_cache()
         self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config)
 
         self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
@@ -223,6 +228,9 @@ class QuerySkill(BaseSkill):
                 records = self._apply_keyword_relevance(records, relevance_keyword)
                 total = len(records)
 
+            table_id = str(params.get("table_id") or "").strip()
+            self._schema_cache.set_schema(table_id, schema)
+
             pagination_extra = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
             current_page = int(pagination_extra.get("current_page") or 0) + 1 if pagination_extra else 1
             query_meta = {
@@ -256,6 +264,7 @@ class QuerySkill(BaseSkill):
                         return self._empty_result("该时间范围内没有开庭安排", prefer_message=True)
                     return self._empty_result("该时间范围内没有匹配记录", prefer_message=True)
                 return self._empty_result("未找到相关案件记录")
+            records = self._apply_schema_formatting(records, table_id)
             return self._format_case_result(
                 records,
                 notice=notice,
@@ -286,8 +295,11 @@ class QuerySkill(BaseSkill):
                     result = await self._mcp.call_tool("feishu.v1.bitable.search_keyword", fallback_params)
                     records = result.get("records", [])
                     schema = result.get("schema")
+                    table_id = str(fallback_params.get("table_id") or params.get("table_id") or "").strip()
+                    self._schema_cache.set_schema(table_id, schema)
                     if not records:
                         return self._empty_result("未找到相关案件记录")
+                    records = self._apply_schema_formatting(records, table_id)
                     return self._format_case_result(records, notice=notice, schema=schema)
                 except Exception:
                     pass
@@ -1169,6 +1181,48 @@ class QuerySkill(BaseSkill):
         text = re.sub(r"\s*,\s*", "，", text)
         text = re.sub(r"\s+", " ", text)
         return text.strip(" ，")
+
+    def _apply_schema_formatting(self, records: list[dict[str, Any]], table_id: str) -> list[dict[str, Any]]:
+        if not records:
+            return records
+        if not table_id:
+            return records
+        if not self._schema_cache.get_schema(table_id):
+            return records
+
+        formatted_records: list[dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                formatted_records.append(record)
+                continue
+            source_fields = record.get("fields_text")
+            if not isinstance(source_fields, dict):
+                source_fields = record.get("fields")
+            if not isinstance(source_fields, dict):
+                formatted_records.append(record)
+                continue
+
+            formatted_fields: dict[str, Any] = {}
+            for field_name, field_value in source_fields.items():
+                field_meta = self._schema_cache.get_field_meta(table_id, str(field_name))
+                result = format_field_value(field_value, field_meta)
+                record_field_format(result.field_type, result.status)
+                if result.status == "malformed":
+                    logger.warning(
+                        "Field formatting fallback due to malformed value",
+                        extra={
+                            "event_code": "query.field_format.malformed",
+                            "table_id": table_id,
+                            "field_name": str(field_name),
+                            "field_type": result.field_type,
+                        },
+                    )
+                formatted_fields[str(field_name)] = result.text
+
+            formatted_record = dict(record)
+            formatted_record["fields_text"] = formatted_fields
+            formatted_records.append(formatted_record)
+        return formatted_records
 
     def _format_doc_result(self, documents: list[dict[str, Any]]) -> SkillResult:
         """格式化文档查询结果"""

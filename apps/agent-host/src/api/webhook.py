@@ -28,6 +28,7 @@ from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
 from src.core.response.models import RenderedResponse
+from src.core.skills.schema_cache import get_global_schema_cache
 from src.core.session import SessionManager
 from src.config import get_settings
 from src.llm.provider import create_llm_client
@@ -53,6 +54,12 @@ _automation_enqueuer: QueueAutomationEnqueuer | None = None
 _chunk_assembler: ChunkAssembler | None = None
 _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
+_schema_sync_bridge: Any = None
+
+
+class _SchemaSyncBridge:
+    def __init__(self) -> None:
+        self.schema_cache = get_global_schema_cache()
 
 
 def _get_settings() -> Any:
@@ -103,8 +110,16 @@ def _get_event_router() -> FeishuEventRouter:
         _event_router = FeishuEventRouter(
             enabled_types=get_enabled_types(settings),
             automation_enqueuer=_get_automation_enqueuer(),
+            schema_sync=_get_schema_sync_bridge(),
         )
     return _event_router
+
+
+def _get_schema_sync_bridge() -> Any:
+    global _schema_sync_bridge
+    if _schema_sync_bridge is None:
+        _schema_sync_bridge = _SchemaSyncBridge()
+    return _schema_sync_bridge
 
 
 def _get_automation_enqueuer() -> QueueAutomationEnqueuer:

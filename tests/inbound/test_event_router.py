@@ -9,6 +9,7 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.adapters.channels.feishu.event_adapter import EventEnvelope, FeishuEventAdapter, MessageEvent
 from src.api.event_router import FeishuEventRouter
+from src.core.skills.schema_cache import SchemaCache
 import src.api.event_router as event_router_module
 
 
@@ -323,6 +324,39 @@ def test_field_changed_invalidate_schema_cache_when_table_id_exists() -> None:
 
     assert result.status == "handled"
     assert invalidated_table_ids == ["tbl_invalidate_1"]
+
+
+def test_field_changed_invalidate_real_schema_cache_entry() -> None:
+    cache = SchemaCache()
+    cache.set_schema("tbl_invalidate_real", [{"name": "金额", "type": 2}])
+
+    class _SchemaSync:
+        def __init__(self) -> None:
+            self.schema_cache = cache
+
+    payload = {
+        "header": {
+            "event_type": "drive.file.bitable_field_changed_v1",
+            "event_id": "evt_field_invalidate_real_1",
+        },
+        "event": {
+            "app_token": "app_mock_3",
+            "table_id": "tbl_invalidate_real",
+            "field_id": "fld_mock_3",
+            "field_name": "金额",
+            "change_type": "type_change",
+        },
+    }
+    envelope = FeishuEventAdapter.from_webhook_payload(payload)
+    router = FeishuEventRouter(
+        enabled_types=["drive.file.bitable_field_changed_v1"],
+        schema_sync=_SchemaSync(),
+    )
+
+    result = router.route(envelope)
+
+    assert result.status == "handled"
+    assert cache.get_schema("tbl_invalidate_real") is None
 
 
 def test_field_changed_rename_emits_warning_and_alert_metric(monkeypatch, caplog) -> None:
