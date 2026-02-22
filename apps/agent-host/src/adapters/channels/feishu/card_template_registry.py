@@ -6,10 +6,15 @@ from typing import Any, Callable
 from src.adapters.channels.feishu.card_template_config import is_template_enabled
 from src.adapters.channels.feishu.card_templates import (
     render_action_confirm_v1,
+    render_create_success_v1,
+    render_delete_cancelled_v1,
+    render_delete_confirm_v1,
+    render_delete_success_v1,
     render_error_notice_v1,
     render_query_detail_v1,
     render_query_list_v1,
     render_todo_reminder_v1,
+    render_update_success_v1,
     render_upload_result_v1,
 )
 
@@ -113,5 +118,45 @@ class CardTemplateRegistry:
                 version="v1",
                 required_params=("file_name",),
                 renderer=render_upload_result_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="create.success",
+                version="v1",
+                required_params=("record",),
+                renderer=render_create_success_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="update.success",
+                version="v1",
+                required_params=("changes",),
+                renderer=render_update_success_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="delete.confirm",
+                version="v1",
+                required_params=("summary",),
+                renderer=render_delete_confirm_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="delete.success",
+                version="v1",
+                required_params=(),
+                renderer=render_delete_success_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="delete.cancelled",
+                version="v1",
+                required_params=(),
+                renderer=render_delete_cancelled_v1,
             )
         )

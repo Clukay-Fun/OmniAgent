@@ -84,3 +84,99 @@ def test_render_todo_reminder_v1() -> None:
 
     assert "提醒创建成功" in elements[0]["content"]
     assert "提交材料" in elements[0]["content"]
+
+
+def test_render_create_success_v1() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="create.success",
+        version="v1",
+        params={
+            "record": {
+                "record_id": "rec_001",
+                "fields_text": {"案号": "A-1", "委托人": "张三"},
+                "record_url": "https://example.com/rec_001",
+            }
+        },
+    )
+
+    assert "创建成功" in elements[0]["content"]
+    assert "案号" in elements[1]["content"]
+    assert "查看记录详情" in elements[2]["content"]
+
+
+def test_render_update_success_v1() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="update.success",
+        version="v1",
+        params={
+            "changes": [
+                {"field": "状态", "old": "待办", "new": "已完成"},
+                {"field": "负责人", "old": "张三", "new": "李四"},
+            ],
+            "record_url": "https://example.com/rec_002",
+        },
+    )
+
+    assert "状态" in elements[1]["content"]
+    assert "待办 -> 已完成" in elements[1]["content"]
+    assert "查看记录详情" in elements[2]["content"]
+
+
+def test_render_delete_confirm_v1() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="delete.confirm",
+        version="v1",
+        params={
+            "summary": {"案号": "A-3", "记录 ID": "rec_003"},
+            "actions": {
+                "confirm": {"callback_action": "delete_record_confirm", "intent": "confirm"},
+                "cancel": {"callback_action": "delete_record_cancel", "intent": "cancel"},
+            },
+        },
+    )
+
+    assert "高风险操作" in elements[0]["content"]
+    assert "案号" in elements[2]["content"]
+    assert elements[3]["tag"] == "action"
+    assert elements[3]["actions"][0]["text"]["content"] == "确认删除"
+    assert elements[3]["actions"][1]["text"]["content"] == "取消"
+
+
+def test_render_delete_result_cards_v1() -> None:
+    registry = CardTemplateRegistry()
+
+    success = registry.render(
+        template_id="delete.success",
+        version="v1",
+        params={"message": "已删除案件 A-4"},
+    )
+    cancelled = registry.render(
+        template_id="delete.cancelled",
+        version="v1",
+        params={"message": "已取消本次删除"},
+    )
+
+    assert "删除成功" in success[0]["content"]
+    assert "已取消" in cancelled[0]["content"]
+
+
+def test_render_error_notice_v1_with_error_class_guidance() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="error.notice",
+        version="v1",
+        params={
+            "message": "当前账号权限不足，无法删除",
+            "error_class": "permission_denied",
+        },
+    )
+
+    assert "权限不足" in elements[0]["content"]
+    assert "建议下一步" in elements[0]["content"]

@@ -23,6 +23,9 @@ def test_registry_lookup_success() -> None:
     assert definition.template_id == "query.list"
     assert definition.version == "v1"
 
+    create_definition = registry.lookup("create.success", "v1")
+    assert create_definition.template_id == "create.success"
+
 
 def test_registry_lookup_missing_template_raises() -> None:
     registry = CardTemplateRegistry()

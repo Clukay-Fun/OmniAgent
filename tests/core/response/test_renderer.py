@@ -94,6 +94,102 @@ def test_render_always_contains_paragraph_block():
     assert response.blocks[0].type == "paragraph"
 
 
+def test_render_create_skill_selects_create_success_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "CreateSkill",
+            "reply_text": "创建成功",
+            "data": {
+                "record_id": "rec_new",
+                "record_url": "https://example.com/rec_new",
+                "fields": {"案号": "A-100", "委托人": "张三"},
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "create.success"
+    assert response.card_template.params["record_url"] == "https://example.com/rec_new"
+
+
+def test_render_update_skill_selects_update_success_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "更新成功",
+            "data": {
+                "updated_fields": {"状态": "已完成"},
+                "source_fields": {"状态": "待办"},
+                "record_url": "https://example.com/rec_update",
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "update.success"
+    assert response.card_template.params["changes"][0] == {"field": "状态", "old": "待办", "new": "已完成"}
+
+
+def test_render_delete_skill_selects_delete_confirm_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "等待确认删除",
+            "data": {
+                "pending_delete": {"record_id": "rec_del", "case_no": "A-200", "table_id": "tbl_1"},
+                "records": [{"fields_text": {"案号": "A-200", "案由": "合同纠纷"}}],
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "delete.confirm"
+    actions = response.card_template.params["actions"]
+    assert actions["confirm"]["callback_action"] == "delete_record_confirm"
+    assert actions["cancel"]["callback_action"] == "delete_record_cancel"
+
+
+def test_render_delete_skill_selects_delete_cancelled_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "好的，已取消删除操作。",
+            "data": {},
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "delete.cancelled"
+
+
+def test_render_failure_classifies_error_type() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": False,
+            "skill_name": "DeleteSkill",
+            "message": "当前账号权限不足，无法执行删除",
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "error.notice"
+    assert response.card_template.params["error_class"] == "permission_denied"
+
+
 def test_load_templates_falls_back_to_defaults_when_file_missing(tmp_path: Path):
     missing_path = tmp_path / "missing.yaml"
     renderer = ResponseRenderer(templates_path=missing_path)

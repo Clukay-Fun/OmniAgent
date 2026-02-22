@@ -10,6 +10,11 @@ TEMPLATE_DEFAULT_VERSIONS: dict[str, str] = {
     "error.notice": "v1",
     "todo.reminder": "v1",
     "upload.result": "v1",
+    "create.success": "v1",
+    "update.success": "v1",
+    "delete.confirm": "v1",
+    "delete.success": "v1",
+    "delete.cancelled": "v1",
 }
 
 
@@ -20,6 +25,11 @@ TEMPLATE_ENABLED: dict[str, bool] = {
     "error.notice.v1": True,
     "todo.reminder.v1": True,
     "upload.result.v1": True,
+    "create.success.v1": True,
+    "update.success.v1": True,
+    "delete.confirm.v1": True,
+    "delete.success.v1": True,
+    "delete.cancelled.v1": True,
 }
 
 

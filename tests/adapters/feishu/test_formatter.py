@@ -11,6 +11,7 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.adapters.channels.feishu.formatter import CardBuildError, FeishuFormatter
 from src.core.response.models import Block, RenderedResponse
+from src.core.response.renderer import ResponseRenderer
 
 
 def test_format_returns_text_payload_when_card_disabled() -> None:
@@ -176,4 +177,95 @@ def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
     assert payload == {
         "msg_type": "text",
         "content": {"text": "模板失败兜底"},
+    }
+
+
+def test_format_crud_templates_from_renderer_skill_results() -> None:
+    renderer = ResponseRenderer()
+    formatter = FeishuFormatter(card_enabled=True)
+
+    create_rendered = renderer.render(
+        {
+            "success": True,
+            "skill_name": "CreateSkill",
+            "reply_text": "创建成功",
+            "data": {
+                "record_id": "rec_create",
+                "record_url": "https://example.com/rec_create",
+                "fields": {"案号": "A-1", "委托人": "张三"},
+            },
+        }
+    )
+    update_rendered = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "更新成功",
+            "data": {
+                "updated_fields": {"状态": "已完成"},
+                "source_fields": {"状态": "待办"},
+                "record_url": "https://example.com/rec_update",
+            },
+        }
+    )
+    delete_confirm_rendered = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "等待确认删除",
+            "data": {
+                "pending_delete": {"record_id": "rec_delete", "case_no": "A-2", "table_id": "tbl_1"},
+            },
+        }
+    )
+    delete_success_rendered = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "删除成功",
+            "data": {"record_id": "rec_delete"},
+        }
+    )
+
+    create_payload = formatter.format(create_rendered)
+    update_payload = formatter.format(update_rendered)
+    delete_confirm_payload = formatter.format(delete_confirm_rendered)
+    delete_success_payload = formatter.format(delete_success_rendered)
+
+    assert create_payload["msg_type"] == "interactive"
+    assert "查看记录详情" in create_payload["card"]["elements"][-1]["content"]
+    assert update_payload["msg_type"] == "interactive"
+    assert "->" in update_payload["card"]["elements"][1]["content"]
+    assert delete_confirm_payload["card"]["elements"][-1]["tag"] == "action"
+    assert delete_success_payload["msg_type"] == "interactive"
+    assert "删除成功" in delete_success_payload["card"]["elements"][0]["content"]
+
+
+def test_format_falls_back_to_text_when_create_template_build_fails(monkeypatch, caplog) -> None:
+    renderer = ResponseRenderer()
+    formatter = FeishuFormatter(card_enabled=True)
+    rendered = renderer.render(
+        {
+            "success": True,
+            "skill_name": "CreateSkill",
+            "reply_text": "创建成功兜底",
+            "data": {
+                "record_id": "rec_create",
+                "record_url": "https://example.com/rec_create",
+                "fields": {"案号": "A-1"},
+            },
+        }
+    )
+
+    def raise_render(*_args, **_kwargs):
+        raise ValueError("broken")
+
+    monkeypatch.setattr(formatter._template_registry, "render", raise_render)
+
+    payload = formatter.format(rendered)
+
+    assert "template render failed" in caplog.text
+    assert payload == {
+        "msg_type": "text",
+        "content": {"text": "创建成功兜底"},
     }
