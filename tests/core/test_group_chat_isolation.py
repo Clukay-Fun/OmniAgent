@@ -19,8 +19,8 @@ def test_group_users_do_not_share_last_result_for_ordinal_resolution() -> None:
     state_manager = ConversationStateManager(store=MemoryStateStore())
     engine = L0RuleEngine(state_manager=state_manager, l0_rules={}, skills_config={})
 
-    user_a = "group:oc_g1:user:ou_A"
-    user_b = "group:oc_g1:user:ou_B"
+    user_a = "feishu:group:oc_g1:user:ou_A"
+    user_b = "feishu:group:oc_g1:user:ou_B"
 
     state_manager.set_last_result(user_a, records=[{"record_id": "rec_A_1"}], query_summary="A")
     state_manager.set_last_result(user_b, records=[{"record_id": "rec_B_1"}], query_summary="B")

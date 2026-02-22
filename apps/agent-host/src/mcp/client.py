@@ -22,6 +22,13 @@ from src.utils.metrics import record_mcp_tool_call
 logger = logging.getLogger(__name__)
 
 
+def _resolve_tool_alias(tool_name: str) -> str:
+    normalized = str(tool_name or "").strip()
+    if normalized.startswith("data.bitable."):
+        return "feishu.v1.bitable." + normalized[len("data.bitable.") :]
+    return normalized
+
+
 # region 客户端与异常模型
 class MCPClientError(RuntimeError):
     """MCP 客户端错误基类"""
@@ -88,7 +95,8 @@ class MCPClient:
             MCPToolError: 工具返回错误或 HTTP 状态异常
             MCPConnectionError: 网络连接失败
         """
-        url = f"{self._base_url}/mcp/tools/{tool_name}"
+        normalized_tool_name = _resolve_tool_alias(tool_name)
+        url = f"{self._base_url}/mcp/tools/{normalized_tool_name}"
         status = "success"
         
         for attempt in range(self._max_retries + 1):
@@ -99,7 +107,7 @@ class MCPClient:
                     "调用 MCP 工具",
                     extra={
                         "event_code": "mcp.call.start",
-                        "tool": tool_name,
+                        "tool": normalized_tool_name,
                         "attempt": attempt,
                     },
                 )
@@ -112,33 +120,33 @@ class MCPClient:
                     error = payload.get("error") or {}
                     status = "tool_error"
                     raise MCPToolError(
-                        tool_name=tool_name,
+                        tool_name=normalized_tool_name,
                         cause=error.get("message", "Unknown error"),
                     )
                 
-                record_mcp_tool_call(tool_name, "success")
+                record_mcp_tool_call(normalized_tool_name, "success")
                 return payload.get("data") or {}
                 
             except httpx.TimeoutException as exc:
                 status = "timeout"
                 if attempt >= self._max_retries:
-                    record_mcp_tool_call(tool_name, "timeout")
-                    raise MCPTimeoutError(tool_name, self._timeout) from exc
+                    record_mcp_tool_call(normalized_tool_name, "timeout")
+                    raise MCPTimeoutError(normalized_tool_name, self._timeout) from exc
                     
             except httpx.ConnectError as exc:
                 status = "connection_error"
                 if attempt >= self._max_retries:
-                    record_mcp_tool_call(tool_name, "connection_error")
+                    record_mcp_tool_call(normalized_tool_name, "connection_error")
                     raise MCPConnectionError(url, str(exc)) from exc
                     
             except httpx.HTTPStatusError as exc:
                 status = "http_error"
                 if attempt >= self._max_retries:
-                    record_mcp_tool_call(tool_name, "http_error")
-                    raise MCPToolError(tool_name, f"HTTP {exc.response.status_code}") from exc
+                    record_mcp_tool_call(normalized_tool_name, "http_error")
+                    raise MCPToolError(normalized_tool_name, f"HTTP {exc.response.status_code}") from exc
                     
             except MCPToolError:
-                record_mcp_tool_call(tool_name, "tool_error")
+                record_mcp_tool_call(normalized_tool_name, "tool_error")
                 raise
                 
             # 指数退避重试
@@ -147,7 +155,7 @@ class MCPClient:
                 "MCP 调用失败，准备重试",
                 extra={
                     "event_code": "mcp.call.retry",
-                    "tool": tool_name,
+                    "tool": normalized_tool_name,
                     "attempt": attempt,
                     "delay": delay,
                 },
@@ -155,8 +163,8 @@ class MCPClient:
             await asyncio.sleep(delay)
         
         # 不应到达这里
-        record_mcp_tool_call(tool_name, "unknown_error")
-        raise MCPToolError(tool_name, "Max retries exceeded")
+        record_mcp_tool_call(normalized_tool_name, "unknown_error")
+        raise MCPToolError(normalized_tool_name, "Max retries exceeded")
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """列出 Server 端所有可用工具"""

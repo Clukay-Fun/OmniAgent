@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from src.core.skills.field_formatter import format_field_value
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.schema_cache import SchemaCache, get_global_schema_cache
 from src.core.types import SkillContext, SkillResult
-from src.utils.metrics import record_field_format
+from src.utils.metrics import observe_bitable_query_latency, record_field_format
 from src.utils.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
@@ -218,7 +219,9 @@ class QuerySkill(BaseSkill):
 
         try:
             logger.info("Query tool selected: %s, params: %s", tool_name, params)
+            query_started_at = time.perf_counter()
             result = await self._mcp.call_tool(tool_name, params)
+            observe_bitable_query_latency(time.perf_counter() - query_started_at)
             records = result.get("records", [])
             schema = result.get("schema")
             has_more = bool(result.get("has_more", False))
@@ -262,7 +265,7 @@ class QuerySkill(BaseSkill):
                         message="没有更多记录",
                         reply_text="已经没有更多记录了。",
                     )
-                if tool_name == "feishu.v1.bitable.search_date_range":
+                if tool_name == "data.bitable.search_date_range":
                     field = str(params.get("field") or "").strip()
                     if field == "开庭日":
                         return self._empty_result("该时间范围内没有开庭安排", prefer_message=True)
@@ -282,7 +285,7 @@ class QuerySkill(BaseSkill):
                 query_meta=query_meta,
             )
         except Exception as e:
-            if tool_name == "feishu.v1.bitable.search_exact" and (
+            if tool_name == "data.bitable.search_exact" and (
                 "Field not found" in str(e) or "InvalidFilter" in str(e)
             ):
                 try:
@@ -296,7 +299,9 @@ class QuerySkill(BaseSkill):
                         "Exact field not found, fallback to keyword search: %s",
                         fallback_params,
                     )
-                    result = await self._mcp.call_tool("feishu.v1.bitable.search_keyword", fallback_params)
+                    fallback_started_at = time.perf_counter()
+                    result = await self._mcp.call_tool("data.bitable.search_keyword", fallback_params)
+                    observe_bitable_query_latency(time.perf_counter() - fallback_started_at)
                     records = result.get("records", [])
                     schema = result.get("schema")
                     table_id = str(fallback_params.get("table_id") or params.get("table_id") or "").strip()
@@ -349,7 +354,7 @@ class QuerySkill(BaseSkill):
     async def _refresh_tables(self) -> SkillResult:
         try:
             result = await self._mcp.call_tool(
-                "feishu.v1.bitable.list_tables",
+                "data.bitable.list_tables",
                 {"refresh": True},
             )
             tables = result.get("tables", [])
@@ -401,7 +406,7 @@ class QuerySkill(BaseSkill):
         explicit_table_name = str(extra.get("table_name") or "").strip()
 
         try:
-            tables_result = await self._mcp.call_tool("feishu.v1.bitable.list_tables", {})
+            tables_result = await self._mcp.call_tool("data.bitable.list_tables", {})
         except Exception as exc:
             logger.error("List tables failed: %s", exc)
             alias_match = self._match_alias(query)
@@ -647,10 +652,10 @@ class QuerySkill(BaseSkill):
                 params.update(plan_params)
 
                 intent = str(planner_plan.get("intent") or "")
-                if mapped_tool == "feishu.v1.bitable.search" and intent == "query_all":
+                if mapped_tool == "data.bitable.search" and intent == "query_all":
                     params.setdefault("ignore_default_view", True)
 
-                if mapped_tool == "feishu.v1.bitable.search_date_range":
+                if mapped_tool == "data.bitable.search_date_range":
                     guessed_field = self._guess_date_field(query)
                     current_field = str(params.get("field") or "").strip()
                     if guessed_field and (not current_field or current_field in {"截止日", "日期", "时间"}):
@@ -678,10 +683,10 @@ class QuerySkill(BaseSkill):
                             params.setdefault("date_from", (today - timedelta(days=30)).isoformat())
                             params.setdefault("date_to", (today + timedelta(days=30)).isoformat())
 
-                if mapped_tool == "feishu.v1.bitable.search":
+                if mapped_tool == "data.bitable.search":
                     parsed = parse_time_range(query)
                     if parsed and self._is_hearing_query(query):
-                        mapped_tool = "feishu.v1.bitable.search_date_range"
+                        mapped_tool = "data.bitable.search_date_range"
                         params["field"] = params.get("field") or "开庭日"
                         params.setdefault("date_from", parsed.date_from)
                         params.setdefault("date_to", parsed.date_to)
@@ -690,72 +695,72 @@ class QuerySkill(BaseSkill):
                         if parsed.time_to:
                             params.setdefault("time_to", parsed.time_to)
 
-                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("open_id"):
+                if mapped_tool == "data.bitable.search_person" and not params.get("open_id"):
                     user_profile = extra.get("user_profile")
                     open_id = getattr(user_profile, "open_id", "") if user_profile else ""
                     if open_id:
                         params["open_id"] = open_id
-                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("user_name"):
+                if mapped_tool == "data.bitable.search_person" and not params.get("user_name"):
                     user_profile = extra.get("user_profile")
                     user_name = getattr(user_profile, "lawyer_name", "") if user_profile else ""
                     if not user_name:
                         user_name = getattr(user_profile, "name", "") if user_profile else ""
                     if user_name:
                         params["user_name"] = user_name
-                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("user_name"):
+                if mapped_tool == "data.bitable.search_person" and not params.get("user_name"):
                     entity_keyword = self._extract_entity_keyword(query)
                     if entity_keyword:
                         params["user_name"] = entity_keyword
-                if mapped_tool == "feishu.v1.bitable.search_person" and not params.get("field"):
+                if mapped_tool == "data.bitable.search_person" and not params.get("field"):
                     params["field"] = "主办律师"
 
-                if mapped_tool == "feishu.v1.bitable.search_exact" and not params.get("value"):
+                if mapped_tool == "data.bitable.search_exact" and not params.get("value"):
                     exact = self._extract_exact_field(query)
                     if exact:
                         params.setdefault("field", exact.get("field"))
                         params["value"] = exact.get("value")
 
-                if mapped_tool == "feishu.v1.bitable.search" and not any(
+                if mapped_tool == "data.bitable.search" and not any(
                     params.get(k) for k in ("keyword", "date_from", "date_to", "filters")
                 ):
                     exact = self._extract_exact_field(query)
                     if exact:
-                        mapped_tool = "feishu.v1.bitable.search_exact"
+                        mapped_tool = "data.bitable.search_exact"
                         params.update(exact)
                     else:
                         entity_keyword = self._extract_entity_keyword(query)
                         keyword = entity_keyword or self._extract_keyword(query)
                         if keyword:
-                            mapped_tool = "feishu.v1.bitable.search_keyword"
+                            mapped_tool = "data.bitable.search_keyword"
                             params["keyword"] = keyword
                             params.setdefault("fields", self._build_keyword_fields())
 
-                if mapped_tool == "feishu.v1.bitable.search_keyword" and not params.get("fields"):
+                if mapped_tool == "data.bitable.search_keyword" and not params.get("fields"):
                     params["fields"] = self._build_keyword_fields()
 
-                if mapped_tool == "feishu.v1.bitable.search_keyword" and params.get("keyword"):
+                if mapped_tool == "data.bitable.search_keyword" and params.get("keyword"):
                     params["keyword"] = self._sanitize_search_keyword(str(params.get("keyword") or ""))
 
-                if mapped_tool == "feishu.v1.bitable.search_exact" and params.get("value"):
+                if mapped_tool == "data.bitable.search_exact" and params.get("value"):
                     params["value"] = self._sanitize_search_keyword(str(params.get("value") or ""))
 
-                if mapped_tool == "feishu.v1.bitable.search_exact":
+                if mapped_tool == "data.bitable.search_exact":
                     exact_field = str(params.get("field") or "").strip()
                     exact_value = str(params.get("value") or "").strip()
                     entity_keyword = self._extract_entity_keyword(query)
                     if exact_field in {"主办律师", "协办律师"} and (
                         self._looks_like_org_name(exact_value) or self._looks_like_org_name(entity_keyword)
                     ):
-                        mapped_tool = "feishu.v1.bitable.search_keyword"
+                        mapped_tool = "data.bitable.search_keyword"
                         params.pop("value", None)
                         params["keyword"] = self._sanitize_search_keyword(entity_keyword or exact_value)
                         params.setdefault("fields", self._build_keyword_fields())
 
                 if mapped_tool in {
-                    "feishu.v1.bitable.search_keyword",
-                    "feishu.v1.bitable.search_exact",
-                    "feishu.v1.bitable.search_person",
-                    "feishu.v1.bitable.search_date_range",
+                    "data.bitable.search_keyword",
+                    "data.bitable.search_exact",
+                    "data.bitable.search_person",
+                    "data.bitable.search_date_range",
                 }:
                     self._maybe_ignore_default_view(params, query)
 
@@ -770,15 +775,15 @@ class QuerySkill(BaseSkill):
         if isinstance(planner_plan, dict):
             mapped_tool = selected_tool or self._map_planner_tool(str(planner_plan.get("tool") or ""))
             if mapped_tool:
-                if mapped_tool == "feishu.v1.bitable.search_person" and not (
+                if mapped_tool == "data.bitable.search_person" and not (
                     params.get("open_id") or params.get("user_name")
                 ):
                     mapped_tool = None
-                if mapped_tool == "feishu.v1.bitable.search_exact" and (not params.get("field") or not params.get("value")):
+                if mapped_tool == "data.bitable.search_exact" and (not params.get("field") or not params.get("value")):
                     mapped_tool = None
-                if mapped_tool == "feishu.v1.bitable.search_keyword" and not params.get("keyword"):
+                if mapped_tool == "data.bitable.search_keyword" and not params.get("keyword"):
                     mapped_tool = None
-                if mapped_tool == "feishu.v1.bitable.search_date_range" and (not params.get("date_from") or not params.get("date_to")):
+                if mapped_tool == "data.bitable.search_date_range" and (not params.get("date_from") or not params.get("date_to")):
                     mapped_tool = None
 
             if mapped_tool:
@@ -788,7 +793,7 @@ class QuerySkill(BaseSkill):
             if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
                 params["ignore_default_view"] = True
             logger.info("Query scenario: all_cases")
-            return "feishu.v1.bitable.search", params
+            return "data.bitable.search", params
 
         # 优先级1: 检查是否为"我的案件"查询
         user_profile = extra.get("user_profile")
@@ -805,7 +810,7 @@ class QuerySkill(BaseSkill):
                 params["user_name"] = user_profile.name
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: my_cases")
-            return "feishu.v1.bitable.search_person", params
+            return "data.bitable.search_person", params
 
         # 优先级2: 提取“X的案件/项目”主体关键词
         entity_keyword = self._extract_entity_keyword(query)
@@ -814,7 +819,7 @@ class QuerySkill(BaseSkill):
             params["keyword"] = entity_keyword
             params["fields"] = self._build_keyword_fields()
             self._maybe_ignore_default_view(params, query)
-            return "feishu.v1.bitable.search_keyword", params
+            return "data.bitable.search_keyword", params
 
         date_from = extra.get("date_from")
         date_to = extra.get("date_to")
@@ -838,14 +843,14 @@ class QuerySkill(BaseSkill):
             if time_to:
                 params["time_to"] = time_to
             self._maybe_ignore_default_view(params, query)
-            return "feishu.v1.bitable.search_date_range", params
+            return "data.bitable.search_date_range", params
 
         exact_field = self._extract_exact_field(query)
         if exact_field:
             params.update(exact_field)
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: exact_match")
-            return "feishu.v1.bitable.search_exact", params
+            return "data.bitable.search_exact", params
 
         keyword = self._extract_keyword(query)
         if keyword:
@@ -853,25 +858,25 @@ class QuerySkill(BaseSkill):
             params["fields"] = self._build_keyword_fields()
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: keyword")
-            return "feishu.v1.bitable.search_keyword", params
+            return "data.bitable.search_keyword", params
 
         if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
             params["ignore_default_view"] = True
         logger.info("Query scenario: full_scan")
-        return "feishu.v1.bitable.search", params
+        return "data.bitable.search", params
 
     def _map_planner_tool(self, tool: str) -> str | None:
         mapping = {
-            "search": "feishu.v1.bitable.search",
-            "search_exact": "feishu.v1.bitable.search_exact",
-            "search_keyword": "feishu.v1.bitable.search_keyword",
-            "search_person": "feishu.v1.bitable.search_person",
-            "search_date_range": "feishu.v1.bitable.search_date_range",
-            "search_advanced": "feishu.v1.bitable.search_advanced",
+            "search": "data.bitable.search",
+            "search_exact": "data.bitable.search_exact",
+            "search_keyword": "data.bitable.search_keyword",
+            "search_person": "data.bitable.search_person",
+            "search_date_range": "data.bitable.search_date_range",
+            "search_advanced": "data.bitable.search_advanced",
         }
         if tool in mapping:
             return mapping[tool]
-        if tool.startswith("feishu.v1.bitable."):
+        if tool.startswith("data.bitable."):
             return tool
         return None
 

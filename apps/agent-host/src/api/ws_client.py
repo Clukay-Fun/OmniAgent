@@ -27,9 +27,10 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.adapters.channels.feishu.processing_status import create_reaction_status_emitter
 from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
-from src.api.conversation_scope import build_conversation_user_id
+from src.api.conversation_scope import build_session_key
 from src.api.file_pipeline import (
     build_file_unavailable_guidance,
     is_file_pipeline_message,
@@ -41,6 +42,7 @@ from src.core.orchestrator import AgentOrchestrator
 from src.core.session import SessionManager
 from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
+from src.utils.metrics import record_inbound_message
 from src.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -147,12 +149,14 @@ async def handle_message_async(
                 chat_type=chat_type,
                 file_markdown=file_markdown,
                 file_provider=file_provider,
+                status_emitter=create_reaction_status_emitter(settings, message_id),
             )
         
         # 发送回复
         reply_text = reply.get("text", "")
         if reply_text:
             await send_reply(chat_id, reply_text, message_id)
+        record_inbound_message("ws", message_type, "processed")
             
     except Exception as e:
         logger.error(
@@ -163,6 +167,7 @@ async def handle_message_async(
         )
         error_text = settings.reply.templates.error.format(message=str(e))
         await send_reply(chat_id, error_text, message_id)
+        record_inbound_message("ws", message_type, "error")
 
 
 async def send_reply(chat_id: str, text: str, reply_message_id: str | None = None) -> None:
@@ -227,6 +232,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
                 chat_type,
                 extra={"event_code": "ws.message.ignored_non_p2p"},
             )
+            record_inbound_message("ws", message_type, "ignored")
             return
         
         allow_file_pipeline = bool(settings.file_pipeline.enabled) and is_file_pipeline_message(message_type)
@@ -236,9 +242,11 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
                 message_type,
                 extra={"event_code": "ws.message.ignored_type"},
             )
+            record_inbound_message("ws", message_type, "ignored")
             return
 
         if settings.webhook.filter.ignore_bot_message and event.sender_type == "bot":
+            record_inbound_message("ws", message_type, "ignored")
             return
 
         normalized = normalize_content(
@@ -250,6 +258,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         )
         text = normalized.text
         if not text:
+            record_inbound_message("ws", message_type, "ignored")
             return
 
         if event.sender_open_id:
@@ -263,7 +272,12 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         else:
             user_id = "unknown"
         
-        scoped_user_id = build_conversation_user_id(user_id=user_id, chat_id=chat_id, chat_type=chat_type)
+        scoped_user_id = build_session_key(
+            user_id=user_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            channel_type="feishu",
+        )
         chunk_decision = chunk_assembler.ingest(scope_key=scoped_user_id, text=text)
         if not chunk_decision.should_process:
             logger.info(
@@ -274,6 +288,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
                     "user_id": scoped_user_id,
                 },
             )
+            record_inbound_message("ws", message_type, "buffered")
             return
         text = chunk_decision.text
 
@@ -286,6 +301,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
                 "text": text[:50],
             },
         )
+        record_inbound_message("ws", message_type, "accepted")
         
         # 异步处理消息
         asyncio.create_task(

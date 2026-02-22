@@ -20,9 +20,10 @@ from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
+from src.adapters.channels.feishu.processing_status import create_reaction_status_emitter
 from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
-from src.api.conversation_scope import build_conversation_user_id
+from src.api.conversation_scope import build_session_key
 from src.api.file_pipeline import (
     build_ocr_completion_text,
     build_processing_status_text,
@@ -42,6 +43,7 @@ from src.config import get_settings
 from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
 from src.utils.feishu_api import send_message
+from src.utils.metrics import record_inbound_message
 
 
 router = APIRouter()
@@ -423,11 +425,13 @@ def _extract_card_action_payload(payload: dict[str, Any]) -> dict[str, Any] | No
     if not op_open_id:
         op_open_id = str(operator.get("open_id") or "").strip()
     open_chat_id = str(event.get("open_chat_id") or "").strip()
+    chat_type = str(event.get("chat_type") or "").strip().lower()
     return {
         "callback_action": callback_action,
         "event_id": str((payload.get("header") or {}).get("event_id") or payload.get("event_id") or "").strip(),
         "open_id": op_open_id,
         "chat_id": open_chat_id,
+        "chat_type": chat_type,
     }
 # endregion
 
@@ -484,10 +488,11 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         chat_id = str(callback_payload.get("chat_id") or "").strip()
         if not open_id:
             return {"status": "ok", "reason": "已过期"}
-        user_id = build_conversation_user_id(
+        user_id = build_session_key(
             user_id=open_id,
             chat_id=chat_id,
-            chat_type="p2p" if chat_id else "",
+            chat_type=str(callback_payload.get("chat_type") or ("p2p" if chat_id else "")),
+            channel_type="feishu",
         )
         try:
             result = await _get_agent_core().handle_card_action_callback(
@@ -539,6 +544,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
     route_result = _get_event_router().route(envelope)
     if route_result.status != "accepted":
+        record_inbound_message("webhook", str((message.message_type if (message := envelope.message) else "unknown")), route_result.status)
         return {"status": route_result.status, "reason": route_result.reason}
 
     message = envelope.message
@@ -547,10 +553,12 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
     if settings.webhook.filter.ignore_bot_message and message.sender_type == "bot":
         logger.info("已忽略机器人消息", extra={"event_code": "webhook.message.ignored_bot"})
+        record_inbound_message("webhook", message.message_type, "ignored")
         return {"status": "ignored"}
 
     if settings.webhook.filter.private_chat_only and message.chat_type != "p2p":
         logger.info("已忽略非私聊消息", extra={"event_code": "webhook.message.ignored_non_private"})
+        record_inbound_message("webhook", message.message_type, "ignored")
         return {"status": "ignored"}
 
     message_type = message.message_type
@@ -560,6 +568,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             "已忽略不支持的消息类型",
             extra={"event_code": "webhook.message.ignored_type", "message_type": message_type},
         )
+        record_inbound_message("webhook", message_type, "ignored")
         return {"status": "ignored"}
 
     logger.info(
@@ -568,6 +577,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
     )
     if dedup_key and settings.webhook.dedup.enabled:
         deduplicator.mark(dedup_key)
+    record_inbound_message("webhook", message_type, "accepted")
     asyncio.create_task(_process_message_event_with_dedup(message, dedup_key))
     return {"status": "ok"}
 
@@ -652,6 +662,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     )
     if not text:
         logger.warning("消息无文本内容，结束处理", extra={"event_code": "webhook.message.empty_text"})
+        record_inbound_message("webhook", str(normalized.message_type or "unknown"), "ignored")
         return False
 
     chat_id = message.get("chat_id")
@@ -670,7 +681,12 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         user_id = f"chat:{chat_id}:anon"
     else:
         user_id = "unknown"
-    scoped_user_id = build_conversation_user_id(user_id=user_id, chat_id=str(chat_id or ""), chat_type=str(chat_type or ""))
+    scoped_user_id = build_session_key(
+        user_id=user_id,
+        chat_id=str(chat_id or ""),
+        chat_type=str(chat_type or ""),
+        channel_type="feishu",
+    )
 
     if sender_id.get("open_id"):
         logger.info(
@@ -680,6 +696,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
 
     if not chat_id:
         logger.warning("缺少 chat_id，结束处理", extra={"event_code": "webhook.message.missing_chat_id"})
+        record_inbound_message("webhook", str(normalized.message_type or "unknown"), "error")
         return False
 
     if (
@@ -727,6 +744,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                 "reason": chunk_decision.reason,
             },
         )
+        record_inbound_message("webhook", str(normalized.message_type or "unknown"), "buffered")
         return True
     text = chunk_decision.text
     
@@ -791,6 +809,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                 user_profile=user_profile,  # 传递用户档案
                 file_markdown=file_markdown,
                 file_provider=file_provider,
+                status_emitter=create_reaction_status_emitter(settings, str(message_id or "")),
             )
             if ocr_completion_text:
                 reply = _prepend_reply_text(reply, ocr_completion_text)
@@ -831,6 +850,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
             "回复发送成功",
             extra={"event_code": "webhook.reply.sent", "message_id": sent.get("message_id", "")},
         )
+        record_inbound_message("webhook", str(normalized.message_type or "unknown"), "processed")
         return True
 
     except Exception as exc:
@@ -840,5 +860,6 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
             extra={"event_code": "webhook.message.process_failed"},
             exc_info=True,
         )
+        record_inbound_message("webhook", str(normalized.message_type or "unknown"), "error")
         return False
 # endregion

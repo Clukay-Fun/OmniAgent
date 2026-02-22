@@ -16,6 +16,7 @@ import json
 import httpx
 
 from src.config import Settings
+from src.utils.metrics import record_credential_refresh
 
 
 # region 异常与管理器
@@ -38,10 +39,12 @@ class TokenManager:
         settings: Settings,
         app_id: str | None = None,
         app_secret: str | None = None,
+        org: str = "default",
     ) -> None:
         self._settings = settings
         self._app_id = str(app_id or "").strip()
         self._app_secret = str(app_secret or "").strip()
+        self._org = str(org or "default").strip() or "default"
         self._token: str | None = None
         self._expires_at: float = 0.0
         self._lock = asyncio.Lock()
@@ -61,6 +64,7 @@ class TokenManager:
         app_id = self._app_id or self._settings.feishu.app_id
         app_secret = self._app_secret or self._settings.feishu.app_secret
         if not app_id or not app_secret:
+            record_credential_refresh(self._org, "failed")
             raise FeishuAPIError("FEISHU app_id/app_secret is required")
 
         url = f"{self._settings.feishu.api_base}/auth/v3/tenant_access_token/internal"
@@ -77,11 +81,14 @@ class TokenManager:
             data = response.json()
 
         if data.get("code") != 0:
+            record_credential_refresh(self._org, "failed")
             raise FeishuAPIError(data.get("msg") or "Failed to fetch token")
         token = data.get("tenant_access_token")
         expire = data.get("expire")
         if not token or not expire:
+            record_credential_refresh(self._org, "failed")
             raise FeishuAPIError("Invalid token response")
+        record_credential_refresh(self._org, "success")
         return token, int(expire)
 # endregion
 
@@ -108,7 +115,12 @@ def get_token_manager(settings: Settings, credential_source: str = "default") ->
     source = _normalize_credential_source(credential_source)
     if source not in _token_managers:
         app_id, app_secret = _resolve_credentials(settings, source)
-        _token_managers[source] = TokenManager(settings=settings, app_id=app_id, app_secret=app_secret)
+        _token_managers[source] = TokenManager(
+            settings=settings,
+            app_id=app_id,
+            app_secret=app_secret,
+            org=source,
+        )
     return _token_managers[source]
 
 
@@ -230,4 +242,40 @@ async def update_message(
         data = response.json()
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to update message")
+
+
+async def set_message_reaction(
+    settings: Settings,
+    message_id: str,
+    reaction_type: str,
+    operator: str = "add",
+    credential_source: str = "default",
+) -> None:
+    token = await get_token_manager(settings, credential_source=credential_source).get_token()
+    normalized_message_id = str(message_id or "").strip()
+    normalized_reaction_type = str(reaction_type or "").strip()
+    normalized_operator = str(operator or "add").strip() or "add"
+    if not normalized_message_id or not normalized_reaction_type:
+        return
+
+    url = f"{settings.feishu.api_base}/im/v1/messages/{normalized_message_id}/reactions"
+    payload = {
+        "reaction_type": {
+            "emoji_type": normalized_reaction_type,
+        },
+        "operator": normalized_operator,
+    }
+    async with httpx.AsyncClient(
+        timeout=settings.feishu.message.reply_timeout,
+        trust_env=False,
+    ) as client:
+        response = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("code") != 0:
+            raise FeishuAPIError(data.get("msg") or "Failed to set message reaction")
 # endregion

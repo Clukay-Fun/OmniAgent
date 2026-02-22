@@ -46,7 +46,7 @@ def test_build_params_fills_planner_search_exact_value_from_query() -> None:
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_exact"
+    assert tool == "data.bitable.search_exact"
     assert params["field"] == "案号"
     assert params["value"] == "（2024）粤01民终28497号"
 
@@ -59,7 +59,7 @@ def test_build_params_enriches_search_person_with_entity_name() -> None:
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_person"
+    assert tool == "data.bitable.search_person"
     assert params["field"] == "主办律师"
     assert params["user_name"] == "房怡康"
 
@@ -72,7 +72,7 @@ def test_build_params_recent_hearing_defaults_date_window() -> None:
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_date_range"
+    assert tool == "data.bitable.search_date_range"
     assert "date_from" in params
     assert "date_to" in params
     assert date.fromisoformat(params["date_from"]) <= date.fromisoformat(params["date_to"])
@@ -97,7 +97,7 @@ def test_build_params_query_next_month_hearing_range() -> None:
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_date_range"
+    assert tool == "data.bitable.search_date_range"
     assert params["field"] == "开庭日"
     assert "date_from" in params and "date_to" in params
     assert date.fromisoformat(params["date_from"]) <= date.fromisoformat(params["date_to"])
@@ -118,7 +118,7 @@ def test_build_params_explicit_date_hearing() -> None:
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_date_range"
+    assert tool == "data.bitable.search_date_range"
     assert params["field"] == "开庭日"
     assert params["date_from"] == params["date_to"]
 
@@ -131,7 +131,7 @@ def test_build_params_search_with_hearing_phrase_upgrades_to_date_range() -> Non
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_date_range"
+    assert tool == "data.bitable.search_date_range"
     assert params["field"] == "开庭日"
     assert "date_from" in params and "date_to" in params
 
@@ -154,7 +154,7 @@ def test_build_params_company_query_downgrades_person_exact_to_keyword() -> None
         table_result={"table_id": "tbl_x"},
     )
 
-    assert tool == "feishu.v1.bitable.search_keyword"
+    assert tool == "data.bitable.search_keyword"
     assert params["keyword"] == "深圳市神州红国际软装艺术有限公司"
 
 

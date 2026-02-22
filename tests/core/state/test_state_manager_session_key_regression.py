@@ -11,8 +11,8 @@ from src.core.state import ConversationStateManager, MemoryStateStore
 
 def test_state_manager_group_user_isolation_unchanged() -> None:
     manager = ConversationStateManager(store=MemoryStateStore())
-    a_session = "group:oc_g1:user:ou_a"
-    b_session = "group:oc_g1:user:ou_b"
+    a_session = "feishu:group:oc_g1:user:ou_a"
+    b_session = "feishu:group:oc_g1:user:ou_b"
 
     manager.set_last_result(a_session, records=[{"record_id": "rec_a"}], query_summary="A")
     manager.set_last_result(b_session, records=[{"record_id": "rec_b"}], query_summary="B")
@@ -28,7 +28,7 @@ def test_state_manager_group_user_isolation_unchanged() -> None:
 
 def test_state_manager_session_key_alias_methods() -> None:
     manager = ConversationStateManager(store=MemoryStateStore())
-    session_key = "group:oc_g1:user:ou_alias"
+    session_key = "feishu:group:oc_g1:user:ou_alias"
 
     manager.set_last_skill(session_key, "QuerySkill")
     state = manager.get_state_by_session_key(session_key)

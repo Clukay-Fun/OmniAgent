@@ -27,8 +27,10 @@ from src.utils.metrics import (
     record_intent_parse,
     record_request,
     record_usage_log_write,
+    set_token_budget,
     set_active_sessions,
 )
+from src.core.processing_status import ProcessingStatus, ProcessingStatusEmitter, ProcessingStatusEvent
 
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
@@ -197,6 +199,7 @@ class AgentOrchestrator:
             raise ValueError("AgentOrchestrator requires an injected data_writer")
         self._data_writer: DataWriter = data_writer
         self._context_trim_tokens = max(256, min(int(settings.session.max_context_tokens), 3800))
+        set_token_budget("session_context", self._context_trim_tokens)
 
         # ============================================
         # region 任务模型初始化（意图识别/工具调用专用）
@@ -254,6 +257,7 @@ class AgentOrchestrator:
         self._file_context_enabled = bool(getattr(settings.file_context, "injection_enabled", False))
         self._file_context_max_chars = max(200, int(getattr(settings.file_context, "max_chars", 2000)))
         self._file_context_max_tokens = max(50, int(getattr(settings.file_context, "max_tokens", 500)))
+        set_token_budget("file_context", self._file_context_max_tokens)
         self._midterm_memory_store: SQLiteMidtermMemoryStore | None = None
         try:
             self._midterm_memory_store = SQLiteMidtermMemoryStore(db_path=midterm_cfg.sqlite_path)
@@ -612,6 +616,7 @@ class AgentOrchestrator:
         user_profile: Any = None,
         file_markdown: str = "",
         file_provider: str = "none",
+        status_emitter: ProcessingStatusEmitter | None = None,
     ) -> dict[str, Any]:
         """
         处理用户消息
@@ -765,6 +770,13 @@ class AgentOrchestrator:
                             file_markdown=file_markdown,
                             file_provider=file_provider,
                         )
+                        await self._emit_processing_status(
+                            status_emitter,
+                            ProcessingStatus.THINKING,
+                            user_id,
+                            chat_id,
+                            chat_type,
+                        )
 
                         planner_start = time.perf_counter()
                         planner_output = await self._planner.plan(text)
@@ -860,6 +872,13 @@ class AgentOrchestrator:
                             )
                         else:
                             assert intent is not None
+                            await self._emit_processing_status(
+                                status_emitter,
+                                ProcessingStatus.SEARCHING,
+                                user_id,
+                                chat_id,
+                                chat_type,
+                            )
                             result = await self._router.route(intent, context)
                         usage_skill = result.skill_name
 
@@ -923,6 +942,14 @@ class AgentOrchestrator:
                 "text": self._settings.reply.templates.error.format(message="处理出错"),
             }
         finally:
+            await self._emit_processing_status(
+                status_emitter,
+                ProcessingStatus.DONE,
+                user_id,
+                chat_id,
+                chat_type,
+                metadata={"status": status},
+            )
             # 记录请求指标
             duration = time.perf_counter() - start_time
             record_request("handle_message", status)
@@ -954,6 +981,35 @@ class AgentOrchestrator:
             pass
         
         return reply
+
+    async def _emit_processing_status(
+        self,
+        emitter: ProcessingStatusEmitter | None,
+        status: ProcessingStatus,
+        user_id: str,
+        chat_id: str | None,
+        chat_type: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if emitter is None:
+            return
+        try:
+            maybe_awaitable = emitter(
+                ProcessingStatusEvent(
+                    status=status,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    metadata=metadata or {},
+                )
+            )
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+        except Exception:
+            logger.warning(
+                "处理状态事件发送失败",
+                extra={"event_code": "orchestrator.processing_status.emit_failed", "status": status.value},
+            )
 
     async def handle_card_action_callback(
         self,

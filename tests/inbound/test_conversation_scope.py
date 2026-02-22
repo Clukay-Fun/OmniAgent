@@ -12,7 +12,7 @@ from src.api.conversation_scope import build_conversation_user_id
 def test_group_chat_scope_includes_group_and_user() -> None:
     scoped = build_conversation_user_id("ou_a", chat_id="oc_g1", chat_type="group")
 
-    assert scoped == "group:oc_g1:user:ou_a"
+    assert scoped == "feishu:group:oc_g1:user:ou_a"
 
 
 def test_p2p_scope_keeps_plain_user_id() -> None:

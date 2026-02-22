@@ -135,6 +135,41 @@ if PROMETHEUS_AVAILABLE:
         "Total automation dead-letter records",
     )
 
+    INBOUND_MESSAGE_COUNT = Counter(
+        "inbound_messages_total",
+        "Total inbound messages by source/type/status",
+        ["source", "message_type", "status"],
+    )
+
+    TOKEN_BUDGET_GAUGE = Gauge(
+        "token_budget",
+        "Configured token budget by layer",
+        ["layer"],
+    )
+
+    USER_MAPPING_MISS_COUNT = Counter(
+        "user_mapping_miss_total",
+        "Total user mapping misses by user name",
+        ["user_name"],
+    )
+
+    CREDENTIAL_REFRESH_COUNT = Counter(
+        "credential_refresh_total",
+        "Credential refresh attempts by org/status",
+        ["org", "status"],
+    )
+
+    BITABLE_QUERY_LATENCY = Histogram(
+        "bitable_query_latency_seconds",
+        "Latency of bitable query tool calls",
+        buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    )
+
+    DEAD_LETTER_FILE_SIZE_GAUGE = Gauge(
+        "dead_letter_file_size_bytes",
+        "Dead letter file size in bytes",
+    )
+
     FIELD_FORMAT_COUNT = Counter(
         "field_format_total",
         "Total field formatting outcomes by type and status",
@@ -220,6 +255,12 @@ else:
     AUTOMATION_RULE_COUNT = DummyMetric()
     AUTOMATION_ACTION_COUNT = DummyMetric()
     AUTOMATION_DEAD_LETTER_COUNT = DummyMetric()
+    INBOUND_MESSAGE_COUNT = DummyMetric()
+    TOKEN_BUDGET_GAUGE = DummyMetric()
+    USER_MAPPING_MISS_COUNT = DummyMetric()
+    CREDENTIAL_REFRESH_COUNT = DummyMetric()
+    BITABLE_QUERY_LATENCY = DummyMetric()
+    DEAD_LETTER_FILE_SIZE_GAUGE = DummyMetric()
     FIELD_FORMAT_COUNT = DummyMetric()
     CARD_TEMPLATE_COUNT = DummyMetric()
     STATE_STORE_BACKEND_COUNT = DummyMetric()
@@ -301,6 +342,46 @@ def record_automation_action(action: str, status: str) -> None:
 def record_automation_dead_letter() -> None:
     """记录 automation dead-letter 次数。"""
     AUTOMATION_DEAD_LETTER_COUNT.inc()
+
+
+def record_inbound_message(source: str, message_type: str, status: str) -> None:
+    """记录 inbound message 处理结果。"""
+    INBOUND_MESSAGE_COUNT.labels(
+        source=str(source or "unknown"),
+        message_type=str(message_type or "unknown"),
+        status=str(status or "unknown"),
+    ).inc()
+
+
+def set_token_budget(layer: str, tokens: int) -> None:
+    """记录 token budget 配置值。"""
+    TOKEN_BUDGET_GAUGE.labels(layer=str(layer or "unknown")).set(max(0, int(tokens)))
+
+
+def record_user_mapping_miss(user_name: str) -> None:
+    """记录用户身份映射失败。"""
+    label = str(user_name or "unknown").strip() or "unknown"
+    USER_MAPPING_MISS_COUNT.labels(user_name=label).inc()
+
+
+def record_credential_refresh(org: str, status: str) -> None:
+    """记录凭据刷新结果。"""
+    CREDENTIAL_REFRESH_COUNT.labels(
+        org=str(org or "default"),
+        status=str(status or "unknown"),
+    ).inc()
+
+
+def observe_bitable_query_latency(duration_seconds: float) -> None:
+    """记录 bitable 查询耗时。"""
+    if duration_seconds <= 0:
+        return
+    BITABLE_QUERY_LATENCY.observe(duration_seconds)
+
+
+def observe_dead_letter_file_size_bytes(size_bytes: int) -> None:
+    """记录 dead letter 文件体积。"""
+    DEAD_LETTER_FILE_SIZE_GAUGE.set(max(0, int(size_bytes)))
 
 
 def record_field_format(field_type: str, status: str) -> None:

@@ -112,7 +112,7 @@ def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
 
     class _FakeAgentCore:
         async def handle_message(self, user_id, text, **kwargs):
-            assert user_id == "group:oc_group_1:user:ou_test_user"
+            assert user_id == "feishu:group:oc_group_1:user:ou_test_user"
             assert text == "删除第一个。"
             assert kwargs["chat_id"] == "oc_group_1"
             return {"type": "text", "text": "ok"}
@@ -382,6 +382,38 @@ def test_webhook_card_callback_returns_processed(monkeypatch) -> None:
 
     assert result["status"] == "ok"
     assert "已处理" in result["reason"]
+
+
+def test_webhook_card_callback_group_user_isolation_session_key(monkeypatch) -> None:
+    class _FakeRequest:
+        async def json(self):
+            return {
+                "header": {"event_id": "evt_cb_group_1"},
+                "event": {
+                    "operator": {"operator_id": {"open_id": "ou_group_u1"}},
+                    "open_chat_id": "oc_group_1",
+                    "chat_type": "group",
+                    "action": {"value": {"callback_action": "delete_record_confirm"}},
+                },
+            }
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action):
+            assert user_id == "feishu:group:oc_group_1:user:ou_group_u1"
+            assert callback_action == "delete_record_confirm"
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+
+    result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
+
+    assert result["status"] == "ok"
 
 
 def test_webhook_card_callback_returns_expired(monkeypatch) -> None:

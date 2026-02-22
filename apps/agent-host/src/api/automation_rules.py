@@ -15,6 +15,7 @@ from src.utils.metrics import (
     record_automation_action,
     record_automation_dead_letter,
     record_automation_rule,
+    observe_dead_letter_file_size_bytes,
 )
 
 
@@ -504,6 +505,10 @@ class AutomationActionExecutor:
         self._dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
         with self._dead_letter_path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        try:
+            observe_dead_letter_file_size_bytes(self._dead_letter_path.stat().st_size)
+        except Exception:
+            pass
 
 
 def resolve_default_automation_rules_path(workspace_root: Path) -> Path:

@@ -17,9 +17,9 @@ from src.core.types import SkillContext  # noqa: E402
 
 class _FakeMCPClient:
     async def call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
-        if tool_name == "feishu.v1.bitable.list_tables":
+        if tool_name == "data.bitable.list_tables":
             return {"tables": [{"table_name": "案件项目总库", "table_id": "tbl_case_1"}]}
-        if tool_name.startswith("feishu.v1.bitable.search"):
+        if tool_name.startswith("data.bitable.search"):
             return {
                 "records": [
                     {

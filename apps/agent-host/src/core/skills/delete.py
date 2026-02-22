@@ -395,10 +395,10 @@ class DeleteSkill(BaseSkill):
         tool_name = None
         params: dict[str, Any] = {}
         if exact_case:
-            tool_name = "feishu.v1.bitable.search_exact"
+            tool_name = "data.bitable.search_exact"
             params = {"field": "案号", "value": exact_case.group(1).strip()}
         elif exact_project:
-            tool_name = "feishu.v1.bitable.search_exact"
+            tool_name = "data.bitable.search_exact"
             params = {"field": "项目ID", "value": exact_project.group(1).strip()}
 
         if table_id:

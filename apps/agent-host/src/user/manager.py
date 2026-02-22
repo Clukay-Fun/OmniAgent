@@ -15,6 +15,7 @@ from src.user import UserProfile
 from src.user.cache import UserCache
 from src.user.matcher import UserMatcher
 from src.utils.feishu_api import get_token_manager
+from src.utils.metrics import record_user_mapping_miss
 from src.config import Settings
 import httpx
 
@@ -206,6 +207,7 @@ class UserManager:
                 f"(confidence={confidence:.2f})"
             )
         else:
+            record_user_mapping_miss(profile.name)
             logger.info(
                 f"Auto-match failed for user {profile.open_id} (name='{profile.name}', "
                 f"confidence={confidence:.2f})"
