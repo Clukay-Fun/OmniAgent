@@ -115,6 +115,8 @@ class CreateSkill(BaseSkill):
         pending_payload = self._extract_pending_create(extra)
         has_pending_flow = bool(pending_payload)
         pending_action_name = str(pending_payload.get("repair_action") or "create_record").strip() if has_pending_flow else "create_record"
+        raw_idempotency_key = pending_payload.get("idempotency_key") or extra.get("idempotency_key")
+        idempotency_key = str(raw_idempotency_key).strip() if raw_idempotency_key else None
         if pending_payload.get("table_id") and not table_ctx.table_id:
             table_ctx.table_id = str(pending_payload.get("table_id"))
         if pending_payload.get("table_name") and not table_ctx.table_name:
@@ -176,6 +178,7 @@ class CreateSkill(BaseSkill):
                 awaiting_duplicate_confirm=True,
                 duplicate_count=duplicate_count,
                 duplicate_checked=True,
+                idempotency_key=idempotency_key,
             )
 
         if not missing_fields and not skip_duplicate_check:
@@ -197,6 +200,7 @@ class CreateSkill(BaseSkill):
                         awaiting_duplicate_confirm=True,
                         duplicate_count=duplicate_count,
                         duplicate_checked=True,
+                        idempotency_key=idempotency_key,
                     )
                 duplicate_checked = True
 
@@ -210,6 +214,7 @@ class CreateSkill(BaseSkill):
                 message="缺少必填字段",
                 reply_text=self._build_missing_fields_reply(missing_fields),
                 duplicate_checked=duplicate_checked,
+                idempotency_key=idempotency_key,
             )
 
         if has_pending_flow and auto_submit and not has_new_input and not self._is_confirm(query):
@@ -223,6 +228,7 @@ class CreateSkill(BaseSkill):
                 reply_text="请按“字段是值”的格式继续补录子表数据。",
                 duplicate_checked=duplicate_checked,
                 skip_duplicate_check=skip_duplicate_check,
+                idempotency_key=idempotency_key,
             )
 
         if has_pending_flow and not auto_submit and awaiting_confirm and not self._is_confirm(query):
@@ -236,6 +242,7 @@ class CreateSkill(BaseSkill):
                 reply_text=self._build_confirm_reply(fields),
                 awaiting_confirm=True,
                 duplicate_checked=duplicate_checked,
+                idempotency_key=idempotency_key,
             )
 
         if has_pending_flow and not auto_submit and not awaiting_confirm and not self._is_confirm(query):
@@ -249,6 +256,7 @@ class CreateSkill(BaseSkill):
                 reply_text=self._build_confirm_reply(fields),
                 awaiting_confirm=True,
                 duplicate_checked=duplicate_checked,
+                idempotency_key=idempotency_key,
             )
 
         adapted_fields, unresolved, available = await self._table_adapter.adapt_fields_for_table(
@@ -280,6 +288,7 @@ class CreateSkill(BaseSkill):
             write_result = await self._data_writer.create(
                 table_ctx.table_id,
                 fields,
+                idempotency_key=idempotency_key,
             )
 
             if not write_result.success:
@@ -469,6 +478,7 @@ class CreateSkill(BaseSkill):
         duplicate_count: int = 0,
         duplicate_checked: bool = False,
         skip_duplicate_check: bool = False,
+        idempotency_key: str | None = None,
     ) -> SkillResult:
         payload: dict[str, Any] = {
             "fields": fields,
@@ -481,6 +491,8 @@ class CreateSkill(BaseSkill):
             "table_id": table_id,
             "table_name": table_name,
         }
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
         return SkillResult(
             success=True,
             skill_name=self.name,

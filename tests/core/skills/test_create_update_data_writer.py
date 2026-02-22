@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -107,7 +108,96 @@ def test_create_skill_success_uses_data_writer() -> None:
     assert result.data.get("record_id") == "rec_create"
 
 
-def test_update_skill_success_uses_data_writer() -> None:
+def _prepare_update_pending(skill: UpdateSkill) -> dict[str, Any]:
+    first = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="请更新这条记录",
+                user_id="u1",
+                extra={
+                    "idempotency_key": "idem-update-1",
+                    "active_record": {
+                        "record_id": "rec_123",
+                        "fields": {"案件状态": "待处理"},
+                        "fields_text": {"案件状态": "待处理"},
+                    },
+                    "planner_plan": {
+                        "tool": "record.update",
+                        "params": {
+                            "record_id": "rec_123",
+                            "fields": {"案件状态": "进行中"},
+                        },
+                    },
+                },
+            )
+        )
+    )
+    assert first.success is True
+    pending_action = first.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    return pending_action
+
+
+def test_update_skill_regular_flow_returns_pending_before_write() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    pending_action = _prepare_update_pending(skill)
+
+    assert writer.update_calls == []
+    assert pending_action.get("action") == "update_record"
+    assert pending_action.get("ttl_seconds") == 60
+
+
+def test_update_skill_confirm_executes_write_with_idempotency_key() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    pending_action = _prepare_update_pending(skill)
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="确认",
+                user_id="u1",
+                extra={"pending_action": pending_action},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert len(writer.update_calls) == 1
+    assert writer.update_calls[0]["record_id"] == "rec_123"
+    assert writer.update_calls[0]["table_id"] == "tbl_main"
+    assert writer.update_calls[0]["idempotency_key"] == "idem-update-1"
+
+
+def test_update_skill_pending_cancel_clears_without_write() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    pending_action = _prepare_update_pending(skill)
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="取消",
+                user_id="u1",
+                extra={"pending_action": pending_action},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert result.data.get("clear_pending_action") is True
+    assert writer.update_calls == []
+
+
+def test_update_skill_diff_empty_returns_noop_without_pending() -> None:
     writer = _FakeWriter()
     skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
     skill._table_adapter = _FakeTableAdapter()
@@ -119,11 +209,84 @@ def test_update_skill_success_uses_data_writer() -> None:
                 query="请更新这条记录",
                 user_id="u1",
                 extra={
+                    "active_record": {
+                        "record_id": "rec_123",
+                        "fields": {"案件状态": "进行中"},
+                        "fields_text": {"案件状态": "进行中"},
+                    },
                     "planner_plan": {
                         "tool": "record.update",
                         "params": {
                             "record_id": "rec_123",
                             "fields": {"案件状态": "进行中"},
+                        },
+                    },
+                },
+            )
+        )
+    )
+
+    assert result.success is True
+    assert "无需更新" in result.reply_text
+    assert result.data.get("pending_action") is None
+    assert writer.update_calls == []
+
+
+def test_update_skill_pending_timeout_clears_action() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    expired_pending = {
+        "action": "update_record",
+        "payload": {
+            "record_id": "rec_123",
+            "fields": {"案件状态": "进行中"},
+            "source_fields": {"案件状态": "待处理"},
+            "diff": [{"field": "案件状态", "old": "待处理", "new": "进行中"}],
+            "table_id": "tbl_main",
+            "table_name": "案件台账",
+            "idempotency_key": "idem-update-timeout",
+            "created_at": time.time() - 120,
+            "pending_ttl_seconds": 60,
+        },
+    }
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="确认",
+                user_id="u1",
+                extra={"pending_action": expired_pending},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert result.data.get("clear_pending_action") is True
+    assert "超时" in result.reply_text
+    assert writer.update_calls == []
+
+
+def test_create_skill_pending_confirm_uses_payload_and_idempotency_key() -> None:
+    writer = _FakeWriter()
+    skill = CreateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="确认",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "create_record",
+                        "payload": {
+                            "fields": {"案号": "A-010", "委托人": "甲公司", "案由": "合同纠纷"},
+                            "required_fields": ["案号", "委托人", "案由"],
+                            "awaiting_confirm": True,
+                            "idempotency_key": "idem-create-1",
                         },
                     }
                 },
@@ -132,9 +295,74 @@ def test_update_skill_success_uses_data_writer() -> None:
     )
 
     assert result.success is True
-    assert len(writer.update_calls) == 1
-    assert writer.update_calls[0]["record_id"] == "rec_123"
-    assert writer.update_calls[0]["table_id"] == "tbl_main"
+    assert len(writer.create_calls) == 1
+    assert writer.create_calls[0]["idempotency_key"] == "idem-create-1"
+
+
+def test_create_skill_pending_cancel_returns_clear_flag_without_write() -> None:
+    writer = _FakeWriter()
+    skill = CreateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="取消",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "create_record",
+                        "payload": {
+                            "fields": {"案号": "A-011"},
+                            "required_fields": ["案号", "委托人", "案由"],
+                            "awaiting_confirm": True,
+                        },
+                    }
+                },
+            )
+        )
+    )
+
+    assert result.success is True
+    assert result.data.get("clear_pending_action") is True
+    assert writer.create_calls == []
+
+
+def test_create_skill_pending_waiting_confirm_keeps_pending_action() -> None:
+    writer = _FakeWriter()
+    skill = CreateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="先这样",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "create_record",
+                        "payload": {
+                            "fields": {"案号": "A-012", "委托人": "乙公司", "案由": "借款纠纷"},
+                            "required_fields": ["案号", "委托人", "案由"],
+                            "awaiting_confirm": True,
+                            "idempotency_key": "idem-create-2",
+                        },
+                    }
+                },
+            )
+        )
+    )
+
+    assert result.success is True
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    assert pending_action.get("action") == "create_record"
+    payload = pending_action.get("payload") or {}
+    assert payload.get("awaiting_confirm") is True
+    assert payload.get("idempotency_key") == "idem-create-2"
+    assert writer.create_calls == []
 
 
 def test_create_skill_writer_failure_returns_skill_failure() -> None:

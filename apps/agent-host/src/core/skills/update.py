@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import time
 from typing import Any
 
 from src.core.skills.base import BaseSkill
@@ -83,6 +86,11 @@ class UpdateSkill(BaseSkill):
 
         self._confirm_phrases = {"确认", "是", "是的", "ok", "yes"}
         self._cancel_phrases = {"取消", "算了", "不了", "不用了"}
+        confirm_ttl_seconds = update_cfg.get("confirm_ttl_seconds", 60)
+        try:
+            self._confirm_ttl_seconds = max(1, int(confirm_ttl_seconds))
+        except Exception:
+            self._confirm_ttl_seconds = 60
         self._field_aliases = {
             "状态": "案件状态",
             "案件状态": "案件状态",
@@ -114,15 +122,23 @@ class UpdateSkill(BaseSkill):
         """
         query = context.query.strip()
         extra = context.extra or {}
+        raw_idempotency_key = extra.get("idempotency_key")
+        idempotency_key = str(raw_idempotency_key).strip() if raw_idempotency_key else None
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
 
         pending_action, pending_payload = self._extract_pending_update(extra)
-        if pending_action and pending_payload:
+        if pending_action == "repair_child_update" and pending_payload:
             return await self._execute_pending_repair(
                 query=query,
                 pending_action=pending_action,
+                pending_payload=pending_payload,
+                table_ctx=table_ctx,
+            )
+        if pending_action == "update_record" and pending_payload:
+            return await self._execute_pending_update(
+                query=query,
                 pending_payload=pending_payload,
                 table_ctx=table_ctx,
             )
@@ -169,6 +185,11 @@ class UpdateSkill(BaseSkill):
         if planner_record_id:
             record_id = planner_record_id
             record = records[0] if records else {}
+            active_record = extra.get("active_record")
+            if isinstance(active_record, dict):
+                active_record_id = str(active_record.get("record_id") or "").strip()
+                if active_record_id and active_record_id == planner_record_id:
+                    record = active_record
         else:
             record = records[0]
             record_id = record.get("record_id")
@@ -235,88 +256,37 @@ class UpdateSkill(BaseSkill):
 
         if adapted_fields:
             fields = adapted_fields
-        
-        # 调用 MCP 更新工具
-        try:
-            write_result = await self._data_writer.update(
-                table_ctx.table_id,
-                record_id,
-                fields,
-            )
 
-            if not write_result.success:
-                error = write_result.error or "未知错误"
-                return SkillResult(
-                    success=False,
-                    skill_name=self.name,
-                    message=f"更新失败: {error}",
-                    reply_text=f"更新失败：{error}",
-                )
-            
-            record_url = write_result.record_url or ""
-            updated_fields = write_result.fields if isinstance(write_result.fields, dict) else {}
-            
-            # 构建回复
-            opener = pool.pick("update_success", "✅ 更新成功！")
-            field_list = "\n".join([f"  • {k}: {v}" for k, v in fields.items()])
-            reply_text = (
-                f"{opener}\n\n"
-                f"已更新字段：\n{field_list}\n\n"
-                f"🔗 查看详情：{record_url}"
-            )
-
-            source_fields = record.get("fields_text") if isinstance(record, dict) else None
-            if not isinstance(source_fields, dict):
-                source_fields = record.get("fields") if isinstance(record, dict) else {}
-            link_sync = await self._linker.sync_after_update(
-                parent_table_id=table_ctx.table_id,
-                parent_table_name=table_ctx.table_name,
-                updated_fields=fields,
-                source_fields=source_fields if isinstance(source_fields, dict) else {},
-            )
-            link_summary = self._linker.summarize(link_sync)
-            repair_payload = self._linker.build_repair_pending(link_sync)
-            pending_action = None
-            if repair_payload:
-                repair_action = str(repair_payload.get("repair_action") or "repair_child_create").strip()
-                pending_action = {
-                    "action": repair_action,
-                    "payload": repair_payload,
-                }
-                reply_text += (
-                    "\n\n"
-                    "子表同步失败，请补充或修正后继续。"
-                    "例如：金额是1000，状态是待支付。"
-                )
-            if link_summary:
-                reply_text += f"\n\n{link_summary}"
-            
+        source_fields = self._extract_source_fields(record)
+        diff_items = self._build_update_diff(source_fields, fields)
+        if not diff_items:
             return SkillResult(
                 success=True,
                 skill_name=self.name,
                 data={
-                    "clear_pending_action": False if pending_action else True,
-                    "pending_action": pending_action,
+                    "clear_pending_action": True,
                     "record_id": record_id,
-                    "updated_fields": fields,
-                    "record_url": record_url,
                     "table_id": table_ctx.table_id,
                     "table_name": table_ctx.table_name,
-                    "source_fields": source_fields if isinstance(source_fields, dict) else {},
-                    "link_sync": link_sync,
                 },
-                message="更新成功",
-                reply_text=reply_text,
+                message="无字段变更",
+                reply_text="该字段已是目标值，无需更新。",
             )
-            
-        except Exception as e:
-            logger.error(f"UpdateSkill execution error: {e}", exc_info=True)
-            return SkillResult(
-                success=False,
-                skill_name=self.name,
-                message=str(e),
-                reply_text=pool.pick("error", "更新失败，请稍后重试。"),
-            )
+
+        if not idempotency_key:
+            idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
+
+        return self._build_pending_update_result(
+            record_id=record_id,
+            fields=fields,
+            source_fields=source_fields,
+            diff_items=diff_items,
+            table_id=table_ctx.table_id,
+            table_name=table_ctx.table_name,
+            idempotency_key=idempotency_key,
+            created_at=time.time(),
+            ttl_seconds=self._confirm_ttl_seconds,
+        )
     
     def _parse_update_fields(self, query: str) -> dict[str, Any]:
         """
@@ -367,12 +337,304 @@ class UpdateSkill(BaseSkill):
         if not isinstance(pending, dict):
             return None, {}
         action = str(pending.get("action") or "").strip()
-        if action not in {"repair_child_update"}:
+        if action not in {"repair_child_update", "update_record"}:
             return None, {}
         payload = pending.get("payload")
         if not isinstance(payload, dict):
             return None, {}
         return action, payload
+
+    async def _execute_pending_update(
+        self,
+        *,
+        query: str,
+        pending_payload: dict[str, Any],
+        table_ctx: Any,
+    ) -> SkillResult:
+        if self._is_cancel(query):
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="已取消更新",
+                reply_text="好的，已取消更新操作。",
+            )
+
+        if self._is_pending_expired(pending_payload):
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="更新确认已超时",
+                reply_text="本次更新确认已超时，请重新发起更新。",
+            )
+
+        if not self._is_confirm(query):
+            created_at_raw = pending_payload.get("created_at")
+            try:
+                created_at = float(str(created_at_raw))
+            except Exception:
+                created_at = time.time()
+            fields_raw = pending_payload.get("fields")
+            fields: dict[str, Any] = dict(fields_raw) if isinstance(fields_raw, dict) else {}
+            source_fields_raw = pending_payload.get("source_fields")
+            source_fields: dict[str, Any] = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
+            diff_raw = pending_payload.get("diff")
+            diff_items: list[dict[str, str]] = []
+            if isinstance(diff_raw, list):
+                for item in diff_raw:
+                    if not isinstance(item, dict):
+                        continue
+                    diff_items.append(
+                        {
+                            "field": str(item.get("field") or ""),
+                            "old": str(item.get("old") or ""),
+                            "new": str(item.get("new") or ""),
+                        }
+                    )
+            return self._build_pending_update_result(
+                record_id=str(pending_payload.get("record_id") or "").strip(),
+                fields=fields,
+                source_fields=source_fields,
+                diff_items=diff_items,
+                table_id=str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None,
+                table_name=str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None,
+                idempotency_key=str(pending_payload.get("idempotency_key") or "").strip() or None,
+                created_at=created_at,
+                ttl_seconds=self._resolve_pending_ttl(pending_payload.get("pending_ttl_seconds")),
+            )
+
+        record_id = str(pending_payload.get("record_id") or "").strip()
+        if not record_id:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="更新确认缺少 record_id",
+                reply_text="更新失败：缺少目标记录，请重新发起。",
+            )
+
+        table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
+        table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        fields_raw = pending_payload.get("fields")
+        fields: dict[str, Any] = dict(fields_raw) if isinstance(fields_raw, dict) else {}
+        source_fields_raw = pending_payload.get("source_fields")
+        source_fields: dict[str, Any] = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
+        diff_items = self._build_update_diff(source_fields, fields)
+        if not diff_items:
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True, "record_id": record_id, "table_id": table_id, "table_name": table_name},
+                message="无字段变更",
+                reply_text="该字段已是目标值，无需更新。",
+            )
+
+        idempotency_key = str(pending_payload.get("idempotency_key") or "").strip() or None
+        if not idempotency_key:
+            idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
+
+        try:
+            write_result = await self._data_writer.update(
+                table_id,
+                record_id,
+                fields,
+                idempotency_key=idempotency_key,
+            )
+            if not write_result.success:
+                error = write_result.error or "未知错误"
+                return self._build_pending_update_result(
+                    record_id=record_id,
+                    fields=fields,
+                    source_fields=source_fields,
+                    diff_items=diff_items,
+                    table_id=table_id,
+                    table_name=table_name,
+                    idempotency_key=idempotency_key,
+                    created_at=time.time(),
+                    ttl_seconds=self._confirm_ttl_seconds,
+                    reply_text=f"更新失败：{error}\n请回复“确认”重试，或回复“取消”终止。",
+                )
+
+            record_url = write_result.record_url or ""
+            opener = pool.pick("update_success", "✅ 更新成功！")
+            field_list = "\n".join([f"  • {k}: {v}" for k, v in fields.items()])
+            reply_text = f"{opener}\n\n已更新字段：\n{field_list}\n\n🔗 查看详情：{record_url}"
+
+            link_sync = await self._linker.sync_after_update(
+                parent_table_id=table_id,
+                parent_table_name=table_name,
+                updated_fields=fields,
+                source_fields=source_fields,
+            )
+            link_summary = self._linker.summarize(link_sync)
+            repair_payload = self._linker.build_repair_pending(link_sync)
+            next_pending_action = None
+            if repair_payload:
+                repair_action = str(repair_payload.get("repair_action") or "repair_child_create").strip()
+                next_pending_action = {
+                    "action": repair_action,
+                    "payload": repair_payload,
+                }
+                reply_text += (
+                    "\n\n"
+                    "子表同步失败，请补充或修正后继续。"
+                    "例如：金额是1000，状态是待支付。"
+                )
+            if link_summary:
+                reply_text += f"\n\n{link_summary}"
+
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={
+                    "clear_pending_action": False if next_pending_action else True,
+                    "pending_action": next_pending_action,
+                    "record_id": record_id,
+                    "updated_fields": fields,
+                    "record_url": record_url,
+                    "table_id": table_id,
+                    "table_name": table_name,
+                    "source_fields": source_fields,
+                    "link_sync": link_sync,
+                },
+                message="更新成功",
+                reply_text=reply_text,
+            )
+        except Exception as exc:
+            logger.error("UpdateSkill pending execution error: %s", exc, exc_info=True)
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message=str(exc),
+                reply_text=pool.pick("error", "更新失败，请稍后重试。"),
+            )
+
+    def _is_pending_expired(self, pending_payload: dict[str, Any]) -> bool:
+        created_at = pending_payload.get("created_at")
+        try:
+            created_at_value = float(str(created_at))
+        except Exception:
+            return False
+        ttl_seconds = self._resolve_pending_ttl(pending_payload.get("pending_ttl_seconds"))
+        return (time.time() - created_at_value) >= ttl_seconds
+
+    def _resolve_pending_ttl(self, ttl_raw: Any) -> int:
+        try:
+            ttl_seconds = int(str(ttl_raw))
+        except Exception:
+            ttl_seconds = self._confirm_ttl_seconds
+        return max(1, ttl_seconds)
+
+    def _build_pending_update_result(
+        self,
+        *,
+        record_id: str,
+        fields: dict[str, Any],
+        source_fields: dict[str, Any],
+        diff_items: list[dict[str, str]],
+        table_id: str | None,
+        table_name: str | None,
+        idempotency_key: str | None,
+        created_at: float,
+        ttl_seconds: int,
+        reply_text: str | None = None,
+    ) -> SkillResult:
+        payload: dict[str, Any] = {
+            "record_id": record_id,
+            "fields": fields,
+            "source_fields": source_fields,
+            "diff": diff_items,
+            "table_id": table_id,
+            "table_name": table_name,
+            "created_at": created_at,
+            "pending_ttl_seconds": ttl_seconds,
+        }
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+        return SkillResult(
+            success=True,
+            skill_name=self.name,
+            data={
+                "pending_action": {
+                    "action": "update_record",
+                    "payload": payload,
+                    "ttl_seconds": ttl_seconds,
+                },
+                "record_id": record_id,
+                "table_id": table_id,
+                "table_name": table_name,
+                "updated_fields": fields,
+                "source_fields": source_fields,
+            },
+            message="等待确认更新",
+            reply_text=reply_text or self._build_update_confirm_reply(diff_items, ttl_seconds),
+        )
+
+    def _build_update_confirm_reply(self, diff_items: list[dict[str, str]], ttl_seconds: int) -> str:
+        lines = ["请确认以下更新（旧值 -> 新值）："]
+        for item in diff_items:
+            field = str(item.get("field") or "")
+            old = str(item.get("old") or "")
+            new = str(item.get("new") or "")
+            lines.append(f"- {field}: {old} -> {new}")
+        lines.append(f"请在 {ttl_seconds} 秒内回复“确认”继续，回复“取消”终止。")
+        return "\n".join(lines)
+
+    def _extract_source_fields(self, record: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(record, dict):
+            return {}
+        fields_text = record.get("fields_text")
+        if isinstance(fields_text, dict):
+            return dict(fields_text)
+        fields = record.get("fields")
+        if isinstance(fields, dict):
+            return dict(fields)
+        return {}
+
+    def _build_update_diff(self, source_fields: dict[str, Any], target_fields: dict[str, Any]) -> list[dict[str, str]]:
+        diff_items: list[dict[str, str]] = []
+        for key, new_value in target_fields.items():
+            old_value = source_fields.get(key)
+            if self._value_equal(old_value, new_value):
+                continue
+            diff_items.append(
+                {
+                    "field": str(key),
+                    "old": self._to_text(old_value),
+                    "new": self._to_text(new_value),
+                }
+            )
+        return diff_items
+
+    def _value_equal(self, old_value: Any, new_value: Any) -> bool:
+        if isinstance(old_value, (dict, list)) or isinstance(new_value, (dict, list)):
+            try:
+                old_norm = json.dumps(old_value, ensure_ascii=False, sort_keys=True)
+                new_norm = json.dumps(new_value, ensure_ascii=False, sort_keys=True)
+                return old_norm == new_norm
+            except Exception:
+                return self._to_text(old_value) == self._to_text(new_value)
+        return self._to_text(old_value) == self._to_text(new_value)
+
+    def _to_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(value)
+        return str(value).strip()
+
+    def _build_update_idempotency_key(self, *, record_id: str, fields: dict[str, Any]) -> str:
+        payload = {
+            "record_id": record_id,
+            "fields": fields,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        digest = hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
+        return f"update-{digest}"
 
     async def _execute_pending_repair(
         self,
@@ -393,6 +655,8 @@ class UpdateSkill(BaseSkill):
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
         table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        raw_idempotency_key = pending_payload.get("idempotency_key")
+        idempotency_key = str(raw_idempotency_key).strip() if raw_idempotency_key else None
         if not table_id:
             return SkillResult(
                 success=False,
@@ -534,6 +798,7 @@ class UpdateSkill(BaseSkill):
                 table_id,
                 record_id,
                 fields,
+                idempotency_key=idempotency_key,
             )
             if not result.success:
                 error = str(result.error or "子表更新失败")

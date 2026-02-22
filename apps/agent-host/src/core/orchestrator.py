@@ -1329,11 +1329,19 @@ class AgentOrchestrator:
             if isinstance(pending_action_data, dict):
                 action = str(pending_action_data.get("action") or "").strip()
                 payload = pending_action_data.get("payload")
+                ttl_seconds = None
+                raw_ttl = pending_action_data.get("ttl_seconds")
+                try:
+                    if raw_ttl is not None and str(raw_ttl).strip() != "":
+                        ttl_seconds = max(1, int(raw_ttl))
+                except Exception:
+                    ttl_seconds = None
                 if action:
                     self._state_manager.set_pending_action(
                         user_id,
                         action=action,
                         payload=payload if isinstance(payload, dict) else {},
+                        ttl_seconds=ttl_seconds,
                     )
             if bool(data.get("clear_pending_action")):
                 self._state_manager.clear_pending_action(user_id)
