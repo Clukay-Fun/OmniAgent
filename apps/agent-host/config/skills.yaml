@@ -152,6 +152,7 @@ reminder:
     low: [有空, 方便时]
 
 chitchat:
+  allow_llm: false
   whitelist:
     - 你好
     - 早上好

@@ -23,6 +23,7 @@ class L0Decision:
     force_skill: str | None = None
     force_last_result: dict[str, Any] | None = None
     force_extra: dict[str, Any] = field(default_factory=dict)
+    intent_hint: str | None = None
 
 
 class L0RuleEngine:
@@ -71,6 +72,19 @@ class L0RuleEngine:
             "状态", "进展", "金额", "费用", "付款", "第", "这个", "那条",
         }
         self._generic_confirm_tokens = {"确认", "是", "是的", "ok", "yes"}
+
+        chitchat_cfg = self._skills_config.get("chitchat", {})
+        if not chitchat_cfg:
+            chitchat_cfg = self._skills_config.get("skills", {}).get("chitchat", {})
+        whitelist = chitchat_cfg.get("whitelist", [])
+        self._chitchat_keywords = {
+            str(item).strip().lower() for item in whitelist if str(item).strip()
+        }
+        self._chitchat_keywords.update({"在吗", "吃了吗", "你是谁", "你好呀", "hello", "hi"})
+        self._domain_hints = {
+            "案件", "案号", "项目", "开庭", "庭审", "法院", "律师", "当事人",
+            "委托人", "提醒", "查询", "新增", "更新", "删除", "总结",
+        }
 
     def evaluate(self, user_id: str, text: str) -> L0Decision:
         query = (text or "").strip()
@@ -175,6 +189,10 @@ class L0RuleEngine:
                 force_skill="QuerySkill",
                 force_extra=force_extra,
             )
+
+        # 4.5) 闲聊预判（只打 hint，不做拦截）
+        if self._is_chitchat_like(query):
+            return L0Decision(handled=False, intent_hint="chitchat")
 
         # 5) 第N个（使用最近结果）
         ordinal_idx = self._extract_ordinal_index(query)
@@ -327,3 +345,16 @@ class L0RuleEngine:
         if any(token in text for token in self._pending_field_hints):
             return True
         return any(("\u4e00" <= ch <= "\u9fff") or ch.isalnum() for ch in text)
+
+    def _is_chitchat_like(self, query: str) -> bool:
+        text = (query or "").strip()
+        if not text:
+            return False
+        lowered = self._normalize_text(text)
+        if any(hint in text for hint in self._domain_hints):
+            return False
+        if lowered in self._chitchat_keywords:
+            return True
+        if len(text) <= 8 and any(token in lowered for token in ("你好", "在吗", "谢谢", "bye", "help")):
+            return True
+        return False

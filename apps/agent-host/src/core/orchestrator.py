@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from datetime import datetime
@@ -19,7 +20,12 @@ from typing import Any
 import yaml
 
 from src.utils.logger import set_request_context, clear_request_context, generate_request_id
-from src.utils.metrics import record_request, record_intent_parse, set_active_sessions
+from src.utils.metrics import (
+    record_chitchat_guard,
+    record_intent_parse,
+    record_request,
+    set_active_sessions,
+)
 
 from src.core.session import SessionManager
 from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
@@ -57,6 +63,34 @@ def _resolve_assistant_name(skills_config: dict[str, Any] | None) -> str:
         if isinstance(raw, str):
             configured_name = raw.strip()
     return configured_name or "小敬"
+
+
+def _resolve_chitchat_allow_llm(skills_config: dict[str, Any] | None) -> bool:
+    if not isinstance(skills_config, dict):
+        return False
+    chitchat = skills_config.get("chitchat")
+    if not isinstance(chitchat, dict):
+        chitchat = skills_config.get("skills", {}).get("chitchat", {})
+    if not isinstance(chitchat, dict):
+        return False
+    return bool(chitchat.get("allow_llm", False))
+
+
+def _load_casual_responses() -> list[str]:
+    casual_path = Path("config/responses/casual.yaml")
+    if not casual_path.exists():
+        return []
+    try:
+        payload = yaml.safe_load(casual_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    if isinstance(payload, list):
+        return [str(item).strip() for item in payload if str(item).strip()]
+    if isinstance(payload, dict):
+        responses = payload.get("responses")
+        if isinstance(responses, list):
+            return [str(item).strip() for item in responses if str(item).strip()]
+    return []
 
 
 def _build_outbound_from_skill_result(
@@ -196,6 +230,8 @@ class AgentOrchestrator:
         # 加载技能配置（含技能市场）
         self._skills_config = self._load_skills_config(skills_config_path)
         self._assistant_name = _resolve_assistant_name(self._skills_config)
+        self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
+        self._casual_responses = _load_casual_responses()
         self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
 
         # LLM 超时配置
@@ -558,6 +594,7 @@ class AgentOrchestrator:
                 planner_output: PlannerOutput | None = None
                 planner_applied = False
                 should_execute = True
+                intent: IntentResult | None = None
 
                 if l0_decision.force_skill:
                     intent = IntentResult(
@@ -580,6 +617,28 @@ class AgentOrchestrator:
                             "intent": intent.to_dict(),
                         },
                     )
+                elif l0_decision.intent_hint == "chitchat":
+                    if not self._chitchat_allow_llm:
+                        record_chitchat_guard("blocked")
+                        reply = {
+                            "type": "text",
+                            "text": self._pick_casual_response(),
+                        }
+                        status = "success"
+                        should_execute = False
+                    else:
+                        intent = IntentResult(
+                            skills=[
+                                SkillMatch(
+                                    name="ChitchatSkill",
+                                    score=1.0,
+                                    reason="L0 chitchat hint",
+                                )
+                            ],
+                            is_chain=False,
+                            requires_llm_confirm=False,
+                            method="l0_hint",
+                        )
                 else:
                     llm_context = await self._build_llm_context(user_id, query=text)
 
@@ -593,10 +652,8 @@ class AgentOrchestrator:
                             "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
                         }
                         status = "success"
-                        intent = None
                         should_execute = False
                     else:
-                        intent = None
                         if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
                             intent = self._build_intent_from_planner(planner_output)
                             if intent:
@@ -1275,6 +1332,11 @@ class AgentOrchestrator:
             )
         )
 
+    def _pick_casual_response(self) -> str:
+        if self._casual_responses:
+            return random.choice(self._casual_responses)
+        return "我先聚焦案件相关事项，您可以直接告诉我需要查询什么。"
+
     def reload_config(self, config_path: str = "config/skills.yaml") -> None:
         """
         热更新配置
@@ -1289,6 +1351,8 @@ class AgentOrchestrator:
         )
         self._skills_config = self._load_skills_config(config_path)
         self._assistant_name = _resolve_assistant_name(self._skills_config)
+        self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
+        self._casual_responses = _load_casual_responses()
         self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
         
         # 重新初始化解析器和路由器

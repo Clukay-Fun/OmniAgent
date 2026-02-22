@@ -194,10 +194,24 @@ class WebhookFilterSettings(BaseModel):
     ignore_bot_message: bool = True
 
 
+class WebhookEventSettings(BaseModel):
+    enabled_types: list[str] = Field(
+        default_factory=lambda: [
+            "im.message.receive_v1",
+            "im.chat.access_event.bot_p2p_chat_entered_v1",
+            "drive.file.bitable_field_changed_v1",
+            "drive.file.bitable_record_changed_v1",
+            "calendar.calendar.changed_v4",
+            "calendar.calendar.event.changed_v4",
+        ]
+    )
+
+
 class WebhookSettings(BaseModel):
     path: str = "/feishu/webhook"
     dedup: WebhookDedupSettings = Field(default_factory=WebhookDedupSettings)
     filter: WebhookFilterSettings = Field(default_factory=WebhookFilterSettings)
+    events: WebhookEventSettings = Field(default_factory=WebhookEventSettings)
 
 
 class ReplyTemplateSettings(BaseModel):
@@ -225,6 +239,8 @@ class ReplyCaseListSettings(BaseModel):
 class ReplySettings(BaseModel):
     templates: ReplyTemplateSettings = Field(default_factory=ReplyTemplateSettings)
     case_list: ReplyCaseListSettings = Field(default_factory=ReplyCaseListSettings)
+    card_enabled: bool = True
+    reaction_enabled: bool = True
 
 
 class LoggingFileSettings(BaseModel):
@@ -372,10 +388,13 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "LLM_API_KEY": ["llm", "api_key"],
         "LLM_API_BASE": ["llm", "api_base"],
         "LLM_FALLBACK_API_KEY": ["llm", "fallback", "api_key"],
+        "MCP_BASE_URL": ["mcp", "base_url"],
         "TASK_LLM_ENABLED": ["task_llm", "enabled"],
         "TASK_LLM_MODEL": ["task_llm", "model"],
         "TASK_LLM_API_KEY": ["task_llm", "api_key"],
         "TASK_LLM_API_BASE": ["task_llm", "api_base"],
+        "CARD_ENABLED": ["reply", "card_enabled"],
+        "REACTION_ENABLED": ["reply", "reaction_enabled"],
         "HEARING_REMINDER_ENABLED": ["hearing_reminder", "enabled"],
         "HEARING_REMINDER_CHAT_ID": ["hearing_reminder", "reminder_chat_id"],
         "HEARING_REMINDER_OFFSETS": ["hearing_reminder", "reminder_offsets"],

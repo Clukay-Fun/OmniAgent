@@ -81,6 +81,18 @@ if PROMETHEUS_AVAILABLE:
         "Total number of MCP tool calls",
         ["tool_name", "status"],
     )
+
+    FEISHU_EVENT_COUNT = Counter(
+        "feishu_agent_events_total",
+        "Total number of Feishu events by type",
+        ["event_type", "status"],
+    )
+
+    CHITCHAT_GUARD_COUNT = Counter(
+        "feishu_agent_chitchat_guard_total",
+        "Total number of chitchat guard routing decisions",
+        ["route"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -110,6 +122,8 @@ else:
     LLM_CALL_COUNT = DummyMetric()
     LLM_CALL_DURATION = DummyMetric()
     MCP_TOOL_CALL_COUNT = DummyMetric()
+    FEISHU_EVENT_COUNT = DummyMetric()
+    CHITCHAT_GUARD_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -142,6 +156,16 @@ def record_llm_call(operation: str, status: str, duration: float) -> None:
 def record_mcp_tool_call(tool_name: str, status: str) -> None:
     """记录 MCP 工具调用结果"""
     MCP_TOOL_CALL_COUNT.labels(tool_name=tool_name, status=status).inc()
+
+
+def record_feishu_event(event_type: str, status: str) -> None:
+    """记录飞书事件分发结果。"""
+    FEISHU_EVENT_COUNT.labels(event_type=event_type, status=status).inc()
+
+
+def record_chitchat_guard(route: str) -> None:
+    """记录闲聊门控决策。"""
+    CHITCHAT_GUARD_COUNT.labels(route=route).inc()
 
 
 def set_active_sessions(count: int) -> None:

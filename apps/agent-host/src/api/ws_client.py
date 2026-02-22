@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
 from typing import Any
@@ -27,6 +26,8 @@ if sys.platform == "win32":
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
+from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
 from src.core.orchestrator import AgentOrchestrator
 from src.core.session import SessionManager
@@ -65,6 +66,7 @@ agent_core = AgentOrchestrator(
 async def handle_message_async(
     user_id: str,
     chat_id: str,
+    chat_type: str,
     text: str,
     message_id: str,
 ) -> None:
@@ -88,7 +90,12 @@ async def handle_message_async(
         )
         
         # 调用 Agent 处理
-        reply = await agent_core.handle_message(user_id, text)
+        reply = await agent_core.handle_message(
+            user_id,
+            text,
+            chat_id=chat_id,
+            chat_type=chat_type,
+        )
         
         # 发送回复
         reply_text = reply.get("text", "")
@@ -152,21 +159,14 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         data: 飞书事件数据对象
     """
     try:
-        event = data.event
-        if not event:
+        event = FeishuEventAdapter.from_ws_event(data)
+        if event is None:
             return
-        
-        message = event.message
-        sender = event.sender
-        
-        if not message or not sender:
-            return
-        
-        # 提取消息信息
-        message_id = message.message_id
-        chat_id = message.chat_id
-        message_type = message.message_type
-        chat_type = message.chat_type
+
+        message_id = event.message_id
+        chat_id = event.chat_id
+        message_type = event.message_type
+        chat_type = event.chat_type
         
         # 仅处理私聊文本消息
         if chat_type != "p2p":
@@ -177,35 +177,32 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             )
             return
         
-        if message_type != "text":
+        if message_type not in settings.webhook.filter.allowed_message_types:
             logger.debug(
-                "忽略非文本消息: message_type=%s",
+                "忽略不支持消息类型: message_type=%s",
                 message_type,
-                extra={"event_code": "ws.message.ignored_non_text"},
+                extra={"event_code": "ws.message.ignored_type"},
             )
             return
-        
-        # 忽略机器人自己的消息
-        sender_type = sender.sender_type
-        if sender_type == "bot":
+
+        if settings.webhook.filter.ignore_bot_message and event.sender_type == "bot":
             return
-        
-        # 提取文本内容
-        content = message.content
-        if not content:
-            return
-        
-        text = _extract_text(content)
+
+        normalized = normalize_content(message_type=message_type, content=event.content)
+        text = normalized.text
         if not text:
             return
-        
-        # 获取 user_id
-        sender_id = sender.sender_id
-        user_id = (
-            sender_id.user_id
-            if sender_id and sender_id.user_id
-            else chat_id or "unknown"
-        )
+
+        if event.sender_open_id:
+            user_id = event.sender_open_id
+        elif event.sender_user_id:
+            user_id = f"user:{event.sender_user_id}"
+        elif chat_id and message_id:
+            user_id = f"chat:{chat_id}:msg:{message_id}"
+        elif chat_id:
+            user_id = f"chat:{chat_id}:anon"
+        else:
+            user_id = "unknown"
         
         logger.info(
             "收到长连接消息",
@@ -219,7 +216,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         
         # 异步处理消息
         asyncio.create_task(
-            handle_message_async(user_id, chat_id, text, message_id)
+            handle_message_async(user_id, chat_id, chat_type, text, message_id)
         )
         
     except Exception as e:
@@ -231,15 +228,6 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         )
 
 
-def _extract_text(content: str) -> str:
-    """从消息 content 中提取文本"""
-    try:
-        payload = json.loads(content)
-        return payload.get("text", "")
-    except json.JSONDecodeError:
-        return ""
-    except json.JSONDecodeError:
-        return ""
 # endregion
 
 

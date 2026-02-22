@@ -19,7 +19,10 @@ from typing import Any, cast
 from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
+from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
 from src.adapters.channels.feishu.formatter import FeishuFormatter
+from src.api.event_router import FeishuEventRouter, get_enabled_types
+from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
 from src.core.response.models import RenderedResponse
 from src.core.session import SessionManager
@@ -42,6 +45,7 @@ _mcp_client: Any = None
 _llm_client: Any = None
 _agent_core: AgentOrchestrator | None = None
 _deduplicator: "EventDeduplicator | None" = None
+_event_router: FeishuEventRouter | None = None
 _user_manager: Any = None  # 用户管理器
 
 
@@ -82,6 +86,15 @@ def _get_deduplicator() -> "EventDeduplicator":
             settings.webhook.dedup.max_size,
         )
     return _deduplicator
+
+
+def _get_event_router() -> FeishuEventRouter:
+    """延迟初始化事件路由器。"""
+    global _event_router
+    if _event_router is None:
+        settings = _get_settings()
+        _event_router = FeishuEventRouter(enabled_types=get_enabled_types(settings))
+    return _event_router
 
 
 def _get_user_manager():
@@ -322,29 +335,40 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             logger.warning("Webhook 验证令牌不匹配", extra={"event_code": "webhook.token_mismatch"})
             raise HTTPException(status_code=401, detail="Verification failed")
 
-    event_id = header.get("event_id") or payload.get("event_id")
-    logger.info("Webhook 事件信息", extra={"event_code": "webhook.event.info", "event_id": event_id})
+    envelope = FeishuEventAdapter.from_webhook_payload(payload)
+    event_id = envelope.event_id
+    logger.info(
+        "Webhook 事件信息",
+        extra={
+            "event_code": "webhook.event.info",
+            "event_id": event_id,
+            "event_type": envelope.event_type,
+        },
+    )
 
-    event = payload.get("event") or {}
-    message = event.get("message") or {}
-    sender = event.get("sender") or {}
-
-    message_id = message.get("message_id") or message.get("messageId")
-    dedup_key = message_id or event_id
+    dedup_key = (envelope.message.message_id if envelope.message else "") or event_id
     deduplicator = _get_deduplicator()
     if dedup_key and settings.webhook.dedup.enabled and deduplicator.is_duplicate(dedup_key):
         logger.info("检测到重复消息，跳过处理", extra={"event_code": "webhook.message.duplicate", "dedup_key": dedup_key})
         return {"status": "duplicate"}
 
-    if settings.webhook.filter.ignore_bot_message and sender.get("sender_type") == "bot":
+    route_result = _get_event_router().route(envelope)
+    if route_result.status != "accepted":
+        return {"status": route_result.status, "reason": route_result.reason}
+
+    message = envelope.message
+    if message is None:
+        return {"status": "ignored", "reason": "missing_message"}
+
+    if settings.webhook.filter.ignore_bot_message and message.sender_type == "bot":
         logger.info("已忽略机器人消息", extra={"event_code": "webhook.message.ignored_bot"})
         return {"status": "ignored"}
 
-    if settings.webhook.filter.private_chat_only and not _is_private_chat(message):
+    if settings.webhook.filter.private_chat_only and message.chat_type != "p2p":
         logger.info("已忽略非私聊消息", extra={"event_code": "webhook.message.ignored_non_private"})
         return {"status": "ignored"}
 
-    message_type = message.get("message_type")
+    message_type = message.message_type
     if message_type not in settings.webhook.filter.allowed_message_types:
         logger.info(
             "已忽略不支持的消息类型",
@@ -352,10 +376,13 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         )
         return {"status": "ignored"}
 
-    logger.info("开始处理 webhook 消息", extra={"event_code": "webhook.message.processing", "message_id": message_id})
+    logger.info(
+        "开始处理 webhook 消息",
+        extra={"event_code": "webhook.message.processing", "message_id": message.message_id},
+    )
     if dedup_key and settings.webhook.dedup.enabled:
         deduplicator.mark(dedup_key)
-    asyncio.create_task(_process_message_with_dedup(message, sender, dedup_key))
+    asyncio.create_task(_process_message_event_with_dedup(message, dedup_key))
     return {"status": "ok"}
 
 
@@ -375,6 +402,37 @@ async def _process_message_with_dedup(
         _get_deduplicator().remove(dedup_key)
 
 
+async def _process_message_event_with_dedup(
+    message_event: MessageEvent,
+    dedup_key: str | None,
+) -> None:
+    """基于标准事件对象处理并在失败时回滚去重标记。"""
+    message, sender = _to_legacy_message_sender(message_event)
+    processed = await _process_message(message, sender)
+    settings = _get_settings()
+    if not processed and dedup_key and settings.webhook.dedup.enabled:
+        _get_deduplicator().remove(dedup_key)
+
+
+def _to_legacy_message_sender(message_event: MessageEvent) -> tuple[dict[str, Any], dict[str, Any]]:
+    """将标准事件对象转换为现有处理流程使用的结构。"""
+    message = {
+        "message_id": message_event.message_id,
+        "chat_id": message_event.chat_id,
+        "chat_type": message_event.chat_type,
+        "message_type": message_event.message_type,
+        "content": message_event.content,
+    }
+    sender = {
+        "sender_type": message_event.sender_type,
+        "sender_id": {
+            "open_id": message_event.sender_open_id,
+            "user_id": message_event.sender_user_id,
+        },
+    }
+    return message, sender
+
+
 async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> bool:
     """
     异步处理消息
@@ -384,8 +442,21 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         sender: 发送者信息
     """
     logger.info("开始执行消息处理流程", extra={"event_code": "webhook.pipeline.start"})
-    text = _get_text_content(message)
-    logger.info("提取文本完成", extra={"event_code": "webhook.message.text_extracted", "text": text})
+    normalized = normalize_content(
+        message_type=str(message.get("message_type") or ""),
+        content=str(message.get("content") or ""),
+    )
+    text = normalized.text
+    logger.info(
+        "提取文本完成",
+        extra={
+            "event_code": "webhook.message.text_extracted",
+            "text": text,
+            "message_type": normalized.message_type,
+            "segment_count": normalized.segment_count,
+            "truncated": normalized.truncated,
+        },
+    )
     if not text:
         logger.warning("消息无文本内容，结束处理", extra={"event_code": "webhook.message.empty_text"})
         return False

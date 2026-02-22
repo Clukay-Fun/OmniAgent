@@ -18,6 +18,7 @@ import yaml
 
 from src.core.skills.base import BaseSkill
 from src.core.types import SkillContext, SkillResult
+from src.utils.metrics import record_chitchat_guard
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,11 @@ class ChitchatSkill(BaseSkill):
 
         self._greetings = chitchat_cfg.get("greetings", self.GREETINGS)
         self._help_triggers = chitchat_cfg.get("help_triggers", self.HELP_TRIGGERS)
+        self._allow_llm = bool(chitchat_cfg.get("allow_llm", False))
+
+        casual_pool = self._load_casual_pool()
+        if casual_pool:
+            self._responses["out_of_scope"] = casual_pool
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -125,26 +131,42 @@ class ChitchatSkill(BaseSkill):
         
         # 1. 检查帮助请求
         if self._is_help_request(query):
+            record_chitchat_guard("pool")
             return self._create_result("help", "帮助响应")
 
         # 2. 检查感谢
         if self._is_thanks(query):
+            record_chitchat_guard("pool")
             return self._create_result("thanks", "感谢响应")
 
         # 3. 检查告别
         if self._is_goodbye(query):
+            record_chitchat_guard("pool")
             return self._create_result("goodbye", "告别响应")
 
         # 4. 检查问候（带时间感知）
         if self._is_greeting(query):
             greeting_type = self._get_time_greeting_type()
+            record_chitchat_guard("pool")
             return self._create_result(greeting_type, "问候响应")
 
         # 4.1 明显离题时柔性收敛到业务域
         if not self._is_domain_related(query):
+            record_chitchat_guard("blocked")
             return self._create_result("out_of_scope", "离题请求")
-        
+
+        if not self._allow_llm:
+            record_chitchat_guard("blocked")
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"type": "guard_blocked"},
+                message="闲聊门控拦截",
+                reply_text=self.get_response("out_of_scope") or "我先不展开闲聊啦，我们继续案件相关内容吧。",
+            )
+
         # 5. 使用 LLM 自由对话
+        record_chitchat_guard("llm")
         return await self._llm_chat(query, context)
 
     async def _llm_chat(self, query: str, context: SkillContext) -> SkillResult:
@@ -243,6 +265,24 @@ class ChitchatSkill(BaseSkill):
         if not responses_path.exists():
             logger.warning("responses.yaml not found at %s, using defaults", responses_path)
             return dict(self.DEFAULT_RESPONSES)
+
+    def _load_casual_pool(self) -> list[str]:
+        """加载闲聊降级随机池（可选）。"""
+        casual_path = Path("config/responses/casual.yaml")
+        if not casual_path.exists():
+            return []
+        try:
+            payload = yaml.safe_load(casual_path.read_text(encoding="utf-8")) or {}
+            if isinstance(payload, list):
+                return [str(item).strip() for item in payload if str(item).strip()]
+            if isinstance(payload, dict):
+                values = payload.get("responses")
+                if isinstance(values, list):
+                    return [str(item).strip() for item in values if str(item).strip()]
+            return []
+        except Exception as exc:
+            logger.warning("Failed to load casual pool: %s", exc)
+            return []
         try:
             data = yaml.safe_load(responses_path.read_text(encoding="utf-8")) or {}
             # 确保每个 key 的值都是列表
