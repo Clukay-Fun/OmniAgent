@@ -3,8 +3,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from src.adapters.channels.feishu.card_template_config import resolve_template_version
+from src.adapters.channels.feishu.card_template_registry import (
+    CardTemplateRegistry,
+    TemplateLookupError,
+    TemplateValidationError,
+)
 from src.adapters.channels.feishu.card_scaffold import build_card_payload, build_text_payload
 from src.core.response.models import Block, RenderedResponse
+from src.utils.metrics import record_card_template
 
 
 logger = logging.getLogger(__name__)
@@ -17,10 +24,31 @@ class CardBuildError(Exception):
 class FeishuFormatter:
     def __init__(self, card_enabled: bool = True) -> None:
         self._card_enabled = card_enabled
+        self._template_registry = CardTemplateRegistry()
 
     def format(self, rendered: RenderedResponse) -> Dict[str, Any]:
         if not self._card_enabled:
             return self._text_payload(rendered)
+
+        if rendered.card_template is not None:
+            template_id = rendered.card_template.template_id
+            version = resolve_template_version(template_id, rendered.card_template.version)
+            params = rendered.card_template.params
+            try:
+                template_card = self._build_template_card(template_id, version, params)
+                if template_card is not None:
+                    record_card_template(f"{template_id}.{version}", "success")
+                    return template_card
+                record_card_template(f"{template_id}.{version}", "empty")
+                return self._text_payload(rendered)
+            except (TemplateLookupError, TemplateValidationError, CardBuildError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "Feishu template render failed, fall back to text: %s",
+                    exc,
+                    extra={"event_code": "feishu.card_template.render_failed", "template_id": template_id, "version": version},
+                )
+                record_card_template(f"{template_id}.{version}", "failed")
+                return self._text_payload(rendered)
 
         try:
             card_payload = self._build_card(rendered)
@@ -31,6 +59,10 @@ class FeishuFormatter:
         if card_payload is None:
             return self._text_payload(rendered)
         return card_payload
+
+    def _build_template_card(self, template_id: str, version: str, params: dict[str, Any]) -> Dict[str, Any] | None:
+        elements = self._template_registry.render(template_id=template_id, version=version, params=params)
+        return build_card_payload(elements)
 
     def _text_payload(self, rendered: RenderedResponse) -> Dict[str, Any]:
         return build_text_payload(rendered.text_fallback)

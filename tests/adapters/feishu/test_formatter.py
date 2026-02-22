@@ -134,3 +134,46 @@ def test_format_falls_back_to_text_when_card_build_raises(monkeypatch, caplog) -
         "msg_type": "text",
         "content": {"text": "异常兜底"},
     }
+
+
+def test_format_uses_template_registry_when_card_template_present() -> None:
+    formatter = FeishuFormatter(card_enabled=True)
+    rendered = RenderedResponse.model_validate(
+        {
+            "text_fallback": "模板兜底",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧块"}}],
+            "card_template": {
+                "template_id": "error.notice",
+                "version": "v1",
+                "params": {"message": "模板错误提示", "title": "异常"},
+            },
+        }
+    )
+
+    payload = formatter.format(rendered)
+
+    assert payload["msg_type"] == "interactive"
+    assert "模板错误提示" in payload["card"]["elements"][0]["content"]
+
+
+def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
+    formatter = FeishuFormatter(card_enabled=True)
+    rendered = RenderedResponse.model_validate(
+        {
+            "text_fallback": "模板失败兜底",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧块"}}],
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v1",
+                "params": {},
+            },
+        }
+    )
+
+    payload = formatter.format(rendered)
+
+    assert "template render failed" in caplog.text
+    assert payload == {
+        "msg_type": "text",
+        "content": {"text": "模板失败兜底"},
+    }

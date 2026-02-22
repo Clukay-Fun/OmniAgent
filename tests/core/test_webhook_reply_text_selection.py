@@ -50,3 +50,49 @@ def test_build_send_payload_formats_outbound_into_feishu_payload() -> None:
     assert payload["msg_type"] == "interactive"
     assert payload["card"]["elements"][0]["tag"] == "markdown"
     assert "卡片正文" in payload["card"]["elements"][0]["content"]
+
+
+def test_build_send_payload_prefers_template_card_when_selected() -> None:
+    reply = {
+        "type": "text",
+        "text": "fallback text",
+        "outbound": {
+            "text_fallback": "outbound text",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧正文"}}],
+            "card_template": {
+                "template_id": "error.notice",
+                "version": "v1",
+                "params": {"message": "模板正文", "title": "错误"},
+            },
+            "meta": {"assistant_name": "测试助手", "skill_name": "QuerySkill"},
+        },
+    }
+
+    payload = _build_send_payload(reply, card_enabled=True)
+
+    assert payload["msg_type"] == "interactive"
+    assert "模板正文" in payload["card"]["elements"][0]["content"]
+
+
+def test_build_send_payload_falls_back_to_text_when_template_invalid() -> None:
+    reply = {
+        "type": "text",
+        "text": "fallback text",
+        "outbound": {
+            "text_fallback": "outbound text",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧正文"}}],
+            "card_template": {
+                "template_id": "query.detail",
+                "version": "v1",
+                "params": {},
+            },
+            "meta": {"assistant_name": "测试助手", "skill_name": "QuerySkill"},
+        },
+    }
+
+    payload = _build_send_payload(reply, card_enabled=True)
+
+    assert payload == {
+        "msg_type": "text",
+        "content": {"text": "outbound text"},
+    }

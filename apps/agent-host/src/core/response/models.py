@@ -22,10 +22,24 @@ class Block(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
+class CardTemplateSpec(BaseModel):
+    template_id: str
+    version: str = "v1"
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("template_id", "version")
+    @classmethod
+    def validate_non_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("template_id/version must not be empty")
+        return value
+
+
 class RenderedResponse(BaseModel):
     text_fallback: str
     blocks: List[Block] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
+    card_template: CardTemplateSpec | None = None
 
     @field_validator("text_fallback")
     @classmethod
@@ -58,7 +72,20 @@ class RenderedResponse(BaseModel):
         meta = (outbound or {}).get("meta")
         safe_meta = dict(meta) if isinstance(meta, dict) else {}
 
-        return cls(text_fallback=text_fallback, blocks=blocks, meta=safe_meta)
+        card_template = (outbound or {}).get("card_template")
+        safe_card_template = None
+        if isinstance(card_template, dict):
+            try:
+                safe_card_template = CardTemplateSpec.model_validate(card_template)
+            except Exception:
+                safe_card_template = None
+
+        return cls(
+            text_fallback=text_fallback,
+            blocks=blocks,
+            meta=safe_meta,
+            card_template=safe_card_template,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump()

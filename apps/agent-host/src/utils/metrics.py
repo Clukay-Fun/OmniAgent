@@ -117,6 +117,12 @@ if PROMETHEUS_AVAILABLE:
         "Total field formatting outcomes by type and status",
         ["type", "status"],
     )
+
+    CARD_TEMPLATE_COUNT = Counter(
+        "card_template_total",
+        "Total card template render outcomes",
+        ["template_id", "status"],
+    )
     
     # 活跃会话数
     ACTIVE_SESSIONS = Gauge(
@@ -152,6 +158,7 @@ else:
     AUTOMATION_ENQUEUE_COUNT = DummyMetric()
     AUTOMATION_CONSUMED_COUNT = DummyMetric()
     FIELD_FORMAT_COUNT = DummyMetric()
+    CARD_TEMPLATE_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
     CONFIG_RELOAD_COUNT = DummyMetric()
     REMINDER_PUSH_COUNT = DummyMetric()
@@ -214,6 +221,11 @@ def record_automation_consumed(event_type: str, status: str) -> None:
 def record_field_format(field_type: str, status: str) -> None:
     """记录字段格式化结果。"""
     FIELD_FORMAT_COUNT.labels(type=field_type, status=status).inc()
+
+
+def record_card_template(template_id: str, status: str) -> None:
+    """记录卡片模板渲染结果。"""
+    CARD_TEMPLATE_COUNT.labels(template_id=template_id, status=status).inc()
 
 
 def set_active_sessions(count: int) -> None:

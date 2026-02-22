@@ -47,6 +47,8 @@ def test_render_failure_uses_failure_template_and_assistant_identity():
 
     assert response.text_fallback == "处理失败：executor"
     assert response.meta["assistant_name"] == "小敬"
+    assert response.card_template is not None
+    assert response.card_template.template_id == "error.notice"
 
 
 def test_render_prefers_reply_text_for_text_fallback():
@@ -62,6 +64,25 @@ def test_render_prefers_reply_text_for_text_fallback():
     )
 
     assert response.text_fallback == "来自 reply_text"
+
+
+def test_render_query_skill_selects_list_template_for_multi_records() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "查询完成",
+            "data": {
+                "records": [{"fields_text": {"案号": "A-1"}}, {"fields_text": {"案号": "A-2"}}],
+                "total": 2,
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
 
 
 def test_render_always_contains_paragraph_block():
