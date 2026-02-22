@@ -188,6 +188,26 @@ state_store:
     socket_timeout_seconds: ${STATE_STORE_REDIS_SOCKET_TIMEOUT_SECONDS:-1.0}
 
 # ------------------------------------------------------------
+# 文件处理链路（默认关闭，fail-open）
+# ------------------------------------------------------------
+file_pipeline:
+  enabled: ${FILE_PIPELINE_ENABLED:-false}
+  max_bytes: ${FILE_PIPELINE_MAX_BYTES:-5242880}
+  timeout_seconds: ${FILE_PIPELINE_TIMEOUT_SECONDS:-12}
+
+file_extractor:
+  enabled: ${FILE_EXTRACTOR_ENABLED:-false}
+  provider: ${FILE_EXTRACTOR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${FILE_EXTRACTOR_API_KEY:-}
+  api_base: ${FILE_EXTRACTOR_API_BASE:-}
+  fail_open: ${FILE_EXTRACTOR_FAIL_OPEN:-true}
+
+file_context:
+  injection_enabled: ${FILE_CONTEXT_INJECTION_ENABLED:-false}
+  max_chars: ${FILE_CONTEXT_MAX_CHARS:-2000}
+  max_tokens: ${FILE_CONTEXT_MAX_TOKENS:-500}
+
+# ------------------------------------------------------------
 # Webhook 配置
 # ------------------------------------------------------------
 webhook:

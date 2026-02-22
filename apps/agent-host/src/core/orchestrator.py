@@ -233,6 +233,9 @@ class AgentOrchestrator:
         self._midterm_memory_inject_to_llm = bool(midterm_cfg.inject_to_llm)
         self._midterm_memory_llm_recent_limit = max(1, int(midterm_cfg.llm_recent_limit))
         self._midterm_memory_llm_max_chars = max(80, int(midterm_cfg.llm_max_chars))
+        self._file_context_enabled = bool(getattr(settings.file_context, "injection_enabled", False))
+        self._file_context_max_chars = max(200, int(getattr(settings.file_context, "max_chars", 2000)))
+        self._file_context_max_tokens = max(50, int(getattr(settings.file_context, "max_tokens", 500)))
         self._midterm_memory_store: SQLiteMidtermMemoryStore | None = None
         try:
             self._midterm_memory_store = SQLiteMidtermMemoryStore(db_path=midterm_cfg.sqlite_path)
@@ -557,6 +560,7 @@ class AgentOrchestrator:
         chat_id: str | None = None,
         chat_type: str | None = None,
         user_profile: Any = None,
+        file_markdown: str = "",
     ) -> dict[str, Any]:
         """
         处理用户消息
@@ -658,7 +662,11 @@ class AgentOrchestrator:
                             method="l0_hint",
                         )
                 else:
-                    llm_context = await self._build_llm_context(user_id, query=text)
+                    llm_context = await self._build_llm_context(
+                        user_id,
+                        query=text,
+                        file_markdown=file_markdown,
+                    )
 
                     planner_start = time.perf_counter()
                     planner_output = await self._planner.plan(text)
@@ -862,6 +870,7 @@ class AgentOrchestrator:
         extra["shared_memory"] = context_data.get("shared_memory", "")
         extra["user_memory"] = context_data.get("user_memory", "")
         extra["recent_logs"] = context_data.get("recent_logs", "")
+        extra["usage_source"] = "file" if context_data.get("file_context", "") else "text"
 
         # 解析时间范围
         date_range = await self._resolve_time_range(text, llm_context)
@@ -1283,13 +1292,19 @@ class AgentOrchestrator:
             return match.group(1)
         return None
 
-    async def _build_llm_context(self, user_id: str, query: str | None = None) -> dict[str, str]:
+    async def _build_llm_context(
+        self,
+        user_id: str,
+        query: str | None = None,
+        file_markdown: str = "",
+    ) -> dict[str, str]:
         context: dict[str, str] = {
             "soul_prompt": "",
             "shared_memory": "",
             "user_memory": "",
             "recent_logs": "",
             "midterm_memory": "",
+            "file_context": "",
         }
         try:
             context["soul_prompt"] = self._soul_manager.build_system_prompt()
@@ -1325,8 +1340,28 @@ class AgentOrchestrator:
                     context["user_memory"] = vector_hits
 
         context["midterm_memory"] = self._build_midterm_memory_context(user_id)
+        context["file_context"] = self._build_file_context(user_id=user_id, file_markdown=file_markdown)
 
         return context
+
+    def _build_file_context(self, user_id: str, file_markdown: str) -> str:
+        del user_id
+        if not bool(getattr(self, "_file_context_enabled", False)):
+            return ""
+
+        text = str(file_markdown or "").strip()
+        if not text:
+            return ""
+
+        char_budget = max(20, int(getattr(self, "_file_context_max_chars", 2000)))
+        token_budget = max(1, int(getattr(self, "_file_context_max_tokens", 500)))
+        token_char_budget = token_budget * 4
+        hard_limit = max(8, min(char_budget, token_char_budget))
+        if len(text) <= hard_limit:
+            return text
+
+        clipped = text[: max(1, hard_limit - 3)].rstrip()
+        return f"{clipped}..."
 
     def _build_midterm_memory_context(self, user_id: str) -> str:
         if not getattr(self, "_midterm_memory_inject_to_llm", False):
@@ -1397,6 +1432,7 @@ class AgentOrchestrator:
         shared_memory = llm_context.get("shared_memory", "").strip()
         recent_logs = llm_context.get("recent_logs", "").strip()
         midterm_memory = llm_context.get("midterm_memory", "").strip()
+        file_context = llm_context.get("file_context", "").strip()
         if user_memory:
             memory_parts.append(f"用户记忆：\n{user_memory}")
         if shared_memory:
@@ -1405,6 +1441,8 @@ class AgentOrchestrator:
             memory_parts.append(f"最近日志：\n{recent_logs}")
         if midterm_memory:
             memory_parts.append(f"中期记忆（摘要）：\n{midterm_memory}")
+        if file_context:
+            memory_parts.append(f"文件上下文（节选）：\n{file_context}")
 
         if memory_parts:
             parts.append("参考记忆：\n" + "\n\n".join(memory_parts))

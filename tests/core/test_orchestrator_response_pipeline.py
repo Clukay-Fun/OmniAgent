@@ -216,3 +216,29 @@ def test_build_llm_context_skips_midterm_memory_when_disabled() -> None:
     context = asyncio.run(orchestrator._build_llm_context(user_id="u2", query="查一下"))
 
     assert context["midterm_memory"] == ""
+
+
+def test_build_llm_context_truncates_file_context_by_budget() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._soul_manager = SimpleNamespace(build_system_prompt=lambda: "")
+    orchestrator._memory_manager = SimpleNamespace(
+        snapshot=lambda _user_id: SimpleNamespace(shared_memory="", user_memory="", recent_logs=""),
+        search_memory=lambda *_args, **_kwargs: asyncio.sleep(0, result=""),
+    )
+    orchestrator._vector_top_k = 3
+    orchestrator._midterm_memory_inject_to_llm = False
+    orchestrator._midterm_memory_store = None
+    orchestrator._file_context_enabled = True
+    orchestrator._file_context_max_chars = 20
+    orchestrator._file_context_max_tokens = 3
+
+    context = asyncio.run(
+        orchestrator._build_llm_context(
+            user_id="u3",
+            query="总结文件",
+            file_markdown="ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        )
+    )
+
+    assert context["file_context"].endswith("...")
+    assert len(context["file_context"]) <= 12

@@ -146,3 +146,71 @@ def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
 
     assert ok is True
     assert len(sent_calls) == 1
+
+
+def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatch) -> None:
+    sent_calls: list[dict[str, object]] = []
+    agent_called = {"value": False}
+
+    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
+        sent_calls.append(
+            {
+                "settings": settings,
+                "chat_id": chat_id,
+                "msg_type": msg_type,
+                "content": content,
+                "reply_message_id": reply_message_id,
+            }
+        )
+        return {"message_id": "omni-msg-file-1"}
+
+    class _FakeAgentCore:
+        async def handle_message(self, user_id, text, **kwargs):
+            del user_id, text, kwargs
+            agent_called["value"] = True
+            return {"type": "text", "text": "should-not-be-used"}
+
+    class _FakeUserManager:
+        async def get_or_create_profile(self, **_kwargs):
+            return SimpleNamespace(name="张三")
+
+    settings = SimpleNamespace(
+        reply=SimpleNamespace(card_enabled=True),
+        file_pipeline=SimpleNamespace(enabled=True, max_bytes=1024, timeout_seconds=3),
+        file_extractor=SimpleNamespace(enabled=False, provider="none", api_key="", api_base="", fail_open=True),
+    )
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeAgentCore())
+    monkeypatch.setattr(webhook_module, "_get_user_manager", lambda: _FakeUserManager())
+    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
+
+    class _AlwaysProcessAssembler:
+        def ingest(self, **_kwargs):
+            return SimpleNamespace(should_process=True, text="[收到文件消息]", reason="fast_path")
+
+    monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
+
+    async def _fake_resolve_file_markdown(*_args, **_kwargs):
+        return "", "已收到文件，但当前未开启解析能力，请稍后再试或补充文字说明。"
+
+    monkeypatch.setattr(webhook_module, "resolve_file_markdown", _fake_resolve_file_markdown)
+
+    message = {
+        "chat_id": "oc_pipeline",
+        "chat_type": "p2p",
+        "message_id": "msg_file_1",
+        "message_type": "file",
+        "content": json.dumps({"file_key": "f1", "file_name": "合同.pdf"}, ensure_ascii=False),
+    }
+    sender = {"sender_id": {"open_id": "ou_test_user"}}
+
+    ok = asyncio.run(webhook_module._process_message(message, sender))
+
+    assert ok is True
+    assert agent_called["value"] is False
+    assert len(sent_calls) == 1
+    content = sent_calls[0]["content"]
+    assert isinstance(content, dict)
+    payload = json.dumps(content, ensure_ascii=False)
+    assert "未开启解析能力" in payload

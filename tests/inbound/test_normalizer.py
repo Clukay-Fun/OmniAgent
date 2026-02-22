@@ -43,3 +43,46 @@ def test_normalize_file_message_to_placeholder() -> None:
 
     assert normalized.text == "[收到文件消息]"
     assert normalized.segment_count == 1
+
+
+def test_normalize_file_message_with_pipeline_extracts_attachment() -> None:
+    payload = {
+        "file_key": "file_x",
+        "file_name": "合同.pdf",
+        "file_size": 2048,
+        "source_url": "https://example.com/file.pdf",
+    }
+
+    normalized = normalize_content(
+        "file",
+        json.dumps(payload, ensure_ascii=False),
+        file_pipeline_enabled=True,
+        max_file_bytes=4096,
+    )
+
+    assert len(normalized.attachments) == 1
+    attachment = normalized.attachments[0]
+    assert attachment.file_key == "file_x"
+    assert attachment.file_name == "合同.pdf"
+    assert attachment.file_type == "pdf"
+    assert attachment.accepted is True
+
+
+def test_normalize_file_message_rejects_large_or_unsupported_file() -> None:
+    payload = {
+        "file_key": "file_big",
+        "file_name": "归档.zip",
+        "file_size": 10,
+    }
+
+    normalized = normalize_content(
+        "file",
+        json.dumps(payload, ensure_ascii=False),
+        file_pipeline_enabled=True,
+        max_file_bytes=5,
+    )
+
+    assert len(normalized.attachments) == 1
+    attachment = normalized.attachments[0]
+    assert attachment.accepted is False
+    assert attachment.reject_reason == "file_too_large"

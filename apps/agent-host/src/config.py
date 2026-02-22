@@ -181,6 +181,26 @@ class AgentSettings(BaseModel):
     midterm_memory: MidtermMemorySettings = Field(default_factory=MidtermMemorySettings)
 
 
+class FilePipelineSettings(BaseModel):
+    enabled: bool = False
+    max_bytes: int = 5 * 1024 * 1024
+    timeout_seconds: int = 12
+
+
+class FileExtractorSettings(BaseModel):
+    enabled: bool = False
+    provider: str = "none"
+    api_key: str | None = None
+    api_base: str | None = None
+    fail_open: bool = True
+
+
+class FileContextSettings(BaseModel):
+    injection_enabled: bool = False
+    max_chars: int = 2000
+    max_tokens: int = 500
+
+
 class CleanupSettings(BaseModel):
     interval_seconds: int = 300
     enabled: bool = True
@@ -335,6 +355,9 @@ class Settings(BaseModel):
     hearing_reminder: HearingReminderSettings = Field(default_factory=HearingReminderSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
     state_store: StateStoreSettings = Field(default_factory=StateStoreSettings)
+    file_pipeline: FilePipelineSettings = Field(default_factory=FilePipelineSettings)
+    file_extractor: FileExtractorSettings = Field(default_factory=FileExtractorSettings)
+    file_context: FileContextSettings = Field(default_factory=FileContextSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -452,6 +475,17 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "STATE_STORE_REDIS_PASSWORD": ["state_store", "redis", "password"],
         "STATE_STORE_REDIS_KEY_PREFIX": ["state_store", "redis", "key_prefix"],
         "STATE_STORE_REDIS_SOCKET_TIMEOUT_SECONDS": ["state_store", "redis", "socket_timeout_seconds"],
+        "FILE_PIPELINE_ENABLED": ["file_pipeline", "enabled"],
+        "FILE_PIPELINE_MAX_BYTES": ["file_pipeline", "max_bytes"],
+        "FILE_PIPELINE_TIMEOUT_SECONDS": ["file_pipeline", "timeout_seconds"],
+        "FILE_EXTRACTOR_ENABLED": ["file_extractor", "enabled"],
+        "FILE_EXTRACTOR_PROVIDER": ["file_extractor", "provider"],
+        "FILE_EXTRACTOR_API_KEY": ["file_extractor", "api_key"],
+        "FILE_EXTRACTOR_API_BASE": ["file_extractor", "api_base"],
+        "FILE_EXTRACTOR_FAIL_OPEN": ["file_extractor", "fail_open"],
+        "FILE_CONTEXT_INJECTION_ENABLED": ["file_context", "injection_enabled"],
+        "FILE_CONTEXT_MAX_CHARS": ["file_context", "max_chars"],
+        "FILE_CONTEXT_MAX_TOKENS": ["file_context", "max_tokens"],
     }
     for env_key, path in mapping.items():
         env_value = os.getenv(env_key)

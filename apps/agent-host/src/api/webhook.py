@@ -22,6 +22,11 @@ from fastapi import APIRouter, HTTPException, Request
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
+from src.api.file_pipeline import (
+    build_file_unavailable_guidance,
+    is_file_pipeline_message,
+    resolve_file_markdown,
+)
 from src.adapters.channels.feishu.formatter import FeishuFormatter
 from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_automation_enqueuer
 from src.api.event_router import FeishuEventRouter, get_enabled_types
@@ -466,7 +471,8 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         return {"status": "ignored"}
 
     message_type = message.message_type
-    if message_type not in settings.webhook.filter.allowed_message_types:
+    allow_file_pipeline = bool(settings.file_pipeline.enabled) and is_file_pipeline_message(message_type)
+    if message_type not in settings.webhook.filter.allowed_message_types and not allow_file_pipeline:
         logger.info(
             "已忽略不支持的消息类型",
             extra={"event_code": "webhook.message.ignored_type", "message_type": message_type},
@@ -539,9 +545,15 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         sender: 发送者信息
     """
     logger.info("开始执行消息处理流程", extra={"event_code": "webhook.pipeline.start"})
+    settings = _get_settings()
+    file_pipeline_cfg = getattr(settings, "file_pipeline", None)
+    file_pipeline_enabled = bool(getattr(file_pipeline_cfg, "enabled", False))
+    max_file_bytes = int(getattr(file_pipeline_cfg, "max_bytes", 5 * 1024 * 1024))
     normalized = normalize_content(
         message_type=str(message.get("message_type") or ""),
         content=str(message.get("content") or ""),
+        file_pipeline_enabled=file_pipeline_enabled,
+        max_file_bytes=max_file_bytes,
     )
     text = normalized.text
     logger.info(
@@ -613,9 +625,16 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         return True
     text = chunk_decision.text
     
-    settings = _get_settings()
     agent_core = _get_agent_core()
     user_manager = _get_user_manager()
+    file_markdown = ""
+    direct_reply_text = ""
+    if normalized.attachments:
+        file_markdown, guidance = await resolve_file_markdown(attachments=normalized.attachments, settings=settings)
+        if guidance and not file_markdown and normalized.message_type in {"file", "audio", "image"}:
+            direct_reply_text = guidance
+    elif normalized.message_type in {"file", "audio", "image"}:
+        direct_reply_text = build_file_unavailable_guidance("extractor_disabled")
     
     try:
         # 静默获取用户信息（仅用于"我的案件"识别）
@@ -640,13 +659,17 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
                 )
         
         # 处理消息
-        reply = await agent_core.handle_message(
-            scoped_user_id,
-            text,
-            chat_id=chat_id,
-            chat_type=chat_type,
-            user_profile=user_profile,  # 传递用户档案
-        )
+        if direct_reply_text:
+            reply = {"type": "text", "text": direct_reply_text}
+        else:
+            reply = await agent_core.handle_message(
+                scoped_user_id,
+                text,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                user_profile=user_profile,  # 传递用户档案
+                file_markdown=file_markdown,
+            )
         
         if chat_id.startswith("test-"):
             logger.info(

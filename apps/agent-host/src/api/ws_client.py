@@ -29,6 +29,11 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
+from src.api.file_pipeline import (
+    build_file_unavailable_guidance,
+    is_file_pipeline_message,
+    resolve_file_markdown,
+)
 from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
 from src.core.orchestrator import AgentOrchestrator
@@ -94,6 +99,8 @@ async def handle_message_async(
     chat_type: str,
     text: str,
     message_id: str,
+    message_type: str = "text",
+    attachments: list[Any] | None = None,
 ) -> None:
     """
     异步处理消息并发送回复
@@ -114,13 +121,25 @@ async def handle_message_async(
             },
         )
         
+        file_markdown = ""
+        if attachments:
+            file_markdown, guidance = await resolve_file_markdown(attachments=attachments, settings=settings)
+            if guidance and not file_markdown and message_type in {"file", "audio", "image"}:
+                text = guidance
+        elif message_type in {"file", "audio", "image"}:
+            text = build_file_unavailable_guidance("extractor_disabled")
+
         # 调用 Agent 处理
-        reply = await agent_core.handle_message(
-            user_id,
-            text,
-            chat_id=chat_id,
-            chat_type=chat_type,
-        )
+        if message_type in {"file", "audio", "image"} and text.startswith("已收到文件"):
+            reply = {"type": "text", "text": text}
+        else:
+            reply = await agent_core.handle_message(
+                user_id,
+                text,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                file_markdown=file_markdown,
+            )
         
         # 发送回复
         reply_text = reply.get("text", "")
@@ -202,7 +221,8 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             )
             return
         
-        if message_type not in settings.webhook.filter.allowed_message_types:
+        allow_file_pipeline = bool(settings.file_pipeline.enabled) and is_file_pipeline_message(message_type)
+        if message_type not in settings.webhook.filter.allowed_message_types and not allow_file_pipeline:
             logger.debug(
                 "忽略不支持消息类型: message_type=%s",
                 message_type,
@@ -213,7 +233,12 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         if settings.webhook.filter.ignore_bot_message and event.sender_type == "bot":
             return
 
-        normalized = normalize_content(message_type=message_type, content=event.content)
+        normalized = normalize_content(
+            message_type=message_type,
+            content=event.content,
+            file_pipeline_enabled=bool(settings.file_pipeline.enabled),
+            max_file_bytes=int(settings.file_pipeline.max_bytes),
+        )
         text = normalized.text
         if not text:
             return
@@ -255,7 +280,15 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
         
         # 异步处理消息
         asyncio.create_task(
-            handle_message_async(scoped_user_id, chat_id, chat_type, text, message_id)
+            handle_message_async(
+                scoped_user_id,
+                chat_id,
+                chat_type,
+                text,
+                message_id,
+                message_type=normalized.message_type,
+                attachments=normalized.attachments,
+            )
         )
         
     except Exception as e:
