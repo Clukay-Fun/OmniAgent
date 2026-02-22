@@ -248,13 +248,11 @@ async def set_message_reaction(
     settings: Settings,
     message_id: str,
     reaction_type: str,
-    operator: str = "add",
     credential_source: str = "default",
 ) -> None:
     token = await get_token_manager(settings, credential_source=credential_source).get_token()
     normalized_message_id = str(message_id or "").strip()
     normalized_reaction_type = str(reaction_type or "").strip()
-    normalized_operator = str(operator or "add").strip() or "add"
     if not normalized_message_id or not normalized_reaction_type:
         return
 
@@ -263,7 +261,6 @@ async def set_message_reaction(
         "reaction_type": {
             "emoji_type": normalized_reaction_type,
         },
-        "operator": normalized_operator,
     }
     async with httpx.AsyncClient(
         timeout=settings.feishu.message.reply_timeout,
@@ -274,8 +271,15 @@ async def set_message_reaction(
             headers={"Authorization": f"Bearer {token}"},
             json=payload,
         )
-        response.raise_for_status()
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+        if response.status_code >= 400:
+            detail = ""
+            if isinstance(data, dict):
+                detail = str(data.get("msg") or data.get("error") or "").strip()
+            raise FeishuAPIError(detail or f"Failed to set message reaction (HTTP {response.status_code})")
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to set message reaction")
 # endregion

@@ -44,9 +44,10 @@ class ResponseRenderer:
         blocks = [Block(type="paragraph", content={"text": str(text_fallback)})]
 
         data = payload.get("data")
-        if isinstance(data, Mapping) and data:
-            items = [{"key": str(key), "value": str(value)} for key, value in data.items()]
-            blocks.append(Block(type="kv_list", content={"items": items}))
+        if isinstance(data, Mapping) and data and skill_name != "QuerySkill":
+            items = self._build_safe_kv_items(data)
+            if items:
+                blocks.append(Block(type="kv_list", content={"items": items}))
 
         card_template = self._select_card_template(
             skill_name=skill_name,
@@ -330,3 +331,31 @@ class ResponseRenderer:
 
     def _is_non_blank(self, value: Any) -> bool:
         return isinstance(value, str) and bool(value.strip())
+
+    def _build_safe_kv_items(self, data: Mapping[str, Any]) -> list[dict[str, str]]:
+        hidden_keys = {
+            "total",
+            "records",
+            "schema",
+            "query_meta",
+            "pagination",
+            "fields",
+            "updated_fields",
+            "source_fields",
+            "pending_action",
+            "pending_delete",
+        }
+        items: list[dict[str, str]] = []
+        for raw_key, raw_value in data.items():
+            key = str(raw_key)
+            if key in hidden_keys:
+                continue
+            if isinstance(raw_value, (dict, list, tuple, set)):
+                continue
+            value = str(raw_value or "").strip()
+            if not value:
+                continue
+            if len(value) > 200:
+                value = value[:200].rstrip() + "..."
+            items.append({"key": key, "value": value})
+        return items

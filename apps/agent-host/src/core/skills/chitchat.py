@@ -265,6 +265,20 @@ class ChitchatSkill(BaseSkill):
         if not responses_path.exists():
             logger.warning("responses.yaml not found at %s, using defaults", responses_path)
             return dict(self.DEFAULT_RESPONSES)
+        try:
+            data = yaml.safe_load(responses_path.read_text(encoding="utf-8")) or {}
+            # 确保每个 key 的值都是列表
+            result = dict(self.DEFAULT_RESPONSES)
+            for key, value in data.items():
+                if isinstance(value, list) and value:
+                    result[key] = value
+                elif isinstance(value, str) and value:
+                    result[key] = [value]
+            logger.info("Loaded responses from %s (%d types)", responses_path, len(result))
+            return result
+        except Exception as exc:
+            logger.error("Failed to load responses.yaml: %s, using defaults", exc)
+            return dict(self.DEFAULT_RESPONSES)
 
     def _load_casual_pool(self) -> list[str]:
         """加载闲聊降级随机池（可选）。"""
@@ -283,20 +297,6 @@ class ChitchatSkill(BaseSkill):
         except Exception as exc:
             logger.warning("Failed to load casual pool: %s", exc)
             return []
-        try:
-            data = yaml.safe_load(responses_path.read_text(encoding="utf-8")) or {}
-            # 确保每个 key 的值都是列表
-            result = dict(self.DEFAULT_RESPONSES)
-            for key, value in data.items():
-                if isinstance(value, list) and value:
-                    result[key] = value
-                elif isinstance(value, str) and value:
-                    result[key] = [value]
-            logger.info("Loaded responses from %s (%d types)", responses_path, len(result))
-            return result
-        except Exception as exc:
-            logger.error("Failed to load responses.yaml: %s, using defaults", exc)
-            return dict(self.DEFAULT_RESPONSES)
 
     def get_response(self, response_type: str) -> str:
         """公开方法：从随机池中随机选择一条回复（供其他 Skill 调用）"""

@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 _REACTION_BY_STATUS: dict[ProcessingStatus, str] = {
-    ProcessingStatus.THINKING: "⏳",
-    ProcessingStatus.SEARCHING: "🔍",
-    ProcessingStatus.DONE: "✅",
+    ProcessingStatus.THINKING: "THINKING_FACE",
+    ProcessingStatus.SEARCHING: "EYES",
+    ProcessingStatus.DONE: "DONE",
 }
 
 

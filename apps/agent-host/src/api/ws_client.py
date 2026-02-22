@@ -27,6 +27,7 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.adapters.channels.feishu.formatter import FeishuFormatter
 from src.adapters.channels.feishu.processing_status import create_reaction_status_emitter
 from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
@@ -39,6 +40,7 @@ from src.api.file_pipeline import (
 from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
 from src.core.orchestrator import AgentOrchestrator
+from src.core.response.models import RenderedResponse
 from src.core.session import SessionManager
 from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
@@ -73,6 +75,7 @@ chunk_assembler = ChunkAssembler(
     max_segments=int(settings.webhook.chunk_assembler.max_segments),
     max_chars=int(settings.webhook.chunk_assembler.max_chars),
 )
+_pending_chunk_flush_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
 def _flush_orphan_chunks(session_key: str) -> None:
@@ -153,9 +156,22 @@ async def handle_message_async(
             )
         
         # 发送回复
-        reply_text = reply.get("text", "")
-        if reply_text:
-            await send_reply(chat_id, reply_text, message_id)
+        payload = _build_send_payload(reply, card_enabled=bool(getattr(settings.reply, "card_enabled", True)))
+        msg_type = str(payload.get("msg_type") or "text")
+        if msg_type == "interactive":
+            card_payload = payload.get("card")
+            if isinstance(card_payload, dict):
+                content = dict(card_payload)
+            else:
+                content = {}
+        else:
+            msg_type = "text"
+            content_payload = payload.get("content")
+            if isinstance(content_payload, dict):
+                content = dict(content_payload)
+            else:
+                content = {"text": _pick_reply_text(reply)}
+        await send_reply(chat_id, msg_type, content, message_id)
         record_inbound_message("ws", message_type, "processed")
             
     except Exception as e:
@@ -166,17 +182,104 @@ async def handle_message_async(
             exc_info=True,
         )
         error_text = settings.reply.templates.error.format(message=str(e))
-        await send_reply(chat_id, error_text, message_id)
+        await send_reply(chat_id, "text", {"text": error_text}, message_id)
         record_inbound_message("ws", message_type, "error")
 
 
-async def send_reply(chat_id: str, text: str, reply_message_id: str | None = None) -> None:
+def _pick_reply_text(reply: dict[str, Any]) -> str:
+    outbound = reply.get("outbound") if isinstance(reply, dict) else None
+    if isinstance(outbound, dict):
+        raw_text = outbound.get("text_fallback")
+        if isinstance(raw_text, str) and raw_text.strip():
+            return raw_text
+    return str(reply.get("text") or "")
+
+
+def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dict[str, Any]:
+    text_fallback = _pick_reply_text(reply)
+    outbound = reply.get("outbound") if isinstance(reply, dict) else None
+    rendered = RenderedResponse.from_outbound(
+        outbound if isinstance(outbound, dict) else None,
+        fallback_text=text_fallback,
+    )
+
+    formatter = FeishuFormatter(card_enabled=card_enabled)
+    try:
+        return formatter.format(rendered)
+    except Exception as exc:
+        logger.warning(
+            "格式化 outbound 失败，降级文本: %s",
+            exc,
+            extra={"event_code": "ws.reply.format_fallback"},
+        )
+        return {
+            "msg_type": "text",
+            "content": {"text": text_fallback},
+        }
+
+
+def _cancel_pending_chunk_flush(scope_key: str) -> None:
+    task = _pending_chunk_flush_tasks.pop(scope_key, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+async def _flush_buffered_message_after_window(
+    scope_key: str,
+    user_id: str,
+    chat_id: str,
+    chat_type: str,
+    message_id: str,
+    message_type: str,
+    attachments: list[Any],
+) -> None:
+    delay_seconds = max(float(settings.webhook.chunk_assembler.window_seconds), 0.1) + 0.05
+    try:
+        await asyncio.sleep(delay_seconds)
+        decision = chunk_assembler.drain(scope_key)
+        if not decision.should_process:
+            return
+
+        logger.info(
+            "长连接分片窗口到期，执行自动冲刷处理",
+            extra={
+                "event_code": "ws.chunk_assembler.window_flush",
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "text_len": len(decision.text),
+            },
+        )
+        record_inbound_message("ws", message_type, "accepted")
+        await handle_message_async(
+            user_id,
+            chat_id,
+            chat_type,
+            decision.text,
+            message_id,
+            message_type=message_type,
+            attachments=attachments,
+        )
+    except asyncio.CancelledError:
+        return
+    finally:
+        task = _pending_chunk_flush_tasks.get(scope_key)
+        if task is asyncio.current_task():
+            _pending_chunk_flush_tasks.pop(scope_key, None)
+
+
+async def send_reply(
+    chat_id: str,
+    msg_type: str,
+    content: dict[str, Any],
+    reply_message_id: str | None = None,
+) -> None:
     """
     发送回复消息
     
     参数:
         chat_id: 会话 ID
-        text: 回复文本
+        msg_type: 消息类型（text/interactive）
+        content: 消息内容
         reply_message_id: 原消息 ID（可选，用于引用回复）
     """
     from src.utils.feishu_api import send_message
@@ -184,8 +287,8 @@ async def send_reply(chat_id: str, text: str, reply_message_id: str | None = Non
     await send_message(
         settings,
         chat_id,
-        "text",
-        {"text": text},
+        msg_type,
+        content,
         reply_message_id=reply_message_id,
     )
 # endregion
@@ -289,7 +392,20 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
                 },
             )
             record_inbound_message("ws", message_type, "buffered")
+            if scoped_user_id not in _pending_chunk_flush_tasks:
+                _pending_chunk_flush_tasks[scoped_user_id] = asyncio.create_task(
+                    _flush_buffered_message_after_window(
+                        scope_key=scoped_user_id,
+                        user_id=scoped_user_id,
+                        chat_id=chat_id,
+                        chat_type=chat_type,
+                        message_id=message_id,
+                        message_type=normalized.message_type,
+                        attachments=normalized.attachments,
+                    )
+                )
             return
+        _cancel_pending_chunk_flush(scoped_user_id)
         text = chunk_decision.text
 
         logger.info(
