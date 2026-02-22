@@ -39,6 +39,8 @@ class FeishuSettings(BaseModel):
     """飞书开放平台配置"""
     app_id: str = ""
     app_secret: str = ""
+    org_b_app_id: str = ""
+    org_b_app_secret: str = ""
     verification_token: str = ""
     encrypt_key: str | None = None
     api_base: str = "https://open.feishu.cn/open-apis"
@@ -405,6 +407,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "LLM_MODEL": ["llm", "model"],
         "FEISHU_BOT_APP_ID": ["feishu", "app_id"],
         "FEISHU_BOT_APP_SECRET": ["feishu", "app_secret"],
+        "FEISHU_BOT_ORG_B_APP_ID": ["feishu", "org_b_app_id"],
+        "FEISHU_BOT_ORG_B_APP_SECRET": ["feishu", "org_b_app_secret"],
         "FEISHU_BOT_VERIFICATION_TOKEN": ["feishu", "verification_token"],
         "FEISHU_BOT_ENCRYPT_KEY": ["feishu", "encrypt_key"],
         "MCP_SERVER_BASE": ["mcp", "base_url"],

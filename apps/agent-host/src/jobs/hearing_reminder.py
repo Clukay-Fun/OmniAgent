@@ -186,6 +186,8 @@ class HearingReminderScheduler:
                     msg_type="text",
                     content={"text": message},
                     receive_id_type="chat_id",
+                    target_conversation_id=self._reminder_chat_id,
+                    credential_source="org_b",
                 )
             )
             if result.status == "deduped":

@@ -88,6 +88,34 @@ def test_reminder_dispatcher_suppresses_duplicate_send() -> None:
     assert len(calls) == 1
 
 
+def test_reminder_dispatcher_uses_org_b_credential_source() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _sender(**kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    dispatcher = ReminderDispatcher(settings=object(), sender=_sender)
+    payload = ReminderDispatchPayload(
+        source="conversation",
+        business_id="orgb-1",
+        trigger_date="2026-02-22",
+        offset=0,
+        receive_id="ignored-open-id",
+        receive_id_type="open_id",
+        target_conversation_id="oc_chat_001",
+        credential_source="org_b",
+        content={"text": "hello"},
+    )
+
+    result = asyncio.run(dispatcher.dispatch(payload))
+
+    assert result.status == "dispatched"
+    assert len(calls) == 1
+    assert calls[0]["credential_source"] == "org_b"
+    assert calls[0]["receive_id"] == "oc_chat_001"
+    assert calls[0]["receive_id_type"] == "chat_id"
+
+
 def test_reminder_dispatcher_dedupe_store_failure_is_non_blocking() -> None:
     calls: list[dict[str, Any]] = []
 
@@ -143,6 +171,7 @@ def test_conversation_scheduler_dispatches_via_dispatcher_and_marks_sent() -> No
     assert len(dispatcher.payloads) == 1
     assert dispatcher.payloads[0].source == "conversation"
     assert dispatcher.payloads[0].business_id == "123"
+    assert dispatcher.payloads[0].credential_source == "org_b"
     assert db.sent_ids == [123]
 
 
@@ -176,6 +205,7 @@ def test_hearing_scheduler_dispatches_via_dispatcher() -> None:
     assert dispatcher.payloads[0].source == "hearing"
     assert dispatcher.payloads[0].business_id == "rec_100"
     assert dispatcher.payloads[0].offset == 1
+    assert dispatcher.payloads[0].credential_source == "org_b"
 
 
 def test_conversation_scheduler_continues_after_dispatch_failure() -> None:
@@ -190,9 +220,31 @@ def test_conversation_scheduler_continues_after_dispatch_failure() -> None:
 
     asyncio.run(scheduler._scan_and_push())
 
-    assert db.failed_ids == [1]
+    assert db.pending_retry_ids == [1]
     assert db.sent_ids == [2]
     assert len(dispatcher.payloads) == 2
+
+
+def test_conversation_scheduler_marks_pending_retry_on_send_failure() -> None:
+    db = _FakeReminderDB()
+    dispatcher = _FakeDispatcher(results=[RuntimeError("credential/send failed")])
+    scheduler = ReminderScheduler(settings=object(), db=db, dispatcher=dispatcher)
+
+    asyncio.run(
+        scheduler._push_single(
+            {
+                "id": 88,
+                "user_id": "ou_88",
+                "chat_id": "oc_retry",
+                "content": "待跟进",
+                "due_at": datetime(2026, 2, 22, 20, 0),
+                "priority": "high",
+            }
+        )
+    )
+
+    assert db.pending_retry_ids == [88]
+    assert db.sent_ids == []
 
 
 class _FakeReminderDB:
@@ -200,6 +252,7 @@ class _FakeReminderDB:
         self._due_reminders = due_reminders or []
         self.sent_ids: list[int] = []
         self.failed_ids: list[int] = []
+        self.pending_retry_ids: list[int] = []
 
     @asynccontextmanager
     async def advisory_lock(self, key: str):
@@ -222,6 +275,10 @@ class _FakeReminderDB:
     async def mark_reminder_failed(self, reminder_id: int, error: str) -> None:
         _ = error
         self.failed_ids.append(reminder_id)
+
+    async def mark_reminder_pending_retry(self, reminder_id: int, error: str) -> None:
+        _ = error
+        self.pending_retry_ids.append(reminder_id)
 
     async def close(self) -> None:
         return None

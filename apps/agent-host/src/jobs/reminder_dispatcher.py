@@ -13,6 +13,7 @@ from datetime import date, datetime
 import logging
 from typing import Any, Protocol
 
+from src.adapters.channels.feishu.reminder_target_adapter import map_target_conversation_id
 from src.config import Settings
 from src.utils.feishu_api import send_message
 from src.utils.metrics import record_reminder_dispatch
@@ -28,6 +29,8 @@ class ReminderDispatchPayload:
     receive_id_type: str
     content: dict[str, Any]
     msg_type: str = "text"
+    target_conversation_id: str = ""
+    credential_source: str = "default"
 
 
 @dataclass
@@ -101,12 +104,14 @@ class ReminderDispatcher:
             )
 
         try:
+            resolved_receive_id, resolved_receive_id_type = self._resolve_receive_target(payload)
             await self._sender(
                 settings=self._settings,
-                receive_id=payload.receive_id,
+                receive_id=resolved_receive_id,
                 msg_type=payload.msg_type,
                 content=payload.content,
-                receive_id_type=payload.receive_id_type,
+                receive_id_type=resolved_receive_id_type,
+                credential_source=payload.credential_source,
             )
         except Exception:
             record_reminder_dispatch(payload.source, "failed")
@@ -155,3 +160,9 @@ class ReminderDispatcher:
         if isinstance(value, date):
             return value.isoformat()
         return str(value or "").strip()
+
+    def _resolve_receive_target(self, payload: ReminderDispatchPayload) -> tuple[str, str]:
+        mapped = map_target_conversation_id(payload.target_conversation_id)
+        if mapped is not None:
+            return mapped
+        return str(payload.receive_id or "").strip(), str(payload.receive_id_type or "chat_id").strip() or "chat_id"

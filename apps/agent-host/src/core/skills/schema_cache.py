@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import OrderedDict
 from hashlib import sha256
 from pathlib import Path
 from threading import RLock
@@ -16,12 +17,53 @@ def _normalize_key(value: Any) -> str:
 class SchemaCache:
     """Lightweight in-memory schema cache keyed by table_id."""
 
-    def __init__(self, metadata_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        metadata_path: str | Path | None = None,
+        ttl_seconds: int = 600,
+        max_tables: int = 20,
+        clock: Any | None = None,
+    ) -> None:
         self._lock = RLock()
         self._schemas: dict[str, list[dict[str, Any]]] = {}
         self._field_index: dict[str, dict[str, dict[str, Any]]] = {}
+        self._expires_at: dict[str, float] = {}
+        self._lru_keys: OrderedDict[str, None] = OrderedDict()
+        self._ttl_seconds = max(0, int(ttl_seconds))
+        self._max_tables = max(1, int(max_tables))
+        self._clock = clock or time
         self._metadata_path = self._resolve_metadata_path(metadata_path)
         self._metadata: dict[str, dict[str, Any]] = self._load_metadata()
+
+    def _now(self) -> float:
+        value = self._clock()
+        return float(value) if isinstance(value, (int, float)) else float(time())
+
+    def _is_expired(self, table_id: str, now_ts: float | None = None) -> bool:
+        if self._ttl_seconds <= 0:
+            return False
+        expire_at = self._expires_at.get(table_id)
+        if expire_at is None:
+            return False
+        check_time = self._now() if now_ts is None else now_ts
+        return check_time >= expire_at
+
+    def _drop_runtime_cache(self, table_id: str) -> None:
+        self._schemas.pop(table_id, None)
+        self._field_index.pop(table_id, None)
+        self._expires_at.pop(table_id, None)
+        self._lru_keys.pop(table_id, None)
+
+    def _touch_lru(self, table_id: str) -> None:
+        self._lru_keys.pop(table_id, None)
+        self._lru_keys[table_id] = None
+
+    def _apply_lru_cap(self) -> None:
+        while len(self._lru_keys) > self._max_tables:
+            stale_table_id, _ = self._lru_keys.popitem(last=False)
+            self._schemas.pop(stale_table_id, None)
+            self._field_index.pop(stale_table_id, None)
+            self._expires_at.pop(stale_table_id, None)
 
     def _resolve_metadata_path(self, metadata_path: str | Path | None) -> Path | None:
         if metadata_path is not None:
@@ -73,9 +115,13 @@ class SchemaCache:
         if not table_key:
             return None
         with self._lock:
+            if self._is_expired(table_key):
+                self._drop_runtime_cache(table_key)
+                return None
             schema = self._schemas.get(table_key)
             if schema is None:
                 return None
+            self._touch_lru(table_key)
             return [dict(item) for item in schema]
 
     def set_schema(self, table_id: str, schema: Any) -> None:
@@ -100,8 +146,15 @@ class SchemaCache:
         with self._lock:
             self._schemas[table_key] = sanitized
             self._field_index[table_key] = index
+            now_ts = self._now()
+            if self._ttl_seconds > 0:
+                self._expires_at[table_key] = now_ts + self._ttl_seconds
+            else:
+                self._expires_at.pop(table_key, None)
+            self._touch_lru(table_key)
+            self._apply_lru_cap()
             self._metadata[table_key] = {
-                "updated_at": int(time()),
+                "updated_at": int(now_ts),
                 "schema_hash": self._schema_hash(sanitized),
                 "field_count": len(sanitized),
             }
@@ -112,8 +165,11 @@ class SchemaCache:
         if not table_key:
             return
         with self._lock:
-            self._schemas.pop(table_key, None)
-            self._field_index.pop(table_key, None)
+            self._drop_runtime_cache(table_key)
+
+    def refresh(self, table_id: str) -> None:
+        """Manual refresh entrypoint: invalidate local runtime cache by table_id."""
+        self.invalidate(table_id)
 
     def get_metadata(self, table_id: str) -> dict[str, Any] | None:
         table_key = str(table_id or "").strip()
@@ -131,9 +187,13 @@ class SchemaCache:
         if not table_key or not lookup_key:
             return None
         with self._lock:
+            if self._is_expired(table_key):
+                self._drop_runtime_cache(table_key)
+                return None
             table_index = self._field_index.get(table_key)
             if not table_index:
                 return None
+            self._touch_lru(table_key)
             meta = table_index.get(lookup_key)
             if meta is None:
                 return None

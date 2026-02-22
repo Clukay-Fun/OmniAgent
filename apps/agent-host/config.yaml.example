@@ -23,6 +23,8 @@ feishu:
   # 应用凭证（必填）
   app_id: ${FEISHU_BOT_APP_ID}
   app_secret: ${FEISHU_BOT_APP_SECRET}
+  org_b_app_id: ${FEISHU_BOT_ORG_B_APP_ID:-}
+  org_b_app_secret: ${FEISHU_BOT_ORG_B_APP_SECRET:-}
 
   # Webhook 验证配置
   verification_token: ${FEISHU_BOT_VERIFICATION_TOKEN}

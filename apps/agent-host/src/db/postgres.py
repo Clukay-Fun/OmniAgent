@@ -165,7 +165,7 @@ class PostgresClient:
             WITH candidates AS (
                 SELECT id
                 FROM reminders
-                WHERE status = 'pending'
+                WHERE status IN ('pending', 'pending_retry')
                   AND due_at IS NOT NULL
                   AND due_at <= NOW()
                   AND (
@@ -209,6 +209,23 @@ class PostgresClient:
                 """
                 UPDATE reminders
                 SET retry_count = COALESCE(retry_count, 0) + 1,
+                    last_error = $1,
+                    updated_at = NOW()
+                WHERE id = $2
+                """,
+                error,
+                reminder_id,
+            )
+
+    async def mark_reminder_pending_retry(self, reminder_id: int, error: str) -> None:
+        """标记发送失败并置为 pending_retry。"""
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reminders
+                SET status = 'pending_retry',
+                    retry_count = COALESCE(retry_count, 0) + 1,
                     last_error = $1,
                     updated_at = NOW()
                 WHERE id = $2

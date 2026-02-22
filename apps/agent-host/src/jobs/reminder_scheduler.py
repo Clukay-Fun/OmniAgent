@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 import logging
 from typing import Any
 
@@ -97,6 +98,11 @@ class ReminderScheduler:
         message = {
             "text": f"⏰ 提醒到期\n\n📌 内容：{content}\n⏱ 时间：{due_text}\n⭐ 优先级：{priority}"
         }
+        trigger_date: date | datetime | str
+        if isinstance(due_at, (date, datetime)):
+            trigger_date = due_at
+        else:
+            trigger_date = str(due_at or "")
 
         status = "success"
         try:
@@ -104,12 +110,14 @@ class ReminderScheduler:
                 ReminderDispatchPayload(
                     source="conversation",
                     business_id=str(reminder_id or ""),
-                    trigger_date=due_at,
+                    trigger_date=trigger_date,
                     offset=0,
                     receive_id=str(target),
                     msg_type="text",
                     content=message,
                     receive_id_type=receive_id_type,
+                    target_conversation_id=str(chat_id or ""),
+                    credential_source="org_b",
                 )
             )
             if isinstance(reminder_id, int):
@@ -118,7 +126,10 @@ class ReminderScheduler:
         except Exception as exc:
             status = "failure"
             if isinstance(reminder_id, int):
-                await self._db.mark_reminder_failed(reminder_id, str(exc))
+                try:
+                    await self._db.mark_reminder_pending_retry(reminder_id, str(exc))
+                except AttributeError:
+                    await self._db.mark_reminder_failed(reminder_id, str(exc))
             logger.error("Reminder push failed: %s", exc)
         finally:
             record_reminder_push(status)

@@ -33,8 +33,15 @@ class TokenManager:
         - 缓存 Token 并在过期前刷新
         - 线程安全 (AsyncLock)
     """
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        app_id: str | None = None,
+        app_secret: str | None = None,
+    ) -> None:
         self._settings = settings
+        self._app_id = str(app_id or "").strip()
+        self._app_secret = str(app_secret or "").strip()
         self._token: str | None = None
         self._expires_at: float = 0.0
         self._lock = asyncio.Lock()
@@ -51,13 +58,15 @@ class TokenManager:
 
     async def _fetch_token(self) -> tuple[str, int]:
         """从飞书接口请求新 Token"""
-        if not self._settings.feishu.app_id or not self._settings.feishu.app_secret:
+        app_id = self._app_id or self._settings.feishu.app_id
+        app_secret = self._app_secret or self._settings.feishu.app_secret
+        if not app_id or not app_secret:
             raise FeishuAPIError("FEISHU app_id/app_secret is required")
 
         url = f"{self._settings.feishu.api_base}/auth/v3/tenant_access_token/internal"
         payload = {
-            "app_id": self._settings.feishu.app_id,
-            "app_secret": self._settings.feishu.app_secret,
+            "app_id": app_id,
+            "app_secret": app_secret,
         }
         async with httpx.AsyncClient(
             timeout=self._settings.feishu.message.reply_timeout,
@@ -77,14 +86,30 @@ class TokenManager:
 # endregion
 
 
-_token_manager: TokenManager | None = None
+_token_managers: dict[str, TokenManager] = {}
 
 
-def get_token_manager(settings: Settings) -> TokenManager:
-    global _token_manager
-    if _token_manager is None:
-        _token_manager = TokenManager(settings)
-    return _token_manager
+def _normalize_credential_source(source: str | None) -> str:
+    normalized = str(source or "default").strip().lower().replace("-", "_")
+    return normalized or "default"
+
+
+def _resolve_credentials(settings: Settings, source: str) -> tuple[str, str]:
+    if source == "org_b":
+        app_id = str(settings.feishu.org_b_app_id or "").strip()
+        app_secret = str(settings.feishu.org_b_app_secret or "").strip()
+        if not app_id or not app_secret:
+            raise FeishuAPIError("FEISHU_BOT_ORG_B_APP_ID/SECRET is required for org_b credential source")
+        return app_id, app_secret
+    return str(settings.feishu.app_id or "").strip(), str(settings.feishu.app_secret or "").strip()
+
+
+def get_token_manager(settings: Settings, credential_source: str = "default") -> TokenManager:
+    source = _normalize_credential_source(credential_source)
+    if source not in _token_managers:
+        app_id, app_secret = _resolve_credentials(settings, source)
+        _token_managers[source] = TokenManager(settings=settings, app_id=app_id, app_secret=app_secret)
+    return _token_managers[source]
 
 
 # region 消息 API
@@ -95,6 +120,7 @@ async def send_message(
     content: dict[str, object],
     reply_message_id: str | None = None,
     receive_id_type: str = "chat_id",
+    credential_source: str = "default",
 ) -> dict[str, Any]:
     """
     发送飞书消息
@@ -110,7 +136,7 @@ async def send_message(
     返回:
         响应数据（包含 message_id）
     """
-    token = await get_token_manager(settings).get_token()
+    token = await get_token_manager(settings, credential_source=credential_source).get_token()
     url = f"{settings.feishu.api_base}/im/v1/messages"
     params = {"receive_id_type": receive_id_type}
     payload: dict[str, object] = {
