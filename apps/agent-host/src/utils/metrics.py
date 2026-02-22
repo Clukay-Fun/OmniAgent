@@ -118,6 +118,23 @@ if PROMETHEUS_AVAILABLE:
         ["event_type", "status"],
     )
 
+    AUTOMATION_RULE_COUNT = Counter(
+        "automation_rule_total",
+        "Total automation rule evaluation outcomes",
+        ["rule_id", "status"],
+    )
+
+    AUTOMATION_ACTION_COUNT = Counter(
+        "automation_action_total",
+        "Total automation action execution outcomes",
+        ["action", "status"],
+    )
+
+    AUTOMATION_DEAD_LETTER_COUNT = Counter(
+        "automation_dead_letter_total",
+        "Total automation dead-letter records",
+    )
+
     FIELD_FORMAT_COUNT = Counter(
         "field_format_total",
         "Total field formatting outcomes by type and status",
@@ -163,6 +180,9 @@ else:
     SCHEMA_WATCHER_ALERT_COUNT = DummyMetric()
     AUTOMATION_ENQUEUE_COUNT = DummyMetric()
     AUTOMATION_CONSUMED_COUNT = DummyMetric()
+    AUTOMATION_RULE_COUNT = DummyMetric()
+    AUTOMATION_ACTION_COUNT = DummyMetric()
+    AUTOMATION_DEAD_LETTER_COUNT = DummyMetric()
     FIELD_FORMAT_COUNT = DummyMetric()
     CARD_TEMPLATE_COUNT = DummyMetric()
     ACTIVE_SESSIONS = DummyMetric()
@@ -223,6 +243,21 @@ def record_automation_enqueue(event_type: str, status: str) -> None:
 def record_automation_consumed(event_type: str, status: str) -> None:
     """记录 automation consumer 处理结果。"""
     AUTOMATION_CONSUMED_COUNT.labels(event_type=event_type, status=status).inc()
+
+
+def record_automation_rule(rule_id: str, status: str) -> None:
+    """记录 automation rule 匹配结果。"""
+    AUTOMATION_RULE_COUNT.labels(rule_id=rule_id, status=status).inc()
+
+
+def record_automation_action(action: str, status: str) -> None:
+    """记录 automation action 执行结果。"""
+    AUTOMATION_ACTION_COUNT.labels(action=action, status=status).inc()
+
+
+def record_automation_dead_letter() -> None:
+    """记录 automation dead-letter 次数。"""
+    AUTOMATION_DEAD_LETTER_COUNT.inc()
 
 
 def record_field_format(field_type: str, status: str) -> None:

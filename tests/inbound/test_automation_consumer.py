@@ -16,6 +16,7 @@ from src.api.automation_consumer import (
     InMemoryAutomationQueue,
     QueueAutomationEnqueuer,
 )
+from src.api.automation_rules import AutomationRule
 from src.api.event_router import FeishuEventRouter
 import src.api.automation_consumer as automation_consumer_module
 
@@ -128,3 +129,40 @@ def test_startup_protection_blocks_consumption_in_auto_baseline_mode(
     assert not run_log_path.exists()
     assert queue.size() == 1
     assert metric_calls == [("drive.file.bitable_record_changed_v1", "blocked_startup_protection")]
+
+
+def test_consumer_rule_failures_do_not_block_consumption(tmp_path: Path) -> None:
+    run_log_path = tmp_path / "run_logs.jsonl"
+
+    class _RaisingExecutor:
+        def execute_rule(self, rule: AutomationRule, payload: dict[str, object]) -> dict[str, object]:
+            _ = (rule, payload)
+            raise RuntimeError("intentional failure")
+
+    consumer = AutomationConsumer(
+        run_log_path=run_log_path,
+        startup_gate=AutomationStartupGate(startup_mode="auto", baseline_ready=True),
+        rule_set=[
+            AutomationRule(
+                rule_id="r_fail",
+                source_table="tbl_1",
+                watched_fields=set(),
+                condition_mode="all",
+                conditions=[],
+                actions=[{"type": "log.write"}],
+            )
+        ],
+        action_executor=_RaisingExecutor(),
+    )
+
+    status = consumer._consume_single(
+        {
+            "event_id": "evt_non_block_1",
+            "event_type": "drive.file.bitable_record_changed_v1",
+            "table_id": "tbl_1",
+            "record_id": "rec_1",
+        }
+    )
+
+    assert status == "consumed"
+    assert run_log_path.exists()

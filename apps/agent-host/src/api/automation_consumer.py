@@ -16,6 +16,15 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.api.automation_rules import (
+    AutomationActionExecutor,
+    AutomationRule,
+    AutomationRuleLoader,
+    AutomationRuleMatcher,
+    evaluate_rules,
+    resolve_default_automation_rules_path,
+    resolve_default_dead_letter_path,
+)
 from src.utils.metrics import record_automation_consumed
 from src.utils.workspace import get_workspace_root
 
@@ -35,6 +44,26 @@ def _resolve_run_log_path() -> Path:
             return path
         return Path.cwd() / path
     return get_workspace_root() / "automation_data" / "run_logs.jsonl"
+
+
+def _resolve_rules_path() -> Path:
+    configured = str(os.getenv("AUTOMATION_RULES_FILE", "")).strip()
+    if configured:
+        path = Path(configured)
+        if path.is_absolute():
+            return path
+        return Path.cwd() / path
+    return resolve_default_automation_rules_path(get_workspace_root())
+
+
+def _resolve_dead_letter_path() -> Path:
+    configured = str(os.getenv("AUTOMATION_DEAD_LETTER_FILE", "")).strip()
+    if configured:
+        path = Path(configured)
+        if path.is_absolute():
+            return path
+        return Path.cwd() / path
+    return resolve_default_dead_letter_path(get_workspace_root())
 
 
 @dataclass
@@ -69,10 +98,30 @@ class InMemoryAutomationQueue:
 
 
 class AutomationConsumer:
-    def __init__(self, run_log_path: Path, startup_gate: AutomationStartupGate) -> None:
+    def __init__(
+        self,
+        run_log_path: Path,
+        startup_gate: AutomationStartupGate,
+        rule_set: list[AutomationRule] | None = None,
+        rule_matcher: AutomationRuleMatcher | None = None,
+        action_executor: AutomationActionExecutor | Any | None = None,
+        automation_enabled: bool | None = None,
+    ) -> None:
         self._run_log_path = run_log_path
         self._startup_gate = startup_gate
         self._logger = logging.getLogger(__name__)
+        if rule_set is None:
+            loader = AutomationRuleLoader(logger=self._logger)
+            loaded = loader.load(_resolve_rules_path())
+            self._rule_set = loaded.rules
+        else:
+            self._rule_set = list(rule_set)
+        self._rule_matcher = rule_matcher or AutomationRuleMatcher()
+        self._action_executor = action_executor or AutomationActionExecutor(
+            dead_letter_path=_resolve_dead_letter_path(),
+            status_write_enabled=_read_bool_env("AUTOMATION_STATUS_WRITE_ENABLED", False),
+        )
+        self._automation_enabled = _read_bool_env("AUTOMATION_ENABLED", True) if automation_enabled is None else automation_enabled
 
     def consume_available(self, queue: InMemoryAutomationQueue, max_items: int = 100) -> int:
         processed = 0
@@ -139,6 +188,7 @@ class AutomationConsumer:
                     "run_log_path": str(self._run_log_path),
                 },
             )
+            self._run_automation(payload)
             return "consumed"
         except Exception:
             record_automation_consumed(event_type, "failed")
@@ -152,6 +202,40 @@ class AutomationConsumer:
                 },
             )
             return "failed"
+
+    def _run_automation(self, payload: dict[str, Any]) -> None:
+        if not self._automation_enabled:
+            self._logger.info(
+                "automation rules skipped by switch",
+                extra={
+                    "event_code": "automation.consumer.rules_disabled",
+                    "event_id": str(payload.get("event_id") or ""),
+                },
+            )
+            return
+
+        try:
+            matched_rules = evaluate_rules(self._rule_set, payload, self._rule_matcher, logger=self._logger)
+            for rule in matched_rules:
+                try:
+                    self._action_executor.execute_rule(rule, payload)
+                except Exception:
+                    self._logger.exception(
+                        "automation rule execute failed",
+                        extra={
+                            "event_code": "automation.rule.execute_failed",
+                            "rule_id": rule.rule_id,
+                            "event_id": str(payload.get("event_id") or ""),
+                        },
+                    )
+        except Exception:
+            self._logger.exception(
+                "automation rule evaluation failed",
+                extra={
+                    "event_code": "automation.rule.evaluate_failed",
+                    "event_id": str(payload.get("event_id") or ""),
+                },
+            )
 
 
 class QueueAutomationEnqueuer:
