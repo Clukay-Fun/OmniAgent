@@ -27,6 +27,7 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
 from src.api.file_pipeline import (
@@ -61,6 +62,7 @@ agent_core = AgentOrchestrator(
     mcp_client=mcp_client,
     llm_client=llm_client,
     skills_config_path="config/skills.yaml",
+    data_writer=BitableWriter(mcp_client),
 )
 chunk_assembler = ChunkAssembler(
     enabled=bool(settings.webhook.chunk_assembler.enabled),

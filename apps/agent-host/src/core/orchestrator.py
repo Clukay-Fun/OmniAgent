@@ -53,6 +53,7 @@ from src.core.skills import (
     UpdateSkill,
     DeleteSkill,
 )
+from src.core.skills.data_writer import DataWriter
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
 from src.core.response.renderer import ResponseRenderer
@@ -176,6 +177,7 @@ class AgentOrchestrator:
         mcp_client: MCPClient,
         llm_client: LLMClient,
         skills_config_path: str = "config/skills.yaml",
+        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化编排器
@@ -191,6 +193,7 @@ class AgentOrchestrator:
         self._sessions = session_manager
         self._mcp = mcp_client
         self._llm = llm_client
+        self._data_writer = data_writer
         self._context_trim_tokens = max(256, min(int(settings.session.max_context_tokens), 3800))
 
         # ============================================
@@ -366,11 +369,13 @@ class AgentOrchestrator:
                 mcp_client=self._mcp,
                 settings=self._settings,
                 skills_config=self._skills_config,
+                data_writer=self._data_writer,
             ),
             UpdateSkill(
                 mcp_client=self._mcp,
                 settings=self._settings,
                 skills_config=self._skills_config,
+                data_writer=self._data_writer,
             ),
             DeleteSkill(
                 mcp_client=self._mcp,

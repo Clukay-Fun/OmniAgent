@@ -10,10 +10,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.data_writer import DataWriter, build_default_data_writer
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
+from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class UpdateSkill(BaseSkill):
         mcp_client: Any,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
+        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化更新技能
@@ -51,8 +53,13 @@ class UpdateSkill(BaseSkill):
         self._mcp = mcp_client
         self._settings = settings
         self._skills_config = skills_config or {}
-        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
-        self._linker = MultiTableLinker(mcp_client, skills_config=skills_config)
+        self._data_writer = data_writer or build_default_data_writer(mcp_client)
+        self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
+        self._linker = MultiTableLinker(
+            mcp_client,
+            skills_config=skills_config,
+            data_writer=self._data_writer,
+        )
 
         update_cfg = self._skills_config.get("update", {}) if isinstance(self._skills_config, dict) else {}
         if not isinstance(update_cfg, dict):
@@ -228,20 +235,14 @@ class UpdateSkill(BaseSkill):
         
         # 调用 MCP 更新工具
         try:
-            params: dict[str, Any] = {
-                "record_id": record_id,
-                "fields": fields,
-            }
-            if table_ctx.table_id:
-                params["table_id"] = table_ctx.table_id
-
-            result = await self._mcp.call_tool(
-                "feishu.v1.bitable.record.update",
-                params,
+            write_result = await self._data_writer.update(
+                table_ctx.table_id,
+                record_id,
+                fields,
             )
-            
-            if not result.get("success"):
-                error = result.get("error", "未知错误")
+
+            if not write_result.success:
+                error = write_result.error or "未知错误"
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
@@ -249,8 +250,8 @@ class UpdateSkill(BaseSkill):
                     reply_text=f"更新失败：{error}",
                 )
             
-            record_url = result.get("record_url", "")
-            updated_fields = result.get("fields", {})
+            record_url = write_result.record_url or ""
+            updated_fields = write_result.fields if isinstance(write_result.fields, dict) else {}
             
             # 构建回复
             opener = pool.pick("update_success", "✅ 更新成功！")
@@ -506,15 +507,11 @@ class UpdateSkill(BaseSkill):
             match_value = pending_payload.get("match_value")
             if match_field and match_value not in (None, ""):
                 try:
-                    search = await self._mcp.call_tool(
-                        "feishu.v1.bitable.search_exact",
-                        {
-                            "table_id": table_id,
-                            "field": match_field,
-                            "value": match_value,
-                        },
+                    records = await self._table_adapter.search_exact_records(
+                        field=match_field,
+                        value=match_value,
+                        table_id=table_id,
                     )
-                    records = search.get("records") if isinstance(search.get("records"), list) else []
                     record_ids = [str(item.get("record_id") or "").strip() for item in records if str(item.get("record_id") or "").strip()]
                 except Exception as exc:
                     logger.warning("Repair search failed: %s", exc)
@@ -530,16 +527,13 @@ class UpdateSkill(BaseSkill):
 
         updated_count = 0
         for record_id in record_ids:
-            result = await self._mcp.call_tool(
-                "feishu.v1.bitable.record.update",
-                {
-                    "table_id": table_id,
-                    "record_id": record_id,
-                    "fields": fields,
-                },
+            result = await self._data_writer.update(
+                table_id,
+                record_id,
+                fields,
             )
-            if not result.get("success"):
-                error = str(result.get("error") or "子表更新失败")
+            if not result.success:
+                error = str(result.error or "子表更新失败")
                 return self._build_pending_repair_result(
                     pending_action=pending_action,
                     pending_payload={
@@ -649,27 +643,24 @@ class UpdateSkill(BaseSkill):
         exact_case = re.search(r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
         exact_project = re.search(r"(?:项目ID|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
 
-        tool_name = None
-        params: dict[str, Any] = {}
+        field_name = None
+        field_value = None
         if exact_case:
-            tool_name = "feishu.v1.bitable.search_exact"
-            params = {"field": "案号", "value": exact_case.group(1).strip()}
+            field_name = "案号"
+            field_value = exact_case.group(1).strip()
         elif exact_project:
-            tool_name = "feishu.v1.bitable.search_exact"
-            params = {"field": "项目ID", "value": exact_project.group(1).strip()}
+            field_name = "项目ID"
+            field_value = exact_project.group(1).strip()
 
-        if table_id:
-            params["table_id"] = table_id
-
-        if not tool_name:
+        if not field_name or not field_value:
             return []
 
         try:
-            result = await self._mcp.call_tool(tool_name, params)
-            records = result.get("records", [])
-            if isinstance(records, list):
-                return records
-            return []
+            return await self._table_adapter.search_exact_records(
+                field=field_name,
+                value=field_value,
+                table_id=table_id,
+            )
         except Exception as exc:
             logger.warning("UpdateSkill pre-search failed: %s", exc)
             return []

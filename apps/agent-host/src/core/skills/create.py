@@ -12,10 +12,11 @@ import logging
 import re
 from typing import Any
 
-from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.base import BaseSkill
+from src.core.skills.data_writer import DataWriter, build_default_data_writer
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
+from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class CreateSkill(BaseSkill):
         mcp_client: Any,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
+        data_writer: DataWriter | None = None,
     ) -> None:
         """
         初始化创建技能
@@ -51,8 +53,13 @@ class CreateSkill(BaseSkill):
         self._mcp = mcp_client
         self._settings = settings
         self._skills_config = skills_config or {}
-        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
-        self._linker = MultiTableLinker(mcp_client, skills_config=skills_config)
+        self._data_writer = data_writer or build_default_data_writer(mcp_client)
+        self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
+        self._linker = MultiTableLinker(
+            mcp_client,
+            skills_config=skills_config,
+            data_writer=self._data_writer,
+        )
         
         # 字段映射：用户可能使用的别名 -> 实际字段名
         self._field_aliases = {
@@ -267,25 +274,21 @@ class CreateSkill(BaseSkill):
             fields = adapted_fields
         
         try:
-            # 调用 MCP 创建记录
-            params: dict[str, Any] = {"fields": fields}
-            if table_ctx.table_id:
-                params["table_id"] = table_ctx.table_id
-            result = await self._mcp.call_tool(
-                "feishu.v1.bitable.record.create",
-                params,
+            write_result = await self._data_writer.create(
+                table_ctx.table_id,
+                fields,
             )
-            
-            if not result.get("success"):
+
+            if not write_result.success:
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
-                    message=result.get("error", "创建失败"),
+                    message=write_result.error or "创建失败",
                     reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
                 )
-            
-            record_url = result.get("record_url", "")
-            record_id = result.get("record_id", "")
+
+            record_url = write_result.record_url or ""
+            record_id = write_result.record_id or ""
             
             # 格式化已创建的字段
             fields_text = "\n".join([f"• {k}：{v}" for k, v in fields.items()])
@@ -494,17 +497,12 @@ class CreateSkill(BaseSkill):
         if not case_no:
             return 0
         try:
-            params: dict[str, Any] = {
-                "field": "案号",
-                "value": case_no,
-            }
-            if table_id:
-                params["table_id"] = table_id
-            result = await self._mcp.call_tool("feishu.v1.bitable.search_exact", params)
-            records = result.get("records")
-            if isinstance(records, list):
-                return len(records)
-            return 0
+            records = await self._table_adapter.search_exact_records(
+                field="案号",
+                value=case_no,
+                table_id=table_id,
+            )
+            return len(records)
         except Exception as exc:
             logger.warning("CreateSkill duplicate pre-check failed: %s", exc)
             return 0

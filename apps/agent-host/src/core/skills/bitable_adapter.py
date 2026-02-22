@@ -173,6 +173,30 @@ class BitableAdapter:
             logger.warning("Get table schema failed (table_id=%s): %s", table_id, exc)
             return []
 
+    async def search_exact_records(
+        self,
+        *,
+        field: str,
+        value: Any,
+        table_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "field": field,
+            "value": value,
+        }
+        if table_id:
+            params["table_id"] = table_id
+        try:
+            result = await self._mcp.call_tool("feishu.v1.bitable.search_exact", params)
+        except Exception as exc:
+            logger.warning("Search exact failed (field=%s, table_id=%s): %s", field, table_id, exc)
+            return []
+
+        records = result.get("records") if isinstance(result, dict) else []
+        if isinstance(records, list):
+            return [item for item in records if isinstance(item, dict)]
+        return []
+
     def build_field_not_found_message(
         self,
         unresolved: list[str],

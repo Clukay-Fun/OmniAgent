@@ -14,6 +14,8 @@ import re
 import time
 from typing import Any
 
+from src.core.skills.data_writer import DataWriter, build_default_data_writer
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,8 +37,14 @@ class MultiTableLinker:
 
     _REFERENCE_TOKENS = ("这个", "这条", "那条", "上一条", "刚才", "刚刚", "第")
 
-    def __init__(self, mcp_client: Any, skills_config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        mcp_client: Any,
+        skills_config: dict[str, Any] | None = None,
+        data_writer: DataWriter | None = None,
+    ) -> None:
         self._mcp = mcp_client
+        self._data_writer = data_writer or build_default_data_writer(mcp_client)
         self._skills_config = skills_config or {}
         cfg = self._skills_config.get("multi_table") if isinstance(self._skills_config, dict) else {}
         self._enabled = bool((cfg or {}).get("enabled", False))
@@ -124,15 +132,12 @@ class MultiTableLinker:
                 continue
 
             try:
-                create_result = await self._mcp.call_tool(
-                    "feishu.v1.bitable.record.create",
-                    {
-                        "table_id": child_table_id,
-                        "fields": child_fields,
-                    },
+                create_result = await self._data_writer.create(
+                    child_table_id,
+                    child_fields,
                 )
-                if not create_result.get("success"):
-                    raise RuntimeError(str(create_result.get("error") or "子表创建失败"))
+                if not create_result.success:
+                    raise RuntimeError(str(create_result.error or "子表创建失败"))
                 result["applied"] += 1
                 result["success_count"] += 1
                 result["successes"].append(
@@ -141,7 +146,7 @@ class MultiTableLinker:
                         "action": "create",
                         "table_id": child_table_id,
                         "table_name": child_table_name,
-                        "record_id": create_result.get("record_id"),
+                        "record_id": create_result.record_id,
                     }
                 )
             except Exception as exc:
@@ -224,12 +229,12 @@ class MultiTableLinker:
                 if not records:
                     if link.get("create_if_missing_on_update", False):
                         fields_for_create = {**mapped_updates, str(child_key): join_value}
-                        create_result = await self._mcp.call_tool(
-                            "feishu.v1.bitable.record.create",
-                            {"table_id": child_table_id, "fields": fields_for_create},
+                        create_result = await self._data_writer.create(
+                            child_table_id,
+                            fields_for_create,
                         )
-                        if not create_result.get("success"):
-                            raise RuntimeError(str(create_result.get("error") or "子表创建失败"))
+                        if not create_result.success:
+                            raise RuntimeError(str(create_result.error or "子表创建失败"))
                         result["applied"] += 1
                         result["success_count"] += 1
                         result["successes"].append(
@@ -238,7 +243,7 @@ class MultiTableLinker:
                                 "action": "create",
                                 "table_id": child_table_id,
                                 "table_name": child_table_name,
-                                "record_id": create_result.get("record_id"),
+                                "record_id": create_result.record_id,
                             }
                         )
                     continue
@@ -252,16 +257,13 @@ class MultiTableLinker:
                     record_id = str(record.get("record_id") or "").strip()
                     if not record_id:
                         continue
-                    update_result = await self._mcp.call_tool(
-                        "feishu.v1.bitable.record.update",
-                        {
-                            "table_id": child_table_id,
-                            "record_id": record_id,
-                            "fields": mapped_updates,
-                        },
+                    update_result = await self._data_writer.update(
+                        child_table_id,
+                        record_id,
+                        mapped_updates,
                     )
-                    if not update_result.get("success"):
-                        raise RuntimeError(str(update_result.get("error") or "子表更新失败"))
+                    if not update_result.success:
+                        raise RuntimeError(str(update_result.error or "子表更新失败"))
                     result["applied"] += 1
                     result["success_count"] += 1
                     result["successes"].append(

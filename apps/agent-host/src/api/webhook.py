@@ -20,6 +20,7 @@ from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
 from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
+from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_conversation_user_id
 from src.api.file_pipeline import (
@@ -106,6 +107,7 @@ def _get_agent_core() -> AgentOrchestrator:
             mcp_client=_mcp_client,
             llm_client=_llm_client,
             skills_config_path="config/skills.yaml",
+            data_writer=BitableWriter(_mcp_client),
         )
         _bind_chunk_expire_hook()
         logger.info("Agent 编排器初始化完成", extra={"event_code": "webhook.agent_core.initialized"})
