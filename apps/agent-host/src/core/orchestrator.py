@@ -854,6 +854,24 @@ class AgentOrchestrator:
                         extra["chat_id"] = chat_id
                         extra["chat_type"] = chat_type
                         extra["user_profile"] = user_profile  # 添加用户档案
+
+                        # 注入当前目标表的身份归属字段（供 QuerySkill "我的XXX" 使用）
+                        _resolved_table_name = str(
+                            extra.get("table_name")
+                            or extra.get("active_table_name")
+                            or (planner_output.table_name if planner_output and hasattr(planner_output, "table_name") else "")
+                            or ""
+                        ).strip()
+                        if _resolved_table_name:
+                            from src.api.webhook import _get_user_manager as _wh_get_user_manager
+                            try:
+                                _um = _wh_get_user_manager()
+                                _tif = _um.get_identity_fields_for_table(_resolved_table_name)
+                                if _tif:
+                                    extra["table_identity_fields"] = _tif
+                            except Exception:
+                                pass  # 静默失败，不影响主流程
+
                         extra["complexity"] = route_decision.complexity
                         extra["route_label"] = route_decision.route_label
                         extra["model_selected"] = route_decision.model_selected

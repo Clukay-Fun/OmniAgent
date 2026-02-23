@@ -245,7 +245,7 @@ class ExternalFileExtractor:
         mode: str,
     ) -> str:
         headers = self._build_headers(api_key=api_key, mode=mode)
-        payload = self._build_payload(request, mode=mode)
+        payload = self._build_payload(request, mode=mode, provider=provider)
         endpoint = self._resolve_endpoint(provider=provider, api_base=api_base, mode=mode)
         timeout = httpx.Timeout(self._timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
@@ -270,19 +270,25 @@ class ExternalFileExtractor:
             return markdown
         raise _ProviderError(error_type="extractor_empty_content", retryable=False)
 
-    def _build_payload(self, request: ExtractorRequest, mode: str) -> dict[str, Any]:
-        payload = {
-            "source_url": request.source_url,
-            "file_key": request.file_key,
-            "file_name": request.file_name,
-            "file_type": request.file_type,
-            "target_format": "markdown",
-        }
-        if mode == "ocr":
-            payload["mode"] = "ocr"
-        if mode == "asr":
-            payload["mode"] = "asr"
-            payload["target_format"] = "text"
+    def _build_payload(self, request: ExtractorRequest, mode: str, provider: str = "") -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if provider == "mineru" and mode not in ("ocr", "asr"):
+            # Official MinerU v4 Extract API format
+            payload["url"] = request.source_url
+            payload["model_version"] = "vlm"
+        else:
+            payload = {
+                "source_url": request.source_url,
+                "file_key": request.file_key,
+                "file_name": request.file_name,
+                "file_type": request.file_type,
+                "target_format": "markdown",
+            }
+            if mode == "ocr":
+                payload["mode"] = "ocr"
+            if mode == "asr":
+                payload["mode"] = "asr"
+                payload["target_format"] = "text"
         return payload
 
     def _resolve_endpoint(self, provider: str, api_base: str, mode: str) -> str:
@@ -341,6 +347,7 @@ class ExternalFileExtractor:
             "content_markdown",
             "content",
             "text",
+            "full_text",
             "result_markdown",
             "output_markdown",
         )

@@ -797,21 +797,37 @@ class QuerySkill(BaseSkill):
             logger.info("Query scenario: all_cases")
             return "data.bitable.search", params
 
-        # 优先级1: 检查是否为"我的案件"查询
+        # 优先级1: 检查是否为"我的xxx"查询（根据目标表动态选择人员字段）
         user_profile = extra.get("user_profile")
         if user_profile and user_profile.open_id and ("我的" in query or "自己的" in query):
-            # 使用人员字段搜索工具，通过 open_id 精确匹配主办律师
-            logger.info(f"Query 'my cases' for user: {user_profile.name} (open_id: {user_profile.open_id})")
+            logger.info("Query 'my records' for user: %s (open_id: %s)", user_profile.name, user_profile.open_id)
+
+            # 从 extra 读取已按当前表解析好的身份字段列表
+            table_identity_fields: list[str] = []
+            tif_raw = extra.get("table_identity_fields")
+            if isinstance(tif_raw, list):
+                table_identity_fields = [str(f) for f in tif_raw if f]
+
+            # 兜底：使用默认的主办律师
+            primary_field = table_identity_fields[0] if table_identity_fields else "主办律师"
+
             params.update({
-                "field": "主办律师",
+                "field": primary_field,
                 "open_id": user_profile.open_id,
             })
+            # 多字段支持：把剩余字段也带上，由 MCP Client 按序搜索直到命中
+            if len(table_identity_fields) > 1:
+                params["multi_fields"] = table_identity_fields[1:]
+
             if getattr(user_profile, "lawyer_name", None):
                 params["user_name"] = user_profile.lawyer_name
             elif getattr(user_profile, "name", None):
                 params["user_name"] = user_profile.name
             self._maybe_ignore_default_view(params, query)
-            logger.info("Query scenario: my_cases")
+            logger.info(
+                "Query scenario: my_records (table_identity_fields=%s)",
+                table_identity_fields or ["主办律师"],
+            )
             return "data.bitable.search_person", params
 
         # 优先级2: 提取“X的案件/项目”主体关键词

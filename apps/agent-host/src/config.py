@@ -125,7 +125,7 @@ class UserIdentitySettings(BaseModel):
     """是否自动匹配身份"""
     
     match_field: str = "主办律师"
-    """匹配字段名"""
+    """匹配字段名，支持逗号分隔多字段，如 "主办律师,协办律师"，顺序搜索直到找到匹配为止"""
     
     min_confidence: float = 0.8
     """最小匹配置信度"""

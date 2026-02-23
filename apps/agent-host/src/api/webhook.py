@@ -220,6 +220,10 @@ def _get_user_manager():
             # 确保 MCP 客户端已初始化
             if _mcp_client is None:
                 _mcp_client = MCPClient(settings)
+
+            # 加载 skills 配置（用于 table_identity_fields 查询）
+            from src.core.intent import load_skills_config
+            skills_config = load_skills_config("config/skills.yaml")
             
             # 创建匹配器
             matcher = UserMatcher(
@@ -234,11 +238,12 @@ def _get_user_manager():
                 max_size=settings.user.cache.max_size,
             )
             
-            # 创建用户管理器
+            # 创建用户管理器（注入 skills_config 以支持按表字段查询）
             _user_manager = UserManager(
                 settings=settings,
                 matcher=matcher,
                 cache=cache,
+                skills_config=skills_config,
             )
             
             logger.info("用户管理器初始化完成", extra={"event_code": "webhook.user_manager.init_success"})

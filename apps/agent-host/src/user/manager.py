@@ -42,18 +42,26 @@ class UserManager:
         settings: Settings,
         matcher: UserMatcher,
         cache: Optional[UserCache] = None,
+        skills_config: dict | None = None,
     ):
         """
         初始化用户管理器
-        
+
         参数:
             settings: 全局配置
             matcher: 身份匹配器
             cache: 用户缓存（可选，默认创建新实例）
+            skills_config: skills.yaml 全量配置（用于 table_identity_fields 查询）
         """
         self._settings = settings
         self._matcher = matcher
         self._cache = cache or UserCache()
+        # table_identity_fields 来自 skills.yaml
+        self._table_identity_fields: dict[str, list[str]] = {}
+        if skills_config and isinstance(skills_config.get("table_identity_fields"), dict):
+            for tbl, cfg in skills_config["table_identity_fields"].items():
+                if isinstance(cfg, dict) and isinstance(cfg.get("fields"), list):
+                    self._table_identity_fields[tbl] = [str(f) for f in cfg["fields"] if f]
     
     async def get_or_create_profile(
         self,
@@ -114,7 +122,14 @@ class UserManager:
         )
         
         return profile
-    
+
+    def get_identity_fields_for_table(self, table_name: str) -> list[str]:
+        """
+        返回指定表的身份匹配字段列表（来自 skills.yaml table_identity_fields）。
+        如果没有专属配置，返回空列表（调用方回退到 Matcher 的默认字段）。
+        """
+        return list(self._table_identity_fields.get(str(table_name or ""), []))
+
     async def bind_lawyer_name(self, open_id: str, lawyer_name: str) -> tuple[bool, str]:
         """
         手动绑定律师姓名
@@ -187,29 +202,37 @@ class UserManager:
             logger.error(f"Error fetching user info for {open_id}: {e}", exc_info=True)
             return {}
     
-    async def _auto_match(self, profile: UserProfile) -> None:
+    async def _auto_match(
+        self,
+        profile: UserProfile,
+        extra_fields: list[str] | None = None,
+    ) -> None:
         """
         自动匹配用户身份
-        
+
         参数:
             profile: 用户档案（会被修改）
+            extra_fields: 临时字段列表（覆盖 Matcher 默认字段，来自 table_identity_fields）
         """
         if not profile.name:
             return
-        
-        is_matched, confidence, records = await self._matcher.match_by_name(profile.name)
-        
+
+        is_matched, confidence, records = await self._matcher.match_by_name(
+            profile.name,
+            extra_fields=extra_fields or None,
+        )
+
         if is_matched:
             profile.lawyer_name = profile.name
             profile.is_bound = True
             logger.info(
-                f"Auto-matched user {profile.open_id} to lawyer '{profile.name}' "
-                f"(confidence={confidence:.2f})"
+                f"Auto-matched user {profile.open_id} to '{profile.name}' "
+                f"(field_override={extra_fields}, confidence={confidence:.2f})"
             )
         else:
             record_user_mapping_miss(profile.name)
             logger.info(
-                f"Auto-match failed for user {profile.open_id} (name='{profile.name}', "
-                f"confidence={confidence:.2f})"
+                f"Auto-match failed for {profile.open_id} (name='{profile.name}', "
+                f"extra_fields={extra_fields}, confidence={confidence:.2f})"
             )
 # endregion
