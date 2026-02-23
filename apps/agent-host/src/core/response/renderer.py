@@ -20,12 +20,14 @@ class ResponseRenderer:
         templates: Mapping[str, str] | None = None,
         templates_path: str | Path | None = None,
         assistant_name: str = "assistant",
+        query_card_v2_enabled: bool = False,
     ) -> None:
         if templates is not None:
             self._templates = dict(templates)
         else:
             self._templates = self._load_templates(templates_path)
         self._assistant_name = assistant_name
+        self._query_card_v2_enabled = bool(query_card_v2_enabled)
 
     def render(self, skill_result: Any) -> RenderedResponse:
         payload = self._to_mapping(skill_result)
@@ -115,7 +117,7 @@ class ResponseRenderer:
             )
 
         pending_action = data.get("pending_action")
-        if isinstance(pending_action, Mapping):
+        if isinstance(pending_action, Mapping) and skill_name != "QuerySkill":
             action_name = str(pending_action.get("action") or "")
             return CardTemplateSpec(
                 template_id="action.confirm",
@@ -131,6 +133,18 @@ class ResponseRenderer:
         if skill_name == "QuerySkill":
             records = data.get("records")
             if isinstance(records, list) and len(records) > 1:
+                if self._query_card_v2_enabled:
+                    actions = self._build_query_list_actions(data)
+                    return CardTemplateSpec(
+                        template_id="query.list",
+                        version="v2",
+                        params={
+                            "title": "案件查询结果",
+                            "total": int(data.get("total") or len(records)),
+                            "records": records,
+                            "actions": actions,
+                        },
+                    )
                 return CardTemplateSpec(
                     template_id="query.list",
                     version="v1",
@@ -291,6 +305,24 @@ class ResponseRenderer:
             },
         }
 
+    def _build_query_list_actions(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        pending_action = data.get("pending_action") if isinstance(data.get("pending_action"), Mapping) else {}
+        payload = pending_action.get("payload") if isinstance(pending_action, Mapping) else {}
+        callbacks = payload.get("callbacks") if isinstance(payload, Mapping) else {}
+        callback_map = callbacks if isinstance(callbacks, Mapping) else {}
+
+        def _pick(name: str, fallback_action: str) -> dict[str, Any]:
+            raw = callback_map.get(name)
+            picked = dict(raw) if isinstance(raw, Mapping) else {}
+            picked.setdefault("callback_action", fallback_action)
+            return picked
+
+        return {
+            "next_page": _pick("query_list_next_page", "query_list_next_page"),
+            "today_hearing": _pick("query_list_today_hearing", "query_list_today_hearing"),
+            "week_hearing": _pick("query_list_week_hearing", "query_list_week_hearing"),
+        }
+
     def _load_templates(self, templates_path: str | Path | None) -> Dict[str, str]:
         path = Path(templates_path) if templates_path else self._default_template_path()
         if not path.exists():
@@ -336,6 +368,7 @@ class ResponseRenderer:
         hidden_keys = {
             "total",
             "records",
+            "raw",
             "schema",
             "query_meta",
             "pagination",

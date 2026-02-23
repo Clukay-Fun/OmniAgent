@@ -66,8 +66,11 @@ def _profile_flags(args: argparse.Namespace, include_all: bool = False) -> list[
 def _run_command(args: list[str], repo_root: Path) -> int:
     """执行命令并返回退出码。"""
     print("$", " ".join(args))
-    result = subprocess.run(args, cwd=str(repo_root), check=False)
-    return int(result.returncode)
+    try:
+        result = subprocess.run(args, cwd=str(repo_root), check=False)
+        return int(result.returncode)
+    except KeyboardInterrupt:
+        return 130  # 标准 Ctrl+C 退出码
 
 
 def _run_agent_ws(repo_root: Path) -> int:

@@ -157,6 +157,35 @@ def test_format_uses_template_registry_when_card_template_present() -> None:
     assert "模板错误提示" in payload["card"]["elements"][0]["content"]
 
 
+def test_format_supports_query_list_v2_template() -> None:
+    formatter = FeishuFormatter(card_enabled=True)
+    rendered = RenderedResponse.model_validate(
+        {
+            "text_fallback": "查询结果",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧块"}}],
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v2",
+                "params": {
+                    "title": "案件查询结果",
+                    "total": 2,
+                    "records": [{"fields_text": {"案号": "A-1"}}, {"fields_text": {"案号": "A-2"}}],
+                    "actions": {
+                        "next_page": {"callback_action": "query_list_next_page"},
+                        "today_hearing": {"callback_action": "query_list_today_hearing"},
+                        "week_hearing": {"callback_action": "query_list_week_hearing"},
+                    },
+                },
+            },
+        }
+    )
+
+    payload = formatter.format(rendered)
+
+    assert payload["msg_type"] == "interactive"
+    assert payload["card"]["elements"][-1]["tag"] == "action"
+
+
 def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
     formatter = FeishuFormatter(card_enabled=True)
     rendered = RenderedResponse.model_validate(

@@ -58,6 +58,7 @@ from src.core.skills import (
 from src.core.skills.data_writer import DataWriter
 from src.core.soul import SoulManager
 from src.core.memory import MemoryManager
+from src.core.response.models import RenderedResponse
 from src.core.response.renderer import ResponseRenderer
 from src.db.postgres import PostgresClient
 from src.config import Settings
@@ -113,9 +114,10 @@ def _load_casual_responses() -> list[str]:
 def _build_outbound_from_skill_result(
     result: SkillResult,
     assistant_name: str = "小敬",
+    query_card_v2_enabled: bool = False,
 ) -> dict[str, Any]:
     """将 SkillResult 转成统一 outbound 结构。"""
-    renderer = ResponseRenderer(assistant_name=assistant_name)
+    renderer = ResponseRenderer(assistant_name=assistant_name, query_card_v2_enabled=query_card_v2_enabled)
     rendered = renderer.render(result)
     return rendered.to_dict()
 
@@ -273,7 +275,11 @@ class AgentOrchestrator:
         self._assistant_name = _resolve_assistant_name(self._skills_config)
         self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
         self._casual_responses = _load_casual_responses()
-        self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
+        self._response_renderer = ResponseRenderer(
+            assistant_name=self._assistant_name,
+            query_card_v2_enabled=bool(getattr(settings.reply, "query_card_v2_enabled", False)),
+        )
+        self._reply_personalization_enabled = bool(getattr(settings.reply, "reply_personalization_enabled", False))
         self._usage_logger = UsageLogger(
             enabled=bool(getattr(settings.usage_log, "enabled", False)),
             path_template=str(getattr(settings.usage_log, "path", "workspace/usage/usage_log-{date}.jsonl")),
@@ -896,6 +902,7 @@ class AgentOrchestrator:
                         # Step 5: 构建回复
                         reply = result.to_reply()
                         rendered = self._response_renderer.render(result)
+                        rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text=text, rendered=rendered)
                         reply["outbound"] = rendered.to_dict()
 
                         # Step 6: 写入记忆（日志 + 关键偏好）
@@ -1021,6 +1028,17 @@ class AgentOrchestrator:
             return {"status": "expired", "text": "操作已过期"}
 
         action_name = pending.action
+        callback = str(callback_action or "").strip().lower()
+
+        if action_name == "query_list_navigation":
+            query_callback_result = await self._handle_query_list_navigation_callback(
+                user_id=user_id,
+                pending_payload=pending.payload,
+                callback_action=callback,
+            )
+            if query_callback_result is not None:
+                return query_callback_result
+
         skill_name = {
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
@@ -1029,7 +1047,6 @@ class AgentOrchestrator:
         if not skill_name:
             return {"status": "processed", "text": "已处理"}
 
-        callback = str(callback_action or "").strip().lower()
         expected_confirm = f"{action_name}_confirm"
         expected_cancel = f"{action_name}_cancel"
         if callback not in {expected_confirm, expected_cancel}:
@@ -1078,6 +1095,71 @@ class AgentOrchestrator:
         result = await skill.execute(context)
         self._sync_state_after_result(user_id, query, result)
         rendered = self._response_renderer.render(result)
+        rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
+        return {
+            "status": "processed" if result.success else "expired",
+            "text": rendered.text_fallback if result.success else "操作已过期",
+            "outbound": rendered.to_dict(),
+        }
+
+    async def _handle_query_list_navigation_callback(
+        self,
+        user_id: str,
+        pending_payload: dict[str, Any],
+        callback_action: str,
+    ) -> dict[str, Any] | None:
+        callbacks = pending_payload.get("callbacks") if isinstance(pending_payload, dict) else None
+        if not isinstance(callbacks, dict):
+            return {"status": "expired", "text": "操作已过期"}
+
+        callback_data_raw = callbacks.get(callback_action)
+        callback_data = callback_data_raw if isinstance(callback_data_raw, dict) else None
+        if callback_data is None:
+            for key, value in callbacks.items():
+                if str(key).strip().lower() == callback_action and isinstance(value, dict):
+                    callback_data = value
+                    break
+        if callback_data is None:
+            logger.warning(
+                "query callback action mismatch",
+                extra={
+                    "event_code": "orchestrator.callback.query_action_mismatch",
+                    "user_id": user_id,
+                    "callback_action": callback_action,
+                },
+            )
+            return {"status": "expired", "text": "操作已过期"}
+
+        kind = str(callback_data.get("kind") or "query").strip().lower()
+        if kind == "no_more":
+            return {
+                "status": "processed",
+                "text": str(callback_data.get("text") or "已经是最后一页了。"),
+            }
+
+        skill = self._router.get_skill("QuerySkill")
+        if skill is None:
+            return {"status": "expired", "text": "操作已过期"}
+
+        query = str(callback_data.get("query") or "").strip() or "下一页"
+        extra: dict[str, Any] = {}
+        extra_raw = callback_data.get("extra")
+        if isinstance(extra_raw, dict):
+            extra = dict(extra_raw)
+        if kind == "pagination":
+            pagination_raw = callback_data.get("pagination")
+            if isinstance(pagination_raw, dict):
+                extra["pagination"] = dict(pagination_raw)
+
+        context = SkillContext(
+            query=query,
+            user_id=user_id,
+            extra=extra,
+        )
+        result = await skill.execute(context)
+        self._sync_state_after_result(user_id, query, result)
+        rendered = self._response_renderer.render(result)
+        rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
         return {
             "status": "processed" if result.success else "expired",
             "text": rendered.text_fallback if result.success else "操作已过期",
@@ -1363,6 +1445,87 @@ class AgentOrchestrator:
             if signal in text_lower and pref not in matched:
                 matched.append(pref)
         return "；".join(matched) if matched else None
+
+    def _extract_explicit_reply_preferences(self, user_text: str) -> dict[str, str]:
+        text = str(user_text or "").strip().lower()
+        if not text:
+            return {}
+
+        preferences: dict[str, str] = {}
+        if any(token in text for token in ["专业", "正式", "严谨"]):
+            preferences["tone"] = "professional"
+        elif any(token in text for token in ["口语", "随意", "轻松", "亲切"]):
+            preferences["tone"] = "friendly"
+
+        if any(token in text for token in ["简短", "精简", "一句话", "太长了", "短一点"]):
+            preferences["length"] = "short"
+        elif any(token in text for token in ["详细", "展开", "多说", "长一点"]):
+            preferences["length"] = "long"
+
+        return preferences
+
+    def _resolve_reply_preferences(self, user_id: str, explicit: dict[str, str]) -> dict[str, str]:
+        session_prefs = self._state_manager.get_reply_preferences(user_id)
+        tone = explicit.get("tone") or session_prefs.get("tone") or "professional"
+        length = explicit.get("length") or session_prefs.get("length") or "medium"
+        return {"tone": tone, "length": length}
+
+    def _personalize_text(self, text: str, tone: str, length: str) -> str:
+        body = str(text or "").strip()
+        if not body:
+            return text
+
+        if length == "short":
+            lines = [line.strip() for line in body.splitlines() if line.strip()]
+            if len(lines) > 2:
+                body = "\n".join(lines[:2])
+        elif length == "long":
+            if "如需我继续展开" not in body:
+                body = f"{body}\n\n如需我继续展开某一条，请告诉我序号。"
+
+        prefix = "处理结果如下："
+        if tone == "friendly":
+            prefix = "好的，我来帮你整理如下："
+
+        if body.startswith(prefix):
+            return body
+        return f"{prefix}\n{body}"
+
+    def _maybe_apply_reply_personalization(
+        self,
+        user_id: str,
+        user_text: str,
+        rendered: RenderedResponse,
+    ) -> RenderedResponse:
+        if not bool(getattr(self, "_reply_personalization_enabled", False)):
+            return rendered
+
+        explicit = self._extract_explicit_reply_preferences(user_text)
+        if explicit:
+            self._state_manager.set_reply_preferences(user_id, explicit)
+        prefs = self._resolve_reply_preferences(user_id, explicit)
+        updated_text = self._personalize_text(
+            rendered.text_fallback,
+            tone=prefs.get("tone", "professional"),
+            length=prefs.get("length", "medium"),
+        )
+
+        outbound = rendered.to_dict()
+        outbound["text_fallback"] = updated_text
+        blocks = outbound.get("blocks")
+        if isinstance(blocks, list):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "paragraph":
+                    continue
+                content = block.get("content")
+                if not isinstance(content, dict):
+                    content = {}
+                    block["content"] = content
+                content["text"] = updated_text
+                break
+        return RenderedResponse.from_outbound(outbound, updated_text)
     # endregion
     # ============================================
 

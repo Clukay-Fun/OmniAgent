@@ -349,6 +349,8 @@ class ReplySettings(BaseModel):
     case_list: ReplyCaseListSettings = Field(default_factory=ReplyCaseListSettings)
     card_enabled: bool = True
     reaction_enabled: bool = True
+    query_card_v2_enabled: bool = False
+    reply_personalization_enabled: bool = False
 
 
 class LoggingFileSettings(BaseModel):
@@ -530,6 +532,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "TASK_LLM_API_BASE": ["task_llm", "api_base"],
         "CARD_ENABLED": ["reply", "card_enabled"],
         "REACTION_ENABLED": ["reply", "reaction_enabled"],
+        "QUERY_CARD_V2_ENABLED": ["reply", "query_card_v2_enabled"],
+        "REPLY_PERSONALIZATION_ENABLED": ["reply", "reply_personalization_enabled"],
         "HEARING_REMINDER_ENABLED": ["hearing_reminder", "enabled"],
         "HEARING_REMINDER_CHAT_ID": ["hearing_reminder", "reminder_chat_id"],
         "HEARING_REMINDER_OFFSETS": ["hearing_reminder", "reminder_offsets"],

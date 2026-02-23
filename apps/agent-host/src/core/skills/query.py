@@ -139,6 +139,8 @@ class QuerySkill(BaseSkill):
         self._all_cases_ignore_default_view = bool(
             query_cfg.get("all_cases_ignore_default_view", True)
         )
+        reply_settings = getattr(settings, "reply", None) if settings is not None else None
+        self._query_card_v2_enabled = bool(getattr(reply_settings, "query_card_v2_enabled", False))
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -1163,26 +1165,95 @@ class QuerySkill(BaseSkill):
         # 构建卡片
         card = self._build_card(title, items, notice=notice)
         
+        result_data: dict[str, Any] = {
+            "records": records,
+            "total": title_count,
+            "schema": schema or [],
+            "pagination": pagination or {
+                "has_more": False,
+                "page_token": "",
+                "current_page": 1,
+                "total": title_count,
+            },
+            "query_meta": query_meta or {},
+        }
+        pending_action = self._build_query_card_pending_action(
+            pagination=result_data.get("pagination"),
+            query_meta=result_data.get("query_meta"),
+        )
+        if pending_action:
+            result_data["pending_action"] = pending_action
+
         return SkillResult(
             success=True,
             skill_name=self.name,
-            data={
-                "records": records,
-                "total": title_count,
-                "schema": schema or [],
-                "pagination": pagination or {
-                    "has_more": False,
-                    "page_token": "",
-                    "current_page": 1,
-                    "total": title_count,
-                },
-                "query_meta": query_meta or {},
-            },
+            data=result_data,
             message=f"查询到 {count} 条记录",
             reply_type="card",
             reply_text=reply_text,
             reply_card=card,
         )
+
+    def _build_query_card_pending_action(
+        self,
+        pagination: Any,
+        query_meta: Any,
+    ) -> dict[str, Any] | None:
+        if not self._query_card_v2_enabled:
+            return None
+
+        pagination_data = pagination if isinstance(pagination, dict) else {}
+        query_meta_data = query_meta if isinstance(query_meta, dict) else {}
+        query_params_raw = query_meta_data.get("params")
+        query_params = query_params_raw if isinstance(query_params_raw, dict) else {}
+
+        callbacks: dict[str, dict[str, Any]] = {
+            "query_list_today_hearing": {
+                "callback_action": "query_list_today_hearing",
+                "kind": "query",
+                "query": "今天开庭",
+                "extra": {
+                    "table_id": query_params.get("table_id"),
+                },
+            },
+            "query_list_week_hearing": {
+                "callback_action": "query_list_week_hearing",
+                "kind": "query",
+                "query": "本周开庭",
+                "extra": {
+                    "table_id": query_params.get("table_id"),
+                },
+            },
+        }
+
+        has_more = bool(pagination_data.get("has_more", False))
+        if has_more:
+            callbacks["query_list_next_page"] = {
+                "callback_action": "query_list_next_page",
+                "kind": "pagination",
+                "query": "下一页",
+                "pagination": {
+                    "tool": query_meta_data.get("tool"),
+                    "params": query_params,
+                    "page_token": pagination_data.get("page_token"),
+                    "current_page": pagination_data.get("current_page"),
+                    "total": pagination_data.get("total"),
+                },
+            }
+        else:
+            callbacks["query_list_next_page"] = {
+                "callback_action": "query_list_next_page",
+                "kind": "no_more",
+                "text": "已经是最后一页了。",
+            }
+
+        return {
+            "action": "query_list_navigation",
+            "ttl_seconds": 600,
+            "payload": {
+                "callbacks": callbacks,
+            },
+        }
 
     def _clean_text_value(self, value: Any) -> str:
         text = str(value or "")

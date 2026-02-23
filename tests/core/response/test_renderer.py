@@ -85,6 +85,37 @@ def test_render_query_skill_selects_list_template_for_multi_records() -> None:
     assert response.card_template.template_id == "query.list"
 
 
+def test_render_query_skill_selects_list_template_v2_when_enabled() -> None:
+    renderer = ResponseRenderer(query_card_v2_enabled=True)
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "查询完成",
+            "data": {
+                "records": [{"fields_text": {"案号": "A-1"}}, {"fields_text": {"案号": "A-2"}}],
+                "total": 2,
+                "pending_action": {
+                    "action": "query_list_navigation",
+                    "payload": {
+                        "callbacks": {
+                            "query_list_next_page": {"callback_action": "query_list_next_page"},
+                            "query_list_today_hearing": {"callback_action": "query_list_today_hearing"},
+                            "query_list_week_hearing": {"callback_action": "query_list_week_hearing"},
+                        }
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+    assert response.card_template.version == "v2"
+    assert response.card_template.params["actions"]["next_page"]["callback_action"] == "query_list_next_page"
+
+
 def test_render_always_contains_paragraph_block():
     renderer = build_renderer()
 
@@ -92,6 +123,23 @@ def test_render_always_contains_paragraph_block():
 
     assert len(response.blocks) >= 1
     assert response.blocks[0].type == "paragraph"
+
+
+def test_render_kv_list_hides_raw_technical_field() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "SummarySkill",
+            "message": "ok",
+            "data": {"raw": "leak", "status": "ok"},
+        }
+    )
+
+    kv_blocks = [block for block in response.blocks if block.type == "kv_list"]
+    assert len(kv_blocks) == 1
+    assert kv_blocks[0].content["items"] == [{"key": "status", "value": "ok"}]
 
 
 def test_render_create_skill_selects_create_success_template() -> None:

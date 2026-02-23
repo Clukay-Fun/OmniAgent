@@ -42,6 +42,7 @@ def test_template_config_falls_back_when_yaml_missing(monkeypatch) -> None:
 
     assert resolve_template_version("query.list") == "v1"
     assert is_template_enabled("query.list", "v1") is True
+    assert is_template_enabled("query.list", "v2") is True
 
 
 def test_template_config_falls_back_when_yaml_invalid(monkeypatch, tmp_path) -> None:

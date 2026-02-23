@@ -199,6 +199,31 @@ class ConversationStateManager:
             return value.strip()
         return None
 
+    def set_reply_preferences(self, user_id: str, preferences: dict[str, str]) -> None:
+        state = self.get_state(user_id)
+        current = state.extras.get("reply_preferences")
+        merged = dict(current) if isinstance(current, dict) else {}
+        for key in ("tone", "length"):
+            value = preferences.get(key)
+            if isinstance(value, str) and value.strip():
+                merged[key] = value.strip().lower()
+        if merged:
+            state.extras["reply_preferences"] = merged
+            state.updated_at = time.time()
+            self._store.set(user_id, state)
+
+    def get_reply_preferences(self, user_id: str) -> dict[str, str]:
+        state = self.get_state(user_id)
+        raw = state.extras.get("reply_preferences")
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[str, str] = {}
+        for key in ("tone", "length"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                result[key] = value.strip().lower()
+        return result
+
     def set_active_table(self, user_id: str, table_id: str | None, table_name: str | None = None) -> None:
         state = self.get_state(user_id)
         state.active_table_id = str(table_id).strip() if table_id else None

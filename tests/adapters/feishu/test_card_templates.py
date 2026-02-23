@@ -30,6 +30,37 @@ def test_render_query_list_v1() -> None:
     assert "共 2 条" in elements[0]["content"]
 
 
+def test_render_query_list_v2_shows_top3_and_actions() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="query.list",
+        version="v2",
+        params={
+            "title": "案件查询结果",
+            "total": 4,
+            "records": [
+                {"record_id": "rec_1", "fields_text": {"案号": "A-1", "案由": "合同纠纷"}},
+                {"record_id": "rec_2", "fields_text": {"案号": "A-2", "案由": "借款纠纷"}},
+                {"record_id": "rec_3", "fields_text": {"案号": "A-3", "案由": "侵权纠纷"}},
+                {"record_id": "rec_4", "fields_text": {"案号": "A-4", "案由": "劳动纠纷"}},
+            ],
+            "actions": {
+                "next_page": {"callback_action": "query_list_next_page"},
+                "today_hearing": {"callback_action": "query_list_today_hearing"},
+                "week_hearing": {"callback_action": "query_list_week_hearing"},
+            },
+        },
+    )
+
+    markdown_blocks = [item for item in elements if item.get("tag") == "markdown"]
+    assert len(markdown_blocks) == 4
+    assert "共 4 条" in markdown_blocks[0]["content"]
+    assert "A-4" not in "\n".join(item["content"] for item in markdown_blocks)
+    assert elements[-1]["tag"] == "action"
+    assert elements[-1]["actions"][0]["value"]["callback_action"] == "query_list_next_page"
+
+
 def test_render_query_detail_v1() -> None:
     registry = CardTemplateRegistry()
 

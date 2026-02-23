@@ -29,6 +29,7 @@ BUILTIN_TEMPLATE_DEFAULT_VERSIONS: dict[str, str] = {
 
 BUILTIN_TEMPLATE_ENABLED: dict[str, bool] = {
     "query.list.v1": True,
+    "query.list.v2": True,
     "query.detail.v1": True,
     "action.confirm.v1": True,
     "error.notice.v1": True,

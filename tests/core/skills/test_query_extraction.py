@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -22,8 +23,9 @@ class _NoopWriter:
         return WriteResult(success=True, record_id=record_id, fields=fields)
 
 
-def _build_skill() -> QuerySkill:
-    return QuerySkill(mcp_client=object(), skills_config={}, data_writer=_NoopWriter())
+def _build_skill(query_card_v2_enabled: bool = False) -> QuerySkill:
+    settings = SimpleNamespace(reply=SimpleNamespace(query_card_v2_enabled=query_card_v2_enabled))
+    return QuerySkill(mcp_client=object(), settings=settings, skills_config={}, data_writer=_NoopWriter())
 
 
 def test_extract_entity_keyword_strips_action_noise() -> None:
@@ -162,3 +164,22 @@ def test_empty_result_prefer_message_uses_message_text() -> None:
     skill = _build_skill()
     result = skill._empty_result("该时间范围内没有开庭安排", prefer_message=True)
     assert result.reply_text == "该时间范围内没有开庭安排"
+
+
+def test_format_case_result_adds_query_navigation_pending_action_when_enabled() -> None:
+    skill = _build_skill(query_card_v2_enabled=True)
+    result = skill._format_case_result(
+        records=[
+            {"record_id": "rec_1", "record_url": "https://example.com/1", "fields_text": {"案号": "A-1"}},
+            {"record_id": "rec_2", "record_url": "https://example.com/2", "fields_text": {"案号": "A-2"}},
+        ],
+        pagination={"has_more": True, "page_token": "pt_2", "current_page": 1, "total": 8},
+        query_meta={"tool": "data.bitable.search", "params": {"table_id": "tbl_1"}},
+    )
+
+    pending = result.data.get("pending_action")
+    assert isinstance(pending, dict)
+    assert pending.get("action") == "query_list_navigation"
+    callbacks = pending.get("payload", {}).get("callbacks", {})
+    assert callbacks["query_list_next_page"]["kind"] == "pagination"
+    assert callbacks["query_list_today_hearing"]["query"] == "今天开庭"

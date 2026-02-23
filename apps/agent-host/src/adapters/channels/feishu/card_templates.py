@@ -104,6 +104,93 @@ def render_query_list_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
     return elements
 
 
+def _query_summary_lines(record: Mapping[str, Any]) -> list[str]:
+    fields = _record_fields(record)
+    case_no = _safe_text(fields.get("案号") or fields.get("项目ID") or record.get("record_id"))
+    left = _safe_text(fields.get("委托人及联系方式") or fields.get("委托人"))
+    right = _safe_text(fields.get("对方当事人"))
+    cause = _safe_text(fields.get("案由"))
+    court = _safe_text(fields.get("审理法院"))
+    stage = _safe_text(fields.get("程序阶段"))
+
+    title = " vs ".join([part for part in [left, right] if part])
+    if cause:
+        title = f"{title} | {cause}" if title else cause
+    if not title:
+        title = case_no or "记录摘要"
+
+    lines = [f"- {title}"]
+    if case_no:
+        lines.append(f"- 案号: {case_no}")
+    if court:
+        lines.append(f"- 法院: {court}")
+    if stage:
+        lines.append(f"- 程序: {stage}")
+
+    link_line = build_record_link_line(record.get("record_id"), record.get("record_url"))
+    if link_line:
+        lines.append(f"- {link_line}")
+    return lines
+
+
+def render_query_list_v2(params: dict[str, Any]) -> list[dict[str, Any]]:
+    title = _safe_text(params.get("title")) or "案件查询结果"
+    total = int(params.get("total") or 0)
+    records = params.get("records")
+    if not isinstance(records, list) or not records:
+        return [_markdown(f"**{title}**\n暂无记录")]
+
+    count = max(total, len(records))
+    elements: list[dict[str, Any]] = [_markdown(f"**{title}（共 {count} 条）**")]
+    for i, record in enumerate(records[:3], start=1):
+        if not isinstance(record, Mapping):
+            continue
+        body = "\n".join(_query_summary_lines(record))
+        elements.append(_markdown(f"**{i}.**\n{body}"))
+
+    actions_raw = params.get("actions")
+    actions = actions_raw if isinstance(actions_raw, Mapping) else {}
+    next_page_raw = actions.get("next_page")
+    today_raw = actions.get("today_hearing")
+    week_raw = actions.get("week_hearing")
+    next_page_value: dict[str, Any] = dict(next_page_raw) if isinstance(next_page_raw, Mapping) else {}
+    today_value: dict[str, Any] = dict(today_raw) if isinstance(today_raw, Mapping) else {}
+    week_value: dict[str, Any] = dict(week_raw) if isinstance(week_raw, Mapping) else {}
+    if not next_page_value:
+        next_page_value = {"callback_action": "query_list_next_page"}
+    if not today_value:
+        today_value = {"callback_action": "query_list_today_hearing"}
+    if not week_value:
+        week_value = {"callback_action": "query_list_week_hearing"}
+
+    elements.append(
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "下一页"},
+                    "type": "default",
+                    "value": next_page_value,
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "今天开庭"},
+                    "type": "default",
+                    "value": today_value,
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "本周开庭"},
+                    "type": "default",
+                    "value": week_value,
+                },
+            ],
+        }
+    )
+    return elements
+
+
 def render_query_detail_v1(params: dict[str, Any]) -> list[dict[str, Any]]:
     title = _safe_text(params.get("title")) or "记录详情"
     record = params.get("record")

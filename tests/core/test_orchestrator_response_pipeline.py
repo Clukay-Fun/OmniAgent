@@ -20,6 +20,7 @@ from src.core.orchestrator import (
 )
 import src.core.orchestrator as orchestrator_module
 from src.core.types import SkillResult
+from src.core.response.models import RenderedResponse
 from src.core.router.model_routing import RoutingDecision
 
 
@@ -34,6 +35,61 @@ def test_outbound_prefers_reply_text_as_text_fallback() -> None:
     outbound = _build_outbound_from_skill_result(result)
 
     assert outbound["text_fallback"] == "来自 reply_text"
+
+
+def test_reply_personalization_priority_explicit_over_session_and_default() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._reply_personalization_enabled = True
+
+    class _StateManager:
+        def __init__(self) -> None:
+            self.saved: dict[str, str] = {"tone": "professional", "length": "short"}
+
+        def set_reply_preferences(self, _user_id: str, preferences: dict[str, str]) -> None:
+            self.saved.update(preferences)
+
+        def get_reply_preferences(self, _user_id: str) -> dict[str, str]:
+            return dict(self.saved)
+
+    orchestrator._state_manager = _StateManager()
+
+    rendered = RenderedResponse.from_outbound(
+        {
+            "text_fallback": "这是默认回复正文",
+            "blocks": [{"type": "paragraph", "content": {"text": "这是默认回复正文"}}],
+        },
+        "这是默认回复正文",
+    )
+
+    updated = orchestrator._maybe_apply_reply_personalization(
+        user_id="u1",
+        user_text="请用口语风格，详细一点",
+        rendered=rendered,
+    )
+
+    assert updated.text_fallback.startswith("好的，我来帮你整理如下")
+    assert "如需我继续展开某一条" in updated.text_fallback
+
+
+def test_reply_personalization_uses_session_memory_when_no_explicit_signal() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._reply_personalization_enabled = True
+    orchestrator._state_manager = SimpleNamespace(
+        set_reply_preferences=lambda *_args, **_kwargs: None,
+        get_reply_preferences=lambda _user_id: {"tone": "friendly", "length": "medium"},
+    )
+
+    rendered = RenderedResponse.from_outbound(
+        {
+            "text_fallback": "查询完成",
+            "blocks": [{"type": "paragraph", "content": {"text": "查询完成"}}],
+        },
+        "查询完成",
+    )
+
+    updated = orchestrator._maybe_apply_reply_personalization(user_id="u2", user_text="继续", rendered=rendered)
+
+    assert updated.text_fallback.startswith("好的，我来帮你整理如下")
 
 
 def test_outbound_contains_paragraph_block() -> None:
