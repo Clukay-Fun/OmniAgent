@@ -47,9 +47,29 @@ def test_build_send_payload_formats_outbound_into_feishu_payload() -> None:
 
     payload = _build_send_payload(reply, card_enabled=True)
 
+    assert payload["msg_type"] == "text"
+    assert payload["content"]["text"] == "outbound text"
+
+
+def test_build_send_payload_uses_card_for_rich_long_response() -> None:
+    reply = {
+        "type": "text",
+        "text": "fallback text",
+        "outbound": {
+            "text_fallback": "这是一个较长的查询结果回复，用于确认仍然会使用卡片进行展示，避免完全退化为纯文本。",
+            "blocks": [
+                {"type": "heading", "content": {"text": "查询结果"}},
+                {"type": "paragraph", "content": {"text": "卡片正文"}},
+            ],
+            "meta": {"assistant_name": "测试助手", "skill_name": "QuerySkill"},
+        },
+    }
+
+    payload = _build_send_payload(reply, card_enabled=True)
+
     assert payload["msg_type"] == "interactive"
     assert payload["card"]["elements"][0]["tag"] == "markdown"
-    assert "卡片正文" in payload["card"]["elements"][0]["content"]
+    assert "查询结果" in payload["card"]["elements"][0]["content"]
 
 
 def test_build_send_payload_prefers_template_card_when_selected() -> None:
@@ -58,6 +78,37 @@ def test_build_send_payload_prefers_template_card_when_selected() -> None:
         "text": "fallback text",
         "outbound": {
             "text_fallback": "outbound text",
+            "blocks": [{"type": "paragraph", "content": {"text": "旧正文"}}],
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v2",
+                "params": {
+                    "title": "案件查询结果",
+                    "total": 1,
+                    "records": [{"fields_text": {"案号": "(2026)粤0101民初100号"}}],
+                    "actions": {
+                        "next_page": {"callback_action": "query_list_next_page"},
+                        "today_hearing": {"callback_action": "query_list_today_hearing"},
+                        "week_hearing": {"callback_action": "query_list_week_hearing"},
+                    },
+                },
+            },
+            "meta": {"assistant_name": "测试助手", "skill_name": "QuerySkill"},
+        },
+    }
+
+    payload = _build_send_payload(reply, card_enabled=True)
+
+    assert payload["msg_type"] == "interactive"
+    assert "案件查询结果" in payload["card"]["elements"][0]["content"]
+
+
+def test_build_send_payload_uses_text_for_error_reply_even_with_template() -> None:
+    reply = {
+        "type": "text",
+        "text": "fallback text",
+        "outbound": {
+            "text_fallback": "抱歉，查询失败，请稍后重试。",
             "blocks": [{"type": "paragraph", "content": {"text": "旧正文"}}],
             "card_template": {
                 "template_id": "error.notice",
@@ -70,8 +121,10 @@ def test_build_send_payload_prefers_template_card_when_selected() -> None:
 
     payload = _build_send_payload(reply, card_enabled=True)
 
-    assert payload["msg_type"] == "interactive"
-    assert "模板正文" in payload["card"]["elements"][0]["content"]
+    assert payload == {
+        "msg_type": "text",
+        "content": {"text": "抱歉，查询失败，请稍后重试。"},
+    }
 
 
 def test_build_send_payload_falls_back_to_text_when_template_invalid() -> None:

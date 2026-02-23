@@ -301,14 +301,42 @@ def create_event_handler() -> lark.EventDispatcherHandler:
     
     功能:
         - 注册 im.message.receive_v1 事件监听
+        - 注册 bot 进群/加好友等事件的兜底处理器
         - 配置解密 Key 与校验 Token
     """
-    handler = lark.EventDispatcherHandler.builder(
-        encrypt_key=settings.feishu.encrypt_key or "",
-        verification_token=settings.feishu.verification_token or "",
-    ).register_p2_im_message_receive_v1(on_message_receive).build()
-    
+    handler = (
+        lark.EventDispatcherHandler.builder(
+            encrypt_key=settings.feishu.encrypt_key or "",
+            verification_token=settings.feishu.verification_token or "",
+        )
+        .register_p2_im_message_receive_v1(on_message_receive)
+        .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
+            _noop_event_handler("im.chat.access_event.bot_p2p_chat_entered_v1")
+        )
+        .register_p2_im_chat_member_bot_added_v1(
+            _noop_event_handler("im.chat.member.bot.added_v1")
+        )
+        .build()
+    )
+
     return handler
+
+
+def _noop_event_handler(event_type: str):
+    def _handler(_data: Any) -> None:
+        try:
+            logger.debug(
+                "收到无需处理的 WS 事件: %s",
+                event_type,
+                extra={
+                    "event_code": "ws.event.noop",
+                    "event_type": event_type,
+                },
+            )
+        except Exception:
+            return
+
+    return _handler
 
 
 def on_message_receive(data: P2ImMessageReceiveV1) -> None:

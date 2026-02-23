@@ -46,3 +46,79 @@ def test_feishu_reaction_status_emitter_fail_open(monkeypatch) -> None:
             )
         )
     )
+
+
+def test_feishu_reaction_status_emitter_disables_on_invalid_reaction_type(monkeypatch, caplog) -> None:
+    calls = {"count": 0}
+
+    async def _raise(*_args, **_kwargs):
+        calls["count"] += 1
+        raise RuntimeError("reaction type is invalid")
+
+    monkeypatch.setattr(
+        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        _raise,
+    )
+
+    emitter = FeishuReactionStatusEmitter(settings=_settings(True), message_id="msg_1")
+    event = ProcessingStatusEvent(
+        status=ProcessingStatus.THINKING,
+        user_id="u1",
+        chat_id="oc_1",
+    )
+
+    with caplog.at_level("INFO"):
+        asyncio.run(emitter(event))
+        asyncio.run(emitter(event))
+
+    assert calls["count"] == 1
+    assert "已禁用该状态的 processing status reaction" in caplog.text
+
+
+def test_feishu_reaction_status_emitter_uses_single_reaction_per_status(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _send(*_args, **kwargs):
+        reaction_type = kwargs.get("reaction_type")
+        calls.append(str(reaction_type))
+        return None
+
+    monkeypatch.setattr(
+        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        _send,
+    )
+
+    emitter = FeishuReactionStatusEmitter(settings=_settings(True), message_id="msg_1")
+    event = ProcessingStatusEvent(
+        status=ProcessingStatus.THINKING,
+        user_id="u1",
+        chat_id="oc_1",
+    )
+    asyncio.run(emitter(event))
+    asyncio.run(emitter(event))
+
+    assert calls == ["OK", "OK"]
+
+
+def test_feishu_reaction_status_emitter_keeps_retrying_non_invalid_errors(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    async def _raise(*_args, **_kwargs):
+        calls["count"] += 1
+        raise RuntimeError("temporary network error")
+
+    monkeypatch.setattr(
+        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        _raise,
+    )
+
+    emitter = FeishuReactionStatusEmitter(settings=_settings(True), message_id="msg_1")
+    event = ProcessingStatusEvent(
+        status=ProcessingStatus.THINKING,
+        user_id="u1",
+        chat_id="oc_1",
+    )
+    asyncio.run(emitter(event))
+    asyncio.run(emitter(event))
+
+    assert calls["count"] == 2

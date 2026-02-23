@@ -25,9 +25,13 @@ class FeishuFormatter:
     def __init__(self, card_enabled: bool = True) -> None:
         self._card_enabled = card_enabled
         self._template_registry = CardTemplateRegistry()
+        self._short_text_max_chars = 36
 
     def format(self, rendered: RenderedResponse) -> Dict[str, Any]:
         if not self._card_enabled:
+            return self._text_payload(rendered)
+
+        if self._should_force_text(rendered):
             return self._text_payload(rendered)
 
         if rendered.card_template is not None:
@@ -59,6 +63,40 @@ class FeishuFormatter:
         if card_payload is None:
             return self._text_payload(rendered)
         return card_payload
+
+    def _should_force_text(self, rendered: RenderedResponse) -> bool:
+        text = rendered.text_fallback.strip()
+        if not text:
+            return True
+        if self._is_error_like_text(text):
+            return True
+        if rendered.card_template is not None:
+            return False
+        if len(text) <= self._short_text_max_chars and self._is_simple_paragraph_reply(rendered.blocks):
+            return True
+        return False
+
+    def _is_error_like_text(self, text: str) -> bool:
+        normalized = text.lower()
+        keywords = (
+            "错误",
+            "失败",
+            "超时",
+            "异常",
+            "抱歉",
+            "请稍后重试",
+            "未找到",
+            "error",
+            "failed",
+            "timeout",
+        )
+        return any(item in normalized for item in keywords)
+
+    def _is_simple_paragraph_reply(self, blocks: List[Block]) -> bool:
+        if len(blocks) != 1:
+            return False
+        block = blocks[0]
+        return block.type == "paragraph"
 
     def _build_template_card(self, template_id: str, version: str, params: dict[str, Any]) -> Dict[str, Any] | None:
         elements = self._template_registry.render(template_id=template_id, version=version, params=params)

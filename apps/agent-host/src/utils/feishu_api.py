@@ -282,4 +282,43 @@ async def set_message_reaction(
             raise FeishuAPIError(detail or f"Failed to set message reaction (HTTP {response.status_code})")
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to set message reaction")
+        # 返回 reaction_id，供撤回时使用
+        resp_data = data.get("data") or {}
+        return str(resp_data.get("reaction_id") or "")
+
+
+async def delete_message_reaction(
+    settings: Settings,
+    message_id: str,
+    reaction_id: str,
+    credential_source: str = "default",
+) -> None:
+    """删除飞书消息上已添加的 reaction，切换阶段时勘回旧表情"""
+    token = await get_token_manager(settings, credential_source=credential_source).get_token()
+    normalized_message_id = str(message_id or "").strip()
+    normalized_reaction_id = str(reaction_id or "").strip()
+    if not normalized_message_id or not normalized_reaction_id:
+        return
+
+    url = f"{settings.feishu.api_base}/im/v1/messages/{normalized_message_id}/reactions/{normalized_reaction_id}"
+    async with httpx.AsyncClient(
+        timeout=settings.feishu.message.reply_timeout,
+        trust_env=False,
+    ) as client:
+        response = await client.delete(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # 404 表示 reaction 已被删除，忽略
+        if response.status_code == 404:
+            return
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+        if response.status_code >= 400:
+            detail = ""
+            if isinstance(data, dict):
+                detail = str(data.get("msg") or data.get("error") or "").strip()
+            raise FeishuAPIError(detail or f"Failed to delete message reaction (HTTP {response.status_code})")
 # endregion

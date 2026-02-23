@@ -298,6 +298,7 @@ class WebhookEventSettings(BaseModel):
         default_factory=lambda: [
             "im.message.receive_v1",
             "im.chat.access_event.bot_p2p_chat_entered_v1",
+            "im.chat.member.bot.added_v1",
             "drive.file.bitable_field_changed_v1",
             "drive.file.bitable_record_changed_v1",
             "calendar.calendar.changed_v4",
@@ -540,6 +541,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "HEARING_REMINDER_SCAN_HOUR": ["hearing_reminder", "scan_hour"],
         "HEARING_REMINDER_SCAN_MINUTE": ["hearing_reminder", "scan_minute"],
         "CHUNK_ASSEMBLER_ENABLED": ["webhook", "chunk_assembler", "enabled"],
+        "CHUNK_ASSEMBLER_WINDOW_SECONDS": ["webhook", "chunk_assembler", "window_seconds"],
         "CHUNK_ASSEMBLER_STALE_WINDOW_SECONDS": ["webhook", "chunk_assembler", "stale_window_seconds"],
         "MIDTERM_MEMORY_SQLITE_PATH": ["agent", "midterm_memory", "sqlite_path"],
         "MIDTERM_MEMORY_INJECT_TO_LLM": ["agent", "midterm_memory", "inject_to_llm"],

@@ -32,7 +32,7 @@ def test_format_returns_text_payload_when_card_disabled() -> None:
 def test_format_returns_interactive_card_when_blocks_available() -> None:
     formatter = FeishuFormatter(card_enabled=True)
     rendered = RenderedResponse(
-        text_fallback="fallback",
+        text_fallback="这是一个足够长的回复文本，用于验证在非短文本场景下仍可正常渲染卡片展示，而且不会被短回复策略降级。",
         blocks=[Block(type="paragraph", content={"text": "第一段"})],
     )
 
@@ -68,7 +68,10 @@ def test_format_maps_block_types_to_card_elements(
     expected_content: Optional[str],
 ) -> None:
     formatter = FeishuFormatter(card_enabled=True)
-    rendered = RenderedResponse(text_fallback="fallback", blocks=[block])
+    rendered = RenderedResponse(
+        text_fallback="这是一个足够长的回复文本，用于验证块类型映射仍可走卡片渲染，并且不会被短回复策略降级为纯文本。",
+        blocks=[block],
+    )
 
     payload = formatter.format(rendered)
 
@@ -119,8 +122,11 @@ def test_format_filters_empty_content_and_invalid_items() -> None:
 def test_format_falls_back_to_text_when_card_build_raises(monkeypatch, caplog) -> None:
     formatter = FeishuFormatter(card_enabled=True)
     rendered = RenderedResponse(
-        text_fallback="异常兜底",
-        blocks=[Block(type="paragraph", content={"text": "第一段"})],
+        text_fallback="这是一个足够长的兜底文本，用于触发卡片构建分支并记录日志。",
+        blocks=[
+            Block(type="heading", content={"text": "标题"}),
+            Block(type="paragraph", content={"text": "第一段"}),
+        ],
     )
 
     def raise_error(_rendered: RenderedResponse):
@@ -133,7 +139,7 @@ def test_format_falls_back_to_text_when_card_build_raises(monkeypatch, caplog) -
     assert "fall back to text" in caplog.text
     assert payload == {
         "msg_type": "text",
-        "content": {"text": "异常兜底"},
+        "content": {"text": "这是一个足够长的兜底文本，用于触发卡片构建分支并记录日志。"},
     }
 
 
@@ -190,7 +196,7 @@ def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
     formatter = FeishuFormatter(card_enabled=True)
     rendered = RenderedResponse.model_validate(
         {
-            "text_fallback": "模板失败兜底",
+            "text_fallback": "这是一个足够长的模板兜底文本，用于验证模板渲染出问题时会记录日志并退回文本。",
             "blocks": [{"type": "paragraph", "content": {"text": "旧块"}}],
             "card_template": {
                 "template_id": "query.list",
@@ -205,7 +211,7 @@ def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
     assert "template render failed" in caplog.text
     assert payload == {
         "msg_type": "text",
-        "content": {"text": "模板失败兜底"},
+        "content": {"text": "这是一个足够长的模板兜底文本，用于验证模板渲染出问题时会记录日志并退回文本。"},
     }
 
 
