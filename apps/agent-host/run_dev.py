@@ -1,8 +1,8 @@
 """
-描述: agent-host 开发入口兼容 shim。
+描述: Agent 子目录开发入口代理。
 主要功能:
-    - 统一新入口路径为 apps/agent-host
-    - 参数透传到 agent/feishu-agent/run_dev.py
+    - 在 apps/agent-host 目录下提供一致的命令体验
+    - 参数透传到仓库根 run_dev.py（唯一权威实现）
 """
 
 from __future__ import annotations
@@ -12,10 +12,19 @@ import sys
 from pathlib import Path
 
 
+def _find_repo_root(start: Path) -> Path:
+    """向上查找仓库根目录。"""
+    current = start.resolve()
+    for candidate in [current, *current.parents]:
+        if (candidate / "run_dev.py").exists() and (candidate / "deploy" / "docker" / "compose.yml").exists():
+            return candidate
+    raise RuntimeError("未找到仓库根目录（缺少 run_dev.py）")
+
+
 def main() -> int:
-    """执行 agent-host 开发入口兼容代理。"""
-    repo_root = Path(__file__).resolve().parents[2]
-    target = repo_root / "agent" / "feishu-agent" / "run_dev.py"
+    """执行代理入口。"""
+    repo_root = _find_repo_root(Path(__file__).resolve().parent)
+    target = repo_root / "run_dev.py"
     command = [sys.executable, str(target), *sys.argv[1:]]
     result = subprocess.run(command, cwd=str(repo_root), check=False)
     return int(result.returncode)

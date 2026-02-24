@@ -17,7 +17,156 @@ def _load_module(module_path: Path, module_name: str) -> ModuleType:
     return module
 
 
-def _run_and_capture_command(module: ModuleType, monkeypatch) -> list[str]:
+def test_root_run_dev_uses_repo_compose_files() -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev")
+
+    compose_args = module._compose_base_args(REPO_ROOT)
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.yml") in compose_args
+    assert str(REPO_ROOT / "deploy" / "docker" / "compose.dev.yml") in compose_args
+
+
+def test_root_run_dev_agent_ws_starts_ws_client(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_ws")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-ws"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.ws_client"]
+    assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
+
+
+def test_root_run_dev_agent_ws_watch_delegates_to_watch_runner(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_ws_watch")
+
+    captured: dict[str, object] = {}
+
+    def fake_watch_runner(repo_root: Path) -> int:
+        captured["repo_root"] = repo_root
+        return 0
+
+    monkeypatch.setattr(module, "_run_agent_ws_watch", fake_watch_runner)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-ws-watch"])
+
+    rc = module.main()
+    assert rc == 0
+    assert captured["repo_root"] == REPO_ROOT
+
+
+def test_root_run_dev_card_preview_passes_send_to_me(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview", "--preset", "t1", "--send-to-me"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    assert "t1" in command
+    assert "--send-to-me" in command
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
+def test_root_run_dev_card_preview_defaults_to_t2(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview_default")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    preset_idx = command.index("--preset") + 1
+    assert command[preset_idx] == "t2"
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
+def test_root_run_dev_card_preview_passes_send_last_user(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview_last_user")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview", "--preset", "t1", "--send-last-user"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    assert "t1" in command
+    assert "--send-last-user" in command
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
+def test_agent_host_run_dev_targets_root_entry(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
+
     captured: dict[str, list[str]] = {}
 
     def fake_run(command: list[str], cwd: str, check: bool):
@@ -31,41 +180,40 @@ def _run_and_capture_command(module: ModuleType, monkeypatch) -> list[str]:
         return Result()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
-    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "up", "--build"])
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "up"])
     monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
 
     rc = module.main()
-
     assert rc == 0
-    return captured["command"]
+    expected_target = REPO_ROOT / "run_dev.py"
+    assert captured["command"][1] == str(expected_target)
 
 
-def test_root_run_dev_targets_agent_host_shim(monkeypatch) -> None:
-    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev")
+def test_mcp_run_dev_targets_root_entry(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "integrations" / "feishu-mcp-server" / "run_dev.py", "mcp_run_dev")
 
-    command = _run_and_capture_command(module, monkeypatch)
+    captured: dict[str, list[str]] = {}
 
-    expected_target = REPO_ROOT / "apps" / "agent-host" / "run_dev.py"
-    assert command[1] == str(expected_target)
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        assert isinstance(cwd, str)
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "logs"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+    expected_target = REPO_ROOT / "run_dev.py"
+    assert captured["command"][1] == str(expected_target)
 
 
-def test_agent_host_run_dev_shim_targets_feishu_agent(monkeypatch) -> None:
-    shim_path = REPO_ROOT / "apps" / "agent-host" / "run_dev.py"
-    assert shim_path.exists()
-
-    module = _load_module(shim_path, "agent_host_run_dev")
-    command = _run_and_capture_command(module, monkeypatch)
-
-    expected_target = REPO_ROOT / "agent" / "feishu-agent" / "run_dev.py"
-    assert command[1] == str(expected_target)
-
-
-def test_agent_host_run_server_shim_targets_feishu_agent(monkeypatch) -> None:
-    shim_path = REPO_ROOT / "apps" / "agent-host" / "run_server.py"
-    assert shim_path.exists()
-
-    module = _load_module(shim_path, "agent_host_run_server")
-    command = _run_and_capture_command(module, monkeypatch)
-
-    expected_target = REPO_ROOT / "agent" / "feishu-agent" / "run_server.py"
-    assert command[1] == str(expected_target)
+def test_agent_host_run_server_no_legacy_path_reference() -> None:
+    content = (REPO_ROOT / "apps" / "agent-host" / "run_server.py").read_text(encoding="utf-8")
+    assert "agent/feishu-agent" not in content

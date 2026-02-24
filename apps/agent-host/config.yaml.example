@@ -1,5 +1,5 @@
 # ============================================================
-# Agent Host 配置文件
+# Feishu Agent 配置文件
 # ============================================================
 # 使用方式：
 #   1. 复制此文件为 config.yaml
@@ -23,6 +23,8 @@ feishu:
   # 应用凭证（必填）
   app_id: ${FEISHU_BOT_APP_ID}
   app_secret: ${FEISHU_BOT_APP_SECRET}
+  org_b_app_id: ${FEISHU_BOT_ORG_B_APP_ID:-}
+  org_b_app_secret: ${FEISHU_BOT_ORG_B_APP_SECRET:-}
 
   # Webhook 验证配置
   verification_token: ${FEISHU_BOT_VERIFICATION_TOKEN}
@@ -70,6 +72,8 @@ llm:
   # 主模型配置
   provider: "openai"              # openai | anthropic | deepseek
   model: "gpt-4o-mini"            # 推荐性价比模型
+  model_primary: ${MODEL_PRIMARY:-}
+  model_secondary: ${MODEL_SECONDARY:-}
 
   # API 配置
   api_key: ${LLM_API_KEY}
@@ -110,6 +114,13 @@ task_llm:
 agent:
   # Agent 名称（用于日志标识）
   name: "feishu-case-assistant"
+
+  # 中期记忆（SQLite + 可选注入）
+  midterm_memory:
+    sqlite_path: ${MIDTERM_MEMORY_SQLITE_PATH:-workspace/memory/midterm_memory.sqlite3}
+    inject_to_llm: ${MIDTERM_MEMORY_INJECT_TO_LLM:-false}
+    llm_recent_limit: ${MIDTERM_MEMORY_LLM_RECENT_LIMIT:-6}
+    llm_max_chars: ${MIDTERM_MEMORY_LLM_MAX_CHARS:-240}
 
   # 系统提示词配置
   prompt:
@@ -165,6 +176,86 @@ session:
     enabled: true
 
 # ------------------------------------------------------------
+# 状态存储配置（默认 memory；redis 为可选占位）
+# ------------------------------------------------------------
+state_store:
+  backend: ${STATE_STORE_BACKEND:-memory}   # memory | redis
+  redis:
+    dsn: ${STATE_STORE_REDIS_DSN:-}
+    host: ${STATE_STORE_REDIS_HOST:-localhost}
+    port: ${STATE_STORE_REDIS_PORT:-6379}
+    db: ${STATE_STORE_REDIS_DB:-0}
+    password: ${STATE_STORE_REDIS_PASSWORD:-}
+    key_prefix: ${STATE_STORE_REDIS_KEY_PREFIX:-omniagent:state:}
+    socket_timeout_seconds: ${STATE_STORE_REDIS_SOCKET_TIMEOUT_SECONDS:-1.0}
+
+# ------------------------------------------------------------
+# 文件处理链路（默认关闭，fail-open）
+# ------------------------------------------------------------
+file_pipeline:
+  enabled: ${FILE_PIPELINE_ENABLED:-false}
+  max_bytes: ${FILE_PIPELINE_MAX_BYTES:-5242880}
+  timeout_seconds: ${FILE_PIPELINE_TIMEOUT_SECONDS:-12}
+  metrics_enabled: ${FILE_PIPELINE_METRICS_ENABLED:-true}
+
+file_extractor:
+  enabled: ${FILE_EXTRACTOR_ENABLED:-false}
+  provider: ${FILE_EXTRACTOR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${FILE_EXTRACTOR_API_KEY:-}
+  api_base: ${FILE_EXTRACTOR_API_BASE:-}
+  mineru_path: ${FILE_EXTRACTOR_MINERU_PATH:-/v1/convert}
+  llm_path: ${FILE_EXTRACTOR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${FILE_EXTRACTOR_AUTH_STYLE:-bearer}  # bearer | x_api_key | none
+  api_key_header: ${FILE_EXTRACTOR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${FILE_EXTRACTOR_API_KEY_PREFIX:-Bearer }
+  fail_open: ${FILE_EXTRACTOR_FAIL_OPEN:-true}
+
+file_context:
+  injection_enabled: ${FILE_CONTEXT_INJECTION_ENABLED:-false}
+  max_chars: ${FILE_CONTEXT_MAX_CHARS:-2000}
+  max_tokens: ${FILE_CONTEXT_MAX_TOKENS:-500}
+
+usage_log:
+  enabled: ${USAGE_LOG_ENABLED:-false}
+  path: ${USAGE_LOG_PATH:-workspace/usage/usage_log-{date}.jsonl}
+  fail_open: ${USAGE_LOG_FAIL_OPEN:-true}
+  model_pricing_path: ${USAGE_MODEL_PRICING_PATH:-}
+  model_pricing_json: ${USAGE_MODEL_PRICING_JSON:-}
+
+ab_routing:
+  enabled: ${AB_ROUTING_ENABLED:-false}
+  ratio: ${AB_ROUTING_RATIO:-0.0}
+  model_a: ${AB_ROUTING_MODEL_A:-}
+  model_b: ${AB_ROUTING_MODEL_B:-}
+
+cost_monitor:
+  alert_hourly_threshold: ${COST_ALERT_HOURLY_THRESHOLD:-5.0}
+  alert_daily_threshold: ${COST_ALERT_DAILY_THRESHOLD:-50.0}
+  circuit_breaker_enabled: ${COST_CIRCUIT_BREAKER_ENABLED:-false}
+
+ocr:
+  enabled: ${OCR_ENABLED:-false}
+  provider: ${OCR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${OCR_API_KEY:-}
+  api_base: ${OCR_API_ENDPOINT:-${OCR_API_BASE:-}}
+  mineru_path: ${OCR_MINERU_PATH:-/v1/convert}
+  llm_path: ${OCR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${OCR_AUTH_STYLE:-bearer}
+  api_key_header: ${OCR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${OCR_API_KEY_PREFIX:-Bearer }
+
+asr:
+  enabled: ${ASR_ENABLED:-false}
+  provider: ${ASR_PROVIDER:-none}   # none | mineru | llm
+  api_key: ${ASR_API_KEY:-}
+  api_base: ${ASR_API_ENDPOINT:-${ASR_API_BASE:-}}
+  mineru_path: ${ASR_MINERU_PATH:-/v1/convert}
+  llm_path: ${ASR_LLM_PATH:-/v1/document/convert}
+  auth_style: ${ASR_AUTH_STYLE:-bearer}
+  api_key_header: ${ASR_API_KEY_HEADER:-X-API-Key}
+  api_key_prefix: ${ASR_API_KEY_PREFIX:-Bearer }
+
+# ------------------------------------------------------------
 # Webhook 配置
 # ------------------------------------------------------------
 webhook:
@@ -188,6 +279,14 @@ webhook:
     private_chat_only: true
     # 忽略机器人自身消息
     ignore_bot_message: true
+
+  # 分片聚合（多条短消息 3 秒窗口聚合）
+  chunk_assembler:
+    enabled: ${CHUNK_ASSEMBLER_ENABLED:-false}
+    window_seconds: 3
+    stale_window_seconds: ${CHUNK_ASSEMBLER_STALE_WINDOW_SECONDS:-10}
+    max_segments: 5
+    max_chars: 500
 
 # ------------------------------------------------------------
 # 回复格式配置

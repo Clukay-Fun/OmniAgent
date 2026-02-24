@@ -1,0 +1,22 @@
+{
+  "schema": "2.0",
+  "header": {
+    "template": "orange",
+    "title": {
+      "tag": "plain_text",
+      "content": "{{header_title}}"
+    },
+    "icon": {
+      "tag": "standard_icon",
+      "token": "case_outlined",
+      "color": "orange"
+    },
+    "padding": "12px 8px 12px 8px"
+  },
+  "body": {
+    "direction": "vertical"
+  },
+  "config": {
+    "update_multi": true
+  }
+}

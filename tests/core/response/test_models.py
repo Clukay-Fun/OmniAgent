@@ -6,10 +6,10 @@ from pydantic import ValidationError
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "apps" / "agent-host" / "src"
-sys.path.insert(0, str(SRC))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from core.response.models import Block, RenderedResponse
+from src.core.response.models import Block, RenderedResponse
 
 
 @pytest.mark.parametrize("value", ["", " ", "\n\t"])
@@ -41,3 +41,34 @@ def test_rendered_response_defaults_blocks_and_meta():
 def test_rendered_response_text_fallback_allows_surrounding_whitespace_when_non_empty():
     response = RenderedResponse(text_fallback="  hello  ")
     assert response.text_fallback == "  hello  "
+
+
+def test_rendered_response_from_outbound_parses_card_template() -> None:
+    response = RenderedResponse.from_outbound(
+        outbound={
+            "text_fallback": "ok",
+            "blocks": [{"type": "paragraph", "content": {"text": "ok"}}],
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v1",
+                "params": {"records": []},
+            },
+        },
+        fallback_text="fallback",
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+
+
+def test_rendered_response_from_outbound_ignores_invalid_card_template() -> None:
+    response = RenderedResponse.from_outbound(
+        outbound={
+            "text_fallback": "ok",
+            "blocks": [{"type": "paragraph", "content": {"text": "ok"}}],
+            "card_template": {"template_id": "", "version": "v1", "params": {}},
+        },
+        fallback_text="fallback",
+    )
+
+    assert response.card_template is None

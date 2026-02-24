@@ -1,0 +1,12 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "🔍 找到 **{{total_count}}** 份合同（显示前{{shown_count}}条）"
+    },
+    {
+      "tag": "hr",
+      "margin": "8px 0px 8px 0px"
+    }
+  ]
+}

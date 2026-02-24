@@ -4,15 +4,15 @@ services:
       - AUTOMATION_POLLER_ENABLED=false
       - AUTOMATION_SCHEMA_POLLER_ENABLED=false
     volumes:
-      - ../../mcp/mcp-feishu-server/src:/app/src
-      - ../../mcp/mcp-feishu-server/automation_rules.yaml:/app/automation_rules.yaml
+      - ../../integrations/feishu-mcp-server/src:/app/src
+      - ../../integrations/feishu-mcp-server/automation_rules.yaml:/app/automation_rules.yaml
     command: uvicorn src.main:app --host 0.0.0.0 --port 8081 --reload --reload-dir src
 
   feishu-agent:
     environment:
       - REMINDER_SCHEDULER_ENABLED=false
     volumes:
-      - ../../agent/feishu-agent/src:/app/src
-      - ../../agent/feishu-agent/config:/app/config:ro
-      - ../../agent/feishu-agent/workspace:/workspace
+      - ../../apps/agent-host/src:/app/src
+      - ../../apps/agent-host/config:/app/config:ro
+      - ../../apps/agent-host/workspace:/workspace
     command: uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload --reload-dir src --reload-dir config

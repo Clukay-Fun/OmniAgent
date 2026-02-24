@@ -4,11 +4,11 @@ from unittest.mock import Mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "apps" / "agent-host" / "src"
-sys.path.insert(0, str(SRC))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from adapters.channels.feishu.sender import FeishuSender
-from core.response.models import Block, RenderedResponse
+from src.adapters.channels.feishu.sender import FeishuSender
+from src.core.response.models import Block, RenderedResponse
 
 
 def test_sender_calls_formatter_once_and_passes_payload_through() -> None:

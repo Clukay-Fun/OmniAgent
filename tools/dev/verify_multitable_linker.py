@@ -12,6 +12,7 @@ if str(AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENT_ROOT))
 
 from src.core.skills.multi_table_linker import MultiTableLinker  # noqa: E402
+from src.core.skills.data_writer import build_default_data_writer  # noqa: E402
 
 
 class FakeMCPClient:
@@ -91,7 +92,7 @@ def _build_skills_config() -> dict[str, Any]:
 
 async def _run() -> int:
     mcp = FakeMCPClient()
-    linker = MultiTableLinker(mcp, _build_skills_config())
+    linker = MultiTableLinker(mcp, _build_skills_config(), data_writer=build_default_data_writer(mcp))
 
     create_sync = await linker.sync_after_create(
         parent_table_id="tbl_cases",

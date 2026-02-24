@@ -1,0 +1,13 @@
+{
+  "config": {
+    "wide_screen_mode": true,
+    "enable_forward": true
+  },
+  "header": {
+    "template": "wathet",
+    "title": {
+      "tag": "plain_text",
+      "content": "{{header_title}}"
+    }
+  }
+}

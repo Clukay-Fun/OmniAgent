@@ -2,8 +2,8 @@
 
 多模块智能 Agent 项目，当前主线是：
 
-- `apps/agent-host`：单 Agent 主应用入口（当前通过 shim 兼容 `agent/feishu-agent`）
-- `integrations/feishu-mcp-server`：飞书数据侧 MCP 服务（当前兼容 `mcp/mcp-feishu-server`）
+- `apps/agent-host`：单 Agent 主应用入口
+- `integrations/feishu-mcp-server`：飞书数据侧 MCP 服务
 
 ## 当前阶段
 
@@ -18,11 +18,6 @@
 OmniAgent/
 ├── apps/agent-host/                 # 单 Agent 主应用入口
 ├── integrations/feishu-mcp-server/  # 飞书数据侧 MCP 服务主入口
-├── agent/
-│   └── feishu-agent/                # 兼容 shim / 历史路径（旧 Agent 目录）
-│       └── workspace/               # Agent 运行态工作区（本地）
-├── mcp/
-│   └── mcp-feishu-server/           # 兼容 shim / 历史路径（旧 MCP 目录）
 ├── deploy/
 │   ├── docker/
 │   │   ├── compose.yml              # 主 compose
@@ -44,13 +39,13 @@ OmniAgent/
     │   ├── upload-manifest.md
     │   ├── cloud-checklist-no-db.md
     │   └── three-stage-guide.md
-    ├── architecture/
-    │   └── repo-layout.md
-    └── tests/
-        └── TEST.md
+    └── architecture/
+        └── repo-layout.md
 ```
 
 ## 本地开发（不依赖云）
+
+命令以 `docs/deploy/three-stage-guide.md` 为准（本节仅保留高频快捷入口）。
 
 统一开发入口（推荐）：
 
@@ -70,6 +65,8 @@ python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
 python run_dev.py auth-health
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+python run_dev.py agent-ws
+python run_dev.py agent-ws-watch
 
 # 一键拉起全部（MCP + Agent + Monitoring + DB）
 python run_dev.py up --all
@@ -77,7 +74,34 @@ python run_dev.py up --all
 
 说明：`sync` 执行全量补偿（新增+修改+删除对账），`refresh-schema` 仅刷新字段结构。
 
+本地未备案阶段建议使用长连接：`python run_dev.py agent-ws`（MCP 侧用 `sync/scan` 手动补偿）。
+开发期可使用 `python run_dev.py agent-ws-watch`，修改 `apps/agent-host/src` 后自动重启长连接进程。
+
 容器名冲突或历史残留时，先执行 `python run_dev.py clean` 再 `up`。
+
+## 启动装配要求
+
+`AgentOrchestrator` 初始化时必须注入 `data_writer` 实例，否则启动会直接报错。
+
+```python
+from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
+
+
+writer = BitableWriter(mcp_client)
+orchestrator = AgentOrchestrator(data_writer=writer, ...)
+```
+
+如需在测试中使用 mock：
+
+```python
+from unittest.mock import AsyncMock
+
+from src.core.skills.data_writer import DataWriter
+
+
+mock_writer = AsyncMock(spec=DataWriter)
+orchestrator = AgentOrchestrator(data_writer=mock_writer, ...)
+```
 
 默认端口：
 
@@ -117,7 +141,7 @@ curl http://localhost:8081/mcp/tools
 
 - 主应用文档：`apps/agent-host/README.md`
 - MCP 详细文档：`integrations/feishu-mcp-server/README.md`
-- 兼容路径（旧）：`agent/feishu-agent/README.md`、`mcp/mcp-feishu-server/README.md`
+- 项目快速上下文（人/AI）：`docs/project-context.md`
 - 三阶段统一文档：`docs/deploy/three-stage-guide.md`
 - 统一变量参考（合并版）：`.env.example`
 - 上传清单（备案后用）：`docs/deploy/upload-manifest.md`

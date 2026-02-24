@@ -8,14 +8,14 @@ services:
   # MCP Feishu Server
   # ===========================================
   mcp-feishu-server:
-    build: ../../mcp/mcp-feishu-server
+    build: ../../integrations/feishu-mcp-server
     ports:
       - "8081:8081"
     env_file:
-      - ../../mcp/mcp-feishu-server/.env
+      - ../../integrations/feishu-mcp-server/.env
     restart: unless-stopped
     volumes:
-      - ../../mcp/mcp-feishu-server/automation_data:/app/automation_data
+      - ../../integrations/feishu-mcp-server/automation_data:/app/automation_data
     deploy:
       resources:
         limits:
@@ -37,11 +37,11 @@ services:
   # Feishu Agent
   # ===========================================
   feishu-agent:
-    build: ../../agent/feishu-agent
+    build: ../../apps/agent-host
     ports:
       - "8080:8080"
     env_file:
-      - ../../agent/feishu-agent/.env
+      - ../../apps/agent-host/.env
     environment:
       - MCP_SERVER_BASE=http://mcp-feishu-server:8081
       # 日志格式：json 用于生产环境
@@ -69,8 +69,8 @@ services:
       start_period: 15s
     # 配置卷挂载（支持热更新）
     volumes:
-      - ../../agent/feishu-agent/config:/app/config:ro
-      - ../../agent/feishu-agent/workspace:/workspace
+      - ../../apps/agent-host/config:/app/config:ro
+      - ../../apps/agent-host/workspace:/workspace
 
   # ===========================================
   # Postgres (Reminder)

@@ -1,0 +1,617 @@
+default_versions:
+  query.list: v2
+  query.detail: v1
+  action.confirm: v1
+  error.notice: v1
+  todo.reminder: v1
+  upload.result: v1
+  create.success: v1
+  update.success: v1
+  delete.confirm: v1
+  delete.success: v1
+  delete.cancelled: v1
+
+enabled:
+  query.list.v1: true
+  query.list.v2: true
+  query.detail.v1: true
+  action.confirm.v1: true
+  error.notice.v1: true
+  todo.reminder.v1: true
+  upload.result.v1: true
+  create.success.v1: true
+  update.success.v1: true
+  delete.confirm.v1: true
+  delete.success.v1: true
+  delete.cancelled.v1: true
+
+render_templates:
+  query_list_v2:
+    template_files:
+      root: ""
+    texts:
+      default_title: 查询结果
+      not_found: 未找到相关记录。
+      not_found_suggestion: 建议补充案号、负责人、时间范围等条件后重试。
+      narrowing_hint: 结果较多，建议补充关键词或时间范围缩小范围。
+      view_detail: 查看详情
+      table_badge: "数据表: {table_name}{table_suffix} | 模板: {style}"
+    list_limits:
+      small: 10
+      large: 5
+    actions:
+      next_page: 下一页
+      next_page_with_remaining: 下一页（剩余 {remaining} 条）
+      today_hearing: 今天开庭
+      week_hearing: 本周开庭
+    field_mapping:
+      case:
+        项目 ID: project_id
+        项目ID: project_id
+        项目类型: project_type
+        案件分类: case_category
+        主办律师: owner
+        协办律师: co_owner
+        案号: case_no
+        委托人: client
+        委托人及联系方式: client
+        联系人: contact_person
+        联系方式: contact_info
+        对方当事人: opponent
+        案由: cause
+        审理法院: court
+        审理程序: stage
+        程序阶段: stage
+        承办法官: judge
+        开庭日: hearing_date
+        管辖权异议截止日: jurisdiction_deadline
+        举证截止日: evidence_deadline
+        查封到期日: seizure_expiry
+        反诉截止日: counterclaim_deadline
+        上诉截止日: appeal_deadline
+        进展: progress
+        案件进展: progress
+        待做事项: todo
+        案件状态: status
+        重要紧急程度: urgency
+        备注: remark
+        关联合同: linked_contract
+        关联任务: linked_task
+      contracts:
+        合同号: contract_id
+        合同类型: contract_type
+        客户名称: client_name
+        主办律师: owner
+        合同金额: amount
+        付款节点: payment_milestone
+        签约日期: sign_date
+        合同开始日期: start_date
+        合同结束日期: end_date
+        开票付款状态: payment_status
+        发票: invoice
+        扫描件: scan_copy
+        盖章状态: seal_status
+        原件存档位置: archive_location
+        盖章日期: seal_date
+        关联项目: linked_project
+      bidding:
+        项目号: bid_id
+        招标方名称: bidder_name
+        投标项目名称: project_name
+        标书购买截止时间: book_deadline
+        标书领取状态: book_status
+        开标时间: open_date
+        截标时间: close_date
+        保证金截止日期: deposit_deadline
+        保证金缴纳状态: deposit_status
+        文件编制进度: doc_progress
+        标书类型: book_type
+        承办律师: owner
+        是否中标: bid_result
+        中标金额: bid_amount
+        备注: remark
+      team_overview:
+        源记录 ID: record_id
+        任务描述: task_desc
+        任务类型: task_type
+        重要紧急程度: urgency
+        任务状态: task_status
+        进度: task_progress
+        发起人: creator
+        请求协助人: helper
+        附件: attachment
+        关联案件项目: linked_case
+        创建时间: created_at
+        截止时间: deadline
+        完成时间: completed_at
+    field_keys:
+      case:
+        case_no: [案号, 项目ID]
+        title_left: [委托人及联系方式, 委托人]
+        title_right: [对方当事人]
+        cause: [案由]
+        court: [审理法院]
+        stage: [程序阶段]
+        status: [案件状态, 进展, 程序阶段]
+        date: [开庭日, 截止日, 上诉截止日, 举证截止日]
+        owner: [主办律师, 负责人]
+        urgency: [紧急程度, 优先级, 风险等级]
+        co_owner: [协办律师]
+        courtroom: [承办法庭]
+      contracts:
+        id: [合同编号, 编号, 项目ID]
+        name: [合同名称, 标题]
+        party_a: [甲方]
+        party_b: [乙方]
+        amount: [合同金额, 金额]
+        status: [合同状态, 状态]
+        date: [签约日期, 到期日期, 付款截止, 截止日]
+      bidding:
+        name: [项目名称, 标段名称]
+        owner_org: [招标方, 业主单位]
+        phase: [阶段, 进度, 状态]
+        due: [投标截止日, 截止日, 开标时间]
+        owner: [负责人, 主办律师]
+      team_overview:
+        member: [成员, 姓名, 负责人]
+        workload: [在办事项, 任务数]
+        today: [今日节点, 今日安排]
+        risk: [风险事项, 风险]
+        status: [状态, 进展]
+        due: [截止日, 下个节点]
+    template_dsl:
+      case:
+        table_label: 案件项目总库
+        styles:
+          T1:
+            layout_file: query/detail_T1_layout.json
+            template_file: query/detail_T1.md
+            wrapper_file: wrapper/card_case_detail_T1.json
+            header_title: 案件详情
+            append_detail_button: false
+            header_fields:
+              - template: "OK 案件项目总库详情"
+            sections:
+              - name: 基础信息
+                icon: OK
+                list_fields:
+                  - {key: project_id, label: 项目 ID, show_empty: true}
+                  - {name: case_no, label: 案号, format: case_no_multiline, show_empty: true}
+                  - {key: project_type, label: 项目类型, show_empty: true}
+                  - {key: case_category, label: 案件分类, show_empty: true}
+                  - {name: cause, label: 案由, show_empty: true}
+                  - {name: stage, label: 程序阶段, show_empty: true}
+                  - {key: case_status, label: 案件状态, source_keys: [案件状态], show_empty: true}
+                  - {name: urgency, label: 重要紧急程度, format: urgency_badge, show_empty: true}
+              - name: 当事人与承办
+                icon: OK
+                list_fields:
+                  - {name: title_left, label: 委托人及联系方式, show_empty: true}
+                  - {name: title_right, label: 对方当事人, show_empty: true}
+                  - {name: court, label: 审理法院, show_empty: true}
+                  - {key: judge, label: 承办法官, format: person_struct, show_empty: true}
+                  - {name: owner, label: 主办律师, show_empty: true}
+                  - {name: co_owner, label: 协办律师, show_empty: true}
+              - name: 关键日期
+                icon: OK
+                list_fields:
+                  - {key: hearing_date, label: 开庭日, format: date_countdown, show_empty: true}
+                  - {key: jurisdiction_deadline, label: 管辖权异议截止日, format: date_countdown, show_empty: true}
+                  - {key: evidence_deadline, label: 举证截止日, format: date_countdown, show_empty: true}
+                  - {key: seizure_expiry, label: 查封到期日, format: date_countdown, show_empty: true}
+                  - {key: counterclaim_deadline, label: 反诉截止日, format: date_countdown, show_empty: true}
+                  - {key: appeal_deadline, label: 上诉截止日, format: date_countdown, show_empty: true}
+              - name: 办理进展
+                icon: OK
+                list_fields:
+                  - {key: progress, label: 进展, format: progress_timeline, show_empty: true}
+                  - {key: todo, label: 待做事项, show_empty: true}
+                  - {key: remark, label: 备注, show_empty: true}
+          T2:
+            render_mode: template_files
+            list_header_layout_file: query/list_T2_header_layout.json
+            list_item_layout_file: query/list_T2_item_layout.json
+            wrapper_file: wrapper/card_case_list_T2.json
+            header_title: 案件查询结果
+            append_detail_button: false
+          T3:
+            render_mode: template_files
+            list_layout_file: query/list_T3_layout.json
+            list_template_file: query/list_T3.md
+            wrapper_file: wrapper/card_case_focus_T3.json
+            header_title: 重要日期提醒
+            append_detail_button: false
+          T3A:
+            list_fields:
+              - {key: _hearing_line, label: "", format: composite, template: "OK {project_id} | {hearing_date} 开庭", fallback: "OK {project_id}"}
+              - {key: _party_line, label: "", format: composite, template: "{client} vs {opponent}", fallback: "{client}"}
+              - {key: _info_line, label: "", format: composite, template: "法院 {court} | 主办 {owner}"}
+          T3B:
+            list_fields:
+              - {key: _deadline_line, label: "", format: composite, template: "{project_id} | {client} vs {opponent}"}
+              - {key: jurisdiction_deadline, label: 管辖权异议截止, format: date_countdown}
+              - {key: evidence_deadline, label: 举证截止, format: date_countdown}
+              - {key: seizure_expiry, label: 查封到期, format: date_countdown}
+              - {key: counterclaim_deadline, label: 反诉截止, format: date_countdown}
+              - {key: appeal_deadline, label: 上诉截止, format: date_countdown}
+          T3C:
+            detail_fields:
+              - {key: project_id, label: 项目 ID}
+              - {key: _party_line, label: "", format: composite, template: "{client} vs {opponent}"}
+              - {key: hearing_date, label: 开庭日, format: date_status_badge}
+              - {key: jurisdiction_deadline, label: 管辖权异议截止, format: date_status_badge}
+              - {key: evidence_deadline, label: 举证截止, format: date_status_badge}
+              - {key: seizure_expiry, label: 查封到期, format: date_status_badge}
+              - {key: counterclaim_deadline, label: 反诉截止, format: date_status_badge}
+              - {key: appeal_deadline, label: 上诉截止, format: date_status_badge}
+          T4:
+            detail_fields:
+              - {name: case_no, label: 案号}
+              - {name: title, label: ""}
+              - {name: owner, label: 主办律师}
+              - {name: co_owner, label: 协办律师}
+              - {name: status, label: 进展状态}
+            list_fields:
+              - {name: title, label: ""}
+              - {name: case_no, label: 案号}
+              - {name: owner, label: 负责人}
+          T4A:
+            list_fields:
+              - {key: _summary, label: "", format: composite, template: "共 {total} 个案件 | 主办 {as_owner} 件 | 协办 {as_co_owner} 件", fallback: "律师案件总览"}
+          T4B:
+            list_fields:
+              - {key: project_id, label: 项目 ID}
+              - {key: client, label: 委托人}
+              - {key: opponent, label: 对方当事人}
+              - {key: contact_person, label: 联系人}
+              - {key: contact_info, label: 联系方式}
+              - {key: owner, label: 主办}
+              - {key: co_owner, label: 协办}
+              - {key: hearing_date, label: 开庭, format: date_countdown}
+          T5:
+            render_mode: template_files
+            list_layout_file: query/list_T5_layout.json
+            list_template_file: query/list_T5.md
+            wrapper_file: wrapper/card_case_focus_T5.json
+            header_title: 待办事项与案件进展
+            append_detail_button: false
+          T5A:
+            list_fields:
+              - {key: _case_line, label: "", format: composite, template: "{project_id} | {client} vs {opponent}"}
+              - {key: hearing_date, label: 开庭, format: date_countdown}
+              - {key: todo, label: 待办}
+              - {key: owner, label: 主办律师}
+          T5B:
+            detail_fields:
+              - {key: project_id, label: 项目 ID}
+              - {key: _party_line, label: "", format: composite, template: "{client} vs {opponent}"}
+              - {key: progress, label: 进展时间线}
+              - {key: todo, label: 当前待办}
+              - {key: hearing_date, label: 下次开庭, format: date_countdown}
+              - {key: remark, label: 备注}
+          T5C:
+            list_fields:
+              - {key: _case_line, label: "", format: composite, template: "{project_id}"}
+              - {key: _party_line, label: "", format: composite, template: "{client} vs {opponent} | {case_category}"}
+              - {key: _date_line, label: "", format: composite, template: "开庭: {hearing_date} | 主办: {owner}"}
+              - {key: todo, label: 待办}
+          T6:
+            detail_fields:
+              - {name: case_no, label: 案号}
+              - {name: title, label: ""}
+              - {name: court, label: 法院}
+              - {name: stage, label: 程序}
+              - {name: courtroom, label: 承办法庭}
+            list_fields:
+              - {name: title, label: ""}
+              - {name: case_no, label: 案号}
+              - {name: court, label: 法院}
+              - {name: stage, label: 程序}
+      contracts:
+        table_label: 合同管理表
+        styles:
+          HT-T1:
+            layout_file: query/detail_HT-T1_layout.json
+            template_file: query/detail_HT-T1.md
+            wrapper_file: wrapper/card_contract_detail_HT-T1.json
+            header_title: 合同详情
+            append_detail_button: false
+          HT-T2:
+            render_mode: template_files
+            list_header_layout_file: query/list_HT-T2_header_layout.json
+            list_item_layout_file: query/list_HT-T2_item_layout.json
+            list_header_template_file: query/list_HT-T2_header.md
+            list_item_template_file: query/list_HT-T2_item.md
+            wrapper_file: wrapper/card_contract_list_HT-T2.json
+            header_title: 合同查询结果
+            append_detail_button: false
+          HT-T3:
+            detail_fields:
+              - {name: name, label: ""}
+              - {name: id, label: 合同编号}
+              - {name: status, label: 状态}
+              - {name: date, label: 日期状态, format: date_status, status_field: status}
+            list_fields:
+              - {name: name, label: ""}
+              - {name: status, label: 状态}
+              - {name: date, label: 日期状态, format: date_status, status_field: status}
+      bidding:
+        table_label: 招投标台账
+        styles:
+          ZB-T1:
+            layout_file: query/detail_ZB-T1_layout.json
+            template_file: query/detail_ZB-T1.md
+            wrapper_file: wrapper/card_bidding_detail_ZB-T1.json
+            header_title: 招投标详情
+            append_detail_button: false
+          ZB-T2:
+            render_mode: template_files
+            list_header_layout_file: query/list_ZB-T2_header_layout.json
+            list_item_layout_file: query/list_ZB-T2_item_layout.json
+            list_header_template_file: query/list_ZB-T2_header.md
+            list_item_template_file: query/list_ZB-T2_item.md
+            wrapper_file: wrapper/card_bidding_list_ZB-T2.json
+            header_title: 招投标查询结果
+            append_detail_button: false
+          ZB-T3:
+            detail_fields:
+              - {name: name, label: ""}
+              - {name: phase, label: 当前阶段}
+              - {name: due, label: 节点, format: date_status, status_field: phase}
+              - {name: owner, label: 负责人}
+            list_fields:
+              - {name: name, label: ""}
+              - {name: phase, label: 阶段}
+              - {name: owner, label: 负责人}
+          ZB-T4:
+            detail_fields:
+              - {name: name, label: ""}
+              - {name: owner, label: 负责人}
+              - {name: phase, label: 阶段}
+              - {name: due, label: 节点, format: date_status, status_field: phase}
+            list_fields:
+              - {name: name, label: ""}
+              - {name: owner, label: 负责人}
+              - {name: phase, label: 阶段}
+      team_overview:
+        table_label: 团队成员工作总览（只读）
+        styles:
+          RW-T1:
+            header_fields:
+              - template: "OK 团队成员工作总览（只读）"
+            sections:
+              - name: 任务基础
+                icon: OK
+                list_fields:
+                  - {key: record_id, label: 记录 ID, show_empty: true}
+                  - {key: task_desc, label: 任务描述, show_empty: true}
+                  - {key: task_type, label: 任务类型, show_empty: true}
+                  - {key: task_status, label: 状态, show_empty: true}
+                  - {key: urgency, label: 重要紧急程度, format: urgency_badge, show_empty: true}
+              - name: 协作信息
+                icon: OK
+                list_fields:
+                  - {key: creator, label: 发起人, show_empty: true}
+                  - {key: helper, label: 请求协助人, show_empty: true}
+                  - {key: linked_case, label: 关联案件项目, show_empty: true}
+              - name: 时间节点
+                icon: OK
+                list_fields:
+                  - {key: created_at, label: 创建时间, show_empty: true}
+                  - {key: deadline, label: 截止时间, format: date_countdown, show_empty: true}
+                  - {key: completed_at, label: 完成时间, show_empty: true}
+              - name: 进度与附件
+                icon: OK
+                list_fields:
+                  - {key: task_progress, label: 进度, format: progress_timeline, show_empty: true}
+                  - {key: attachment, label: 附件, show_empty: true}
+          RW-T2:
+            detail_fields:
+              - {name: member, label: ""}
+              - {name: workload, label: 在办}
+              - {name: status, label: 状态}
+              - {name: due, label: 节点, format: date_status, status_field: status}
+            list_fields:
+              - {name: member, label: ""}
+              - {name: workload, label: 在办}
+              - {name: status, label: 状态}
+              - {name: due, label: 节点, format: date_status, status_field: status}
+          RW-T3:
+            detail_fields:
+              - {name: member, label: ""}
+              - {name: due, label: 节点, format: date_status, status_field: status}
+              - {name: status, label: 状态}
+            list_fields:
+              - {name: member, label: ""}
+              - {name: due, label: 节点, format: date_status, status_field: status}
+              - {name: status, label: 状态}
+          RW-T4:
+            detail_fields:
+              - {name: member, label: ""}
+              - {name: workload, label: 在办}
+              - {name: risk, label: 风险事项}
+              - {name: status, label: 当前状态}
+            list_fields:
+              - {name: member, label: ""}
+              - {name: workload, label: 在办}
+              - {name: status, label: 状态}
+  action_cards:
+    confirm:
+      title: 操作确认
+      message: 请确认是否继续执行该操作。
+      extra_note: ""
+      confirm_text: 确认
+      cancel_text: 取消
+      template_file: action/C1_confirm.md
+      layout_file: action/C1_confirm_layout.json
+      wrapper_file: wrapper/card_action_C1_confirm.json
+    create_confirm:
+      title: 新增案件 - 请确认
+      template_file: action/C1_confirm.md
+      layout_file: action/C1_confirm_layout.json
+      wrapper_file: wrapper/card_action_C1_confirm.json
+    update_confirm:
+      title: 修改确认
+      template_file: action/C2_confirm.md
+      layout_file: action/C2_confirm_layout.json
+      wrapper_file: wrapper/card_action_C2_confirm.json
+    close_confirm:
+      title: 操作确认
+      template_file: action/C3_confirm.md
+      layout_file: action/C3_confirm_layout.json
+      wrapper_file: wrapper/card_action_C3_close_confirm.json
+    create_success:
+      title: 新增成功
+      template_file: action/C1_success.md
+      layout_file: action/C1_success_layout.json
+      wrapper_file: wrapper/card_action_C1_success.json
+    update_success:
+      title: 操作成功
+      progress_prefix: 进展追加
+      template_file: action/feedback.md
+      layout_file: action/feedback_layout.json
+      wrapper_file: wrapper/card_action_feedback_success.json
+    delete_confirm:
+      title: 危险操作确认
+      subtitle: 该操作不可撤销，请再次确认。
+      confirm_text: 确认删除
+      cancel_text: 取消
+      empty_summary: "- 即将删除目标记录"
+      template_file: action/C3_confirm.md
+      layout_file: action/C3_confirm_layout.json
+      wrapper_file: wrapper/card_action_C3_confirm.json
+    feedback:
+      template_file: action/feedback.md
+      layout_file: action/feedback_layout.json
+      success_wrapper_file: wrapper/card_action_feedback_success.json
+      error_wrapper_file: wrapper/card_action_feedback_error.json
+  action_execution:
+    table_type_alias:
+      case: [案件]
+      contracts: [合同]
+      bidding: [招投标, 投标, 台账]
+      team_overview: [团队成员工作总览, 团队工作总览, 团队成员]
+    read_only_table_types: [team_overview]
+    defaults:
+      case:
+        案件状态: 未结
+      bidding:
+        标书领取状态: 未领取
+    dedupe_fields:
+      case: case_no
+      contracts: contract_id
+      bidding: bid_id
+    append_fields:
+      case:
+        progress:
+          append_mode: true
+          date_prefix: true
+          target_fields: [进展]
+    close_profiles:
+      case:
+        default:
+          title: 案件结案
+          status_field: 案件状态
+          target_status: 已结案
+          confirm_text: 确认结案
+          cancel_text: 暂不结案
+          consequences:
+            - 案件将从在办视角移出
+            - 后续更新需通过结案后流程处理
+          remove_from_open_list: true
+          reminder_policy: close_all
+        enforcement_end:
+          title: 执行终本
+          status_field: 案件状态
+          target_status: 执行终本
+          confirm_text: 确认终本
+          cancel_text: 暂不终本
+          consequences:
+            - 后续可恢复执行
+            - 数据保留在未结列表或终本分类
+          remove_from_open_list: false
+          reminder_policy: preserve_seizure
+      contracts:
+        default:
+          title: 合同归档
+          status_field: 合同状态
+          target_status: 已归档
+          confirm_text: 确认归档
+          cancel_text: 暂不归档
+          consequences:
+            - 合同将进入归档状态
+            - 归档后默认不再进入日常跟进列表
+      bidding:
+        default:
+          title: 投标关闭
+          status_field: 状态
+          target_status: 已关闭
+          confirm_text: 确认关闭
+          cancel_text: 暂不关闭
+          consequences:
+            - 项目将标记为关闭
+            - 关闭后默认不在进行中列表展示
+    close_intent_mapping:
+      case:
+        default: [结案, 判决生效, 撤诉, 调解结案]
+        enforcement_end: [执行终本, 执行不了了, 终本, 终结本次执行]
+    delete_profiles:
+      default:
+        title: 删除确认
+        subtitle: 该操作不可撤销，请再次确认。
+        confirm_text: 确认删除
+        cancel_text: 取消
+        confirm_type: danger
+        warnings:
+          - 该操作将永久删除记录
+        suggestion: 如仅需结束流程，建议优先使用关闭/结案。
+  upload_result:
+    titles:
+      processing: 文件处理中
+      success: 文件解析成功
+      failed: 文件解析失败
+      disabled: 文件解析未开启
+      unconfigured: 文件解析未配置
+      rejected: 文件不符合要求
+    status_labels:
+      processing: 处理中
+      success: 已完成
+      failed: 失败
+      disabled: 未开启
+      unconfigured: 未配置
+      rejected: 已拒绝
+    status_icons:
+      processing: OK
+      success: OK
+      failed: OK
+      disabled: OK
+      unconfigured: OK
+      rejected: OK
+    provider_labels:
+      none: 未使用外部解析
+      mineru: MinerU
+      llm: LLM Extractor
+      ocr: OCR Provider
+      asr: ASR Provider
+    reason_texts:
+      file_too_large: 文件体积超过当前限制
+      unsupported_file_type: 文件类型暂不支持
+      extractor_disabled: 解析能力已关闭
+      extractor_unconfigured: 解析服务尚未配置
+      ocr_unconfigured: OCR 服务尚未配置
+      ocr_disabled: OCR 服务已关闭
+      asr_unconfigured: ASR 服务尚未配置
+      asr_disabled: ASR 服务已关闭
+      extractor_timeout: 解析服务响应超时
+      extractor_rate_limited: 解析服务限流
+      extractor_auth_failed: 解析服务鉴权失败
+      extractor_malformed_response: 解析服务响应格式异常
+      extractor_empty_content: 未识别到有效内容
+    next_steps:
+      success: 可继续提问，如“帮我提取关键条款并给出风险提示”。
+      failed: 请稍后重试，或直接发送文字描述你的问题。
+      disabled: 可联系管理员开启文件解析能力，或直接发送文字。
+      unconfigured: 请联系管理员补齐解析服务配置后重试。
+      rejected: 请调整文件大小/格式后重试，或补充文字说明。
+    preview:
+      max_chars: 240

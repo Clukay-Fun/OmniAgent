@@ -1,13 +1,269 @@
-# Primary entry placeholder.
-# Runtime remains compatible with: mcp/mcp-feishu-server/config.yaml
+# ============================================================
+# MCP Feishu Server 配置文件
+# ============================================================
+# 使用方式：
+#   1. 复制此文件为 config.yaml
+#   2. 修改配置项或通过环境变量覆盖
+#   3. 环境变量优先级高于配置文件
+# ============================================================
 
+# ------------------------------------------------------------
+# 服务配置
+# ------------------------------------------------------------
+server:
+  host: "0.0.0.0"
+  port: 8081
+  workers: 1                      # 1C2G 建议单 worker
+  debug: false
+
+# ------------------------------------------------------------
+# 飞书应用配置
+# ------------------------------------------------------------
+feishu:
+  # 应用凭证（必填，建议通过环境变量配置）
+  app_id: ${FEISHU_DATA_APP_ID}
+  app_secret: ${FEISHU_DATA_APP_SECRET}
+
+  # API 基础地址
+  api_base: "https://open.feishu.cn/open-apis"
+
+  # Token 配置
+  token:
+    # Token 提前刷新时间（秒），默认提前 5 分钟刷新
+    refresh_ahead_seconds: 300
+
+  # 请求配置
+  request:
+    timeout: 30                   # 请求超时（秒）
+    max_retries: 3                # 最大重试次数
+    retry_delay: 1                # 重试间隔（秒）
+
+# ------------------------------------------------------------
+# 多维表格配置
+# ------------------------------------------------------------
 bitable:
-  domain: ${BITABLE_DOMAIN}
+  # 企业飞书域名（用于生成 record_url）
+  domain: ${BITABLE_DOMAIN:-your-company}          # 例如：xxx.feishu.cn 中的 xxx
+
+  # 默认表格配置（可被工具参数覆盖）
   default_app_token: ${BITABLE_APP_TOKEN}
   default_table_id: ${BITABLE_TABLE_ID}
-  default_view_id: ${BITABLE_VIEW_ID:-}
+  default_view_id: ${BITABLE_VIEW_ID:-}    # 可选，留空则不包含在 URL 中
 
+  # 字段映射（根据实际表格调整）
+  field_mapping:
+    # 案件项目总库
+    case_project_id: "项目ID"
+    case_number: "案号"
+    case_client: "委托人"
+    case_client_contact: "委托人及联系方式"
+    case_contact_person: "联系人"
+    case_contact_phone: "联系方式"
+    case_opponent: "对方当事人"
+    case_cause: "案由"
+    case_court: "审理法院"
+    case_stage: "审理程序"
+    case_stage_legacy: "程序阶段"
+    case_judge: "承办法官"
+    case_owner: "主办律师"
+    case_co_owner: "协办律师"
+    case_status: "案件状态"
+    case_progress: "进展"
+    case_todo: "待做事项"
+    case_remark: "备注"
+    case_urgency: "重要紧急程度"
+    case_project_type: "项目类型"
+    case_category: "案件分类"
+    case_hearing_date: "开庭日"
+    case_jurisdiction_deadline: "管辖权异议截止日"
+    case_evidence_deadline: "举证截止日"
+    case_seizure_expiry: "查封到期日"
+    case_counterclaim_deadline: "反诉截止日"
+    case_appeal_deadline: "上诉截止日"
+
+    # 合同管理表
+    contract_id: "合同编号"
+    contract_name: "合同名称"
+    contract_type: "合同类型"
+    contract_client_name: "客户名称"
+    contract_party_a: "甲方"
+    contract_party_b: "乙方"
+    contract_amount: "合同金额"
+    contract_status: "合同状态"
+    contract_owner: "主办律师"
+    contract_sign_date: "签约日期"
+    contract_start_date: "合同开始日期"
+    contract_end_date: "合同结束日期"
+    contract_payment_status: "开票付款状态"
+    contract_payment_milestone: "付款节点"
+    contract_seal_status: "盖章状态"
+    contract_seal_date: "盖章日期"
+    contract_archive_location: "原件存档位置"
+    contract_invoice: "发票"
+    contract_scan_copy: "扫描件"
+    contract_linked_project: "关联项目"
+
+    # 招投标台账
+    bidding_id: "项目号"
+    bidding_name: "投标项目名称"
+    bidding_owner_org: "招标方名称"
+    bidding_owner: "承办律师"
+    bidding_phase: "当前阶段"
+    bidding_due: "投标截止"
+    bidding_open_date: "开标时间"
+    bidding_close_date: "截标时间"
+    bidding_book_deadline: "标书购买截止时间"
+    bidding_deposit_deadline: "保证金截止日期"
+    bidding_book_status: "标书领取状态"
+    bidding_deposit_status: "保证金缴纳状态"
+    bidding_doc_progress: "文件编制进度"
+    bidding_book_type: "标书类型"
+    bidding_result: "是否中标"
+    bidding_amount: "中标金额"
+    bidding_remark: "备注"
+
+    # 团队成员工作总览（只读）
+    team_record_id: "记录 ID"
+    team_task_desc: "任务描述"
+    team_task_type: "任务类型"
+    team_task_status: "状态"
+    team_task_progress: "任务进度"
+    team_urgency: "重要紧急程度"
+    team_creator: "发起人"
+    team_helper: "请求协助人"
+    team_created_at: "创建时间"
+    team_deadline: "截止时间"
+    team_completed_at: "完成时间"
+    team_attachment: "附件"
+    team_linked_case: "关联案件项目"
+
+  # 搜索配置
+  search:
+    # 默认搜索字段（关键词匹配）
+    searchable_fields:
+      - "项目ID"
+      - "案号"
+      - "项目类型"
+      - "案件分类"
+      - "案件状态"
+      - "委托人及联系方式"
+      - "委托人"
+      - "对方当事人"
+      - "案由"
+    # 单次查询最大记录数
+    max_records: 100
+    # 默认返回记录数
+    default_limit: 20
+
+# ------------------------------------------------------------
+# 文档配置
+# ------------------------------------------------------------
+doc:
+  # 搜索配置
+  search:
+    # 默认搜索范围（可选，留空则搜索全部）
+    default_folder_token: ${DOC_FOLDER_TOKEN:-}
+    # 预览摘要长度
+    preview_length: 200
+    # 默认返回数量
+    default_limit: 10
+
+# ------------------------------------------------------------
+# 工具配置
+# ------------------------------------------------------------
 tools:
+  # 启用的工具列表
   enabled:
-    - feishu.v1.bitable.search
-    - feishu.v1.bitable.record.get
+    - "feishu.v1.bitable.list_tables"     # 列出表格
+    - "feishu.v1.bitable.search"
+    - "feishu.v1.bitable.search_exact"
+    - "feishu.v1.bitable.search_keyword"
+    - "feishu.v1.bitable.search_person"
+    - "feishu.v1.bitable.search_date_range"
+    - "feishu.v1.bitable.search_advanced"
+    - "feishu.v1.bitable.record.get"
+    - "feishu.v1.bitable.record.create"
+    - "feishu.v1.bitable.record.update"
+    - "feishu.v1.bitable.record.delete"
+    - "feishu.v1.doc.search"
+    - "feishu.v1.calendar.event.create"
+    # Phase 2
+    # - "feishu.v1.file.upload"
+    # - "feishu.v1.file.download"
+
+# ------------------------------------------------------------
+# 日志配置
+# ------------------------------------------------------------
+logging:
+  level: "INFO"                   # DEBUG | INFO | WARNING | ERROR
+  format: "json"                  # json | text
+
+  # 日志输出
+  output:
+    console: true
+    file:
+      enabled: false
+      path: "logs/mcp-server.log"
+      max_size_mb: 100
+      backup_count: 5
+
+# ------------------------------------------------------------
+# 自动化配置（Phase A/B/C）
+# ------------------------------------------------------------
+automation:
+  enabled: ${AUTOMATION_ENABLED:-false}
+  verification_token: ${FEISHU_EVENT_VERIFY_TOKEN:-}
+  encrypt_key: ${FEISHU_EVENT_ENCRYPT_KEY:-}
+  storage_dir: ${AUTOMATION_STORAGE_DIR:-automation_data}
+  rules_file: ${AUTOMATION_RULES_FILE:-automation_rules.yaml}
+  event_ttl_seconds: ${AUTOMATION_EVENT_TTL_SECONDS:-604800}
+  business_ttl_seconds: ${AUTOMATION_BUSINESS_TTL_SECONDS:-604800}
+  max_dedupe_keys: ${AUTOMATION_MAX_DEDUPE_KEYS:-50000}
+  scan_page_size: ${AUTOMATION_SCAN_PAGE_SIZE:-100}
+  max_scan_pages: ${AUTOMATION_MAX_SCAN_PAGES:-50}
+  trigger_on_new_record_event: ${AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT:-false}
+  trigger_on_new_record_scan: ${AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN:-true}
+  trigger_on_new_record_scan_requires_checkpoint: ${AUTOMATION_TRIGGER_ON_NEW_RECORD_SCAN_REQUIRES_CHECKPOINT:-true}
+  new_record_scan_max_trigger_per_run: ${AUTOMATION_NEW_RECORD_SCAN_MAX_TRIGGER_PER_RUN:-50}
+  sync_deletions_enabled: ${AUTOMATION_SYNC_DELETIONS_ENABLED:-true}
+  sync_deletions_max_per_run: ${AUTOMATION_SYNC_DELETIONS_MAX_PER_RUN:-200}
+  poller_enabled: ${AUTOMATION_POLLER_ENABLED:-false}
+  poller_interval_seconds: ${AUTOMATION_POLLER_INTERVAL_SECONDS:-60}
+  action_max_retries: ${AUTOMATION_ACTION_MAX_RETRIES:-1}
+  action_retry_delay_seconds: ${AUTOMATION_ACTION_RETRY_DELAY_SECONDS:-0.5}
+  dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
+  run_log_file: ${AUTOMATION_RUN_LOG_FILE:-automation_data/run_logs.jsonl}
+  schema_sync_enabled: ${AUTOMATION_SCHEMA_SYNC_ENABLED:-true}
+  schema_poller_enabled: ${AUTOMATION_SCHEMA_POLLER_ENABLED:-false}
+  schema_sync_interval_seconds: ${AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS:-300}
+  schema_sync_event_driven: ${AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN:-true}
+  schema_cache_file: ${AUTOMATION_SCHEMA_CACHE_FILE:-automation_data/schema_cache.json}
+  schema_runtime_state_file: ${AUTOMATION_SCHEMA_RUNTIME_STATE_FILE:-automation_data/schema_runtime_state.json}
+  schema_webhook_enabled: ${AUTOMATION_SCHEMA_WEBHOOK_ENABLED:-false}
+  schema_webhook_url: ${AUTOMATION_SCHEMA_WEBHOOK_URL:-}
+  schema_webhook_secret: ${AUTOMATION_SCHEMA_WEBHOOK_SECRET:-}
+  schema_webhook_timeout_seconds: ${AUTOMATION_SCHEMA_WEBHOOK_TIMEOUT_SECONDS:-5}
+  schema_webhook_drill_enabled: ${AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED:-false}
+  schema_policy_on_field_added: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_ADDED:-auto_map_if_same_name}
+  schema_policy_on_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_REMOVED:-auto_remove}
+  schema_policy_on_field_renamed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_RENAMED:-warn_only}
+  schema_policy_on_field_type_changed: ${AUTOMATION_SCHEMA_POLICY_ON_FIELD_TYPE_CHANGED:-warn_only}
+  schema_policy_on_trigger_field_removed: ${AUTOMATION_SCHEMA_POLICY_ON_TRIGGER_FIELD_REMOVED:-disable_rule}
+  webhook_enabled: ${AUTOMATION_WEBHOOK_ENABLED:-false}
+  webhook_api_key: ${AUTOMATION_WEBHOOK_API_KEY:-}
+  webhook_signature_secret: ${AUTOMATION_WEBHOOK_SIGNATURE_SECRET:-}
+  webhook_timestamp_tolerance_seconds: ${AUTOMATION_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+  http_allowed_domains: []
+  http_timeout_seconds: ${AUTOMATION_HTTP_TIMEOUT_SECONDS:-10}
+  status_write_enabled: ${AUTOMATION_STATUS_WRITE_ENABLED:-false}
+  status_field: ${AUTOMATION_STATUS_FIELD:-自动化_执行状态}
+  error_field: ${AUTOMATION_ERROR_FIELD:-自动化_最近错误}
+
+# ------------------------------------------------------------
+# 安全配置（可选）
+# ------------------------------------------------------------
+security:
+  # 是否校验请求来源（未来扩展）
+  verify_source: false
+  # 允许的调用方 IP（空则不限制）
+  allowed_ips: []

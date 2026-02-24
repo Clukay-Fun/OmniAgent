@@ -1,0 +1,44 @@
+{
+  "elements": [
+    {
+      "tag": "column_set",
+      "flex_mode": "none",
+      "horizontal_spacing": "8px",
+      "margin": "0px 0px 12px 0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "padding": "8px",
+          "vertical_spacing": "4px",
+          "background_style": "grey-50",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "{{item_content}}"
+            },
+            {
+              "tag": "button",
+              "type": "primary",
+              "width": "default",
+              "text": {
+                "tag": "plain_text",
+                "content": "查看详情"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{detail_url}}",
+                  "android_url": "{{detail_url}}",
+                  "ios_url": "{{detail_url}}",
+                  "pc_url": "{{detail_url}}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

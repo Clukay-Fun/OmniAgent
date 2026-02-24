@@ -6,21 +6,21 @@
 
 ### MCP 服务
 
-- `mcp/mcp-feishu-server/src/`
-- `mcp/mcp-feishu-server/requirements.txt`
-- `mcp/mcp-feishu-server/run_server.py`
-- `mcp/mcp-feishu-server/config.yaml.example`（上传后复制为 `config.yaml`）
-- `mcp/mcp-feishu-server/.env.example`（参考模板）
-- `mcp/mcp-feishu-server/automation_rules.yaml`
+- `integrations/feishu-mcp-server/src/`
+- `integrations/feishu-mcp-server/requirements.txt`
+- `integrations/feishu-mcp-server/run_server.py`
+- `integrations/feishu-mcp-server/config.yaml.example`（上传后复制为 `config.yaml`）
+- `integrations/feishu-mcp-server/.env.example`（参考模板）
+- `integrations/feishu-mcp-server/automation_rules.yaml`
 
 ### Agent 服务
 
-- `agent/feishu-agent/src/`
-- `agent/feishu-agent/config/`
-- `agent/feishu-agent/requirements.txt`
-- `agent/feishu-agent/run_server.py`
-- `agent/feishu-agent/config.yaml.example`（上传后复制为 `config.yaml`）
-- `agent/feishu-agent/.env.example`（参考模板）
+- `apps/agent-host/src/`
+- `apps/agent-host/config/`
+- `apps/agent-host/requirements.txt`
+- `apps/agent-host/run_server.py`
+- `apps/agent-host/config.yaml.example`（上传后复制为 `config.yaml`）
+- `apps/agent-host/.env.example`（参考模板）
 
 ### 部署辅助
 
@@ -38,10 +38,10 @@
 - 所有 `__pycache__/`、`*.pyc`、`.pytest_cache/`
 - 本地虚拟环境 `.venv/`
 - 运行态数据：
-  - `mcp/mcp-feishu-server/automation_data/*`
-  - `agent/feishu-agent/workspace/*`
+  - `integrations/feishu-mcp-server/automation_data/*`
+  - `apps/agent-host/workspace/*`
 - 本地调试脚本（按需）：`tools/dev/*`
-- 测试目录（生产可不上传）：`mcp/mcp-feishu-server/tests/`、`agent/feishu-agent/tests/`
+- 测试目录（生产可不上传）：`integrations/feishu-mcp-server/tests/`、`apps/agent-host/tests/`
 
 ## 上传后立即执行
 

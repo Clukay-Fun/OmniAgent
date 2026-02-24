@@ -4,6 +4,8 @@
 
 可执行场景数据请使用 `docs/scenarios/scenarios.yaml`。
 
+快速测试话术样例请参考：`docs/scenarios/feishu-dialogue-samples.md`。
+
 ## 场景覆盖矩阵
 
 | 模块 | 正常 | 边界 | 异常 |
@@ -32,3 +34,4 @@
 - 场景新增：先改 `docs/scenarios/scenarios.yaml`。
 - 回归验证：运行 `python tools/ci/validate_scenarios.py`。
 - 代码改动前后，尽量用 `scenario_id` 做针对性验证。
+- 飞书在线对话回归（仅 `live_test.enabled=true`）：`python tools/dev/run_scenario_dialogue_tests.py --show-pass`。

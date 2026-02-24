@@ -1,0 +1,13 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "### {{header_summary}}",
+      "text_size": "normal"
+    },
+    {
+      "tag": "hr",
+      "margin": "8px 0px 8px 0px"
+    }
+  ]
+}

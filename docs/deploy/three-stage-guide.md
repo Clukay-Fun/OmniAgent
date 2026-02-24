@@ -2,7 +2,7 @@
 
 本文件是当前仓库的统一流程口径。根 README 与两个子 README 只保留服务说明，阶段流程以此为准。
 
-统一入口说明：当前主入口为 `apps/agent-host`（Agent）与 `integrations/feishu-mcp-server`（MCP）；`agent/feishu-agent` / `mcp/mcp-feishu-server` 仍保留为兼容 shim 或历史路径。
+统一入口说明：当前主入口为 `apps/agent-host`（Agent）与 `integrations/feishu-mcp-server`（MCP）。
 
 ## 阶段一：部署前（本地开发联调）
 
@@ -14,9 +14,10 @@
 - 主入口模板：`apps/agent-host/.env.example` -> `apps/agent-host/.env`
 - 主入口模板：`integrations/feishu-mcp-server/config.yaml.example` -> `integrations/feishu-mcp-server/config.yaml`
 - 主入口模板：`apps/agent-host/config.yaml.example` -> `apps/agent-host/config.yaml`
-- 兼容 shim / 历史路径：`mcp/mcp-feishu-server/*` 与 `agent/feishu-agent/*`（与主入口口径等价）
 
 ### 2) 统一开发入口（推荐）
+
+说明：根目录 `run_dev.py` 是唯一权威实现；子目录同名脚本仅用于代理转发。
 
 ```bash
 python run_dev.py up
@@ -32,12 +33,45 @@ python run_dev.py clean
 python run_dev.py refresh-schema
 python run_dev.py sync
 python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+python run_dev.py agent-ws
+python run_dev.py agent-ws-watch
 
 # 一键拉起全部（含 monitoring + db）
 python run_dev.py up --all
 ```
 
 说明：`sync` 执行全量补偿（新增+修改+删除对账）。
+
+### 2.1) 本地长连接模式（无公网 / 无 ngrok）
+
+适用于本地域名未备案、无法稳定公网回调的阶段。
+
+1) Agent 使用飞书 WebSocket 长连接：
+
+```bash
+python run_dev.py agent-ws
+```
+
+开发调试建议使用自动重启模式（代码变更后自动重启长连接进程）：
+
+```bash
+python run_dev.py agent-ws-watch
+```
+
+2) MCP 暂停实时事件自动化，建议在 `integrations/feishu-mcp-server/.env` 设置：
+
+```env
+AUTOMATION_TRIGGER_ON_NEW_RECORD_EVENT=false
+AUTOMATION_POLLER_ENABLED=false
+AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=false
+```
+
+3) 数据同步采用手动补偿：`sync/scan`
+
+```bash
+python run_dev.py sync
+python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
+```
 
 ### 3) 本地验证
 
@@ -68,7 +102,6 @@ python run_dev.py up --all
 
 - Docker 主文件：`deploy/docker/compose.yml`
 - 生产核心服务：`mcp-feishu-server` + `feishu-agent`（代码主入口分别对应 `integrations/feishu-mcp-server` 与 `apps/agent-host`）
-- 兼容 shim / 历史目录：`mcp/mcp-feishu-server`、`agent/feishu-agent`
 - 可选 profile：
   - 监控：`--profile monitoring`
   - 数据库：`--profile db`

@@ -1,0 +1,217 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "🔖 {{project_id}}\n📂 {{project_summary}}"
+    },
+    {
+      "tag": "column_set",
+      "horizontal_spacing": "12px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "background_style": "blue-50",
+          "padding": "12px 12px 12px 12px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**<font color='blue'>当事人信息</font>**"
+            },
+            {
+              "tag": "markdown",
+              "content": "**🏢 委托人：** {{client}}\n**🆚 对方：** {{opponent}}\n**📞 联系人：** {{contact_line}}"
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "background_style": "violet-50",
+          "padding": "12px 12px 12px 12px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**<font color='violet'>案件信息</font>**"
+            },
+            {
+              "tag": "markdown",
+              "content": "**📄 案号：**\n{{case_no_display}}\n**⚖️ 审理法院：** {{court}}\n**📌 审理程序：** {{stage}}\n**📋 案由：** {{cause}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "column_set",
+      "horizontal_spacing": "12px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "background_style": "purple-50",
+          "padding": "12px 12px 12px 12px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**<font color='purple'>承办法官</font>**"
+            },
+            {
+              "tag": "markdown",
+              "content": "{{judge_display}}"
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "background_style": "blue-50",
+          "padding": "12px 12px 12px 12px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**<font color='blue'>承办律师</font>**"
+            },
+            {
+              "tag": "markdown",
+              "content": "**👤 主办：** {{owner}}\n**👥 协办：** {{co_owner}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "markdown",
+      "content": "**📅 重要日期**"
+    },
+    {
+      "tag": "column_set",
+      "horizontal_spacing": "8px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "auto",
+          "background_style": "violet-50",
+          "padding": "8px 8px 8px 8px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**开庭日**\n{{hearing_date_status}}"
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "auto",
+          "background_style": "red-50",
+          "padding": "8px 8px 8px 8px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**管辖权异议截止**\n{{jurisdiction_deadline_status}}"
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "auto",
+          "background_style": "red-50",
+          "padding": "8px 8px 8px 8px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**举证截止**\n{{evidence_deadline_status}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "markdown",
+      "content": "**📎 查封到期：** {{seizure_expiry_status}}\n**📎 反诉截止：** {{counterclaim_deadline_status}}\n**📎 上诉截止：** {{appeal_deadline_status}}"
+    },
+    {
+      "tag": "markdown",
+      "content": "**案件动态**\n{{urgency_badge}} | {{status}}"
+    },
+    {
+      "tag": "markdown",
+      "content": "**📝 待办事项**"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{todo_list}}"
+    },
+    {
+      "tag": "markdown",
+      "content": "**💬 最新进展**"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{progress_preview_block}}"
+    },
+    {
+      "tag": "markdown",
+      "content": "**💡 备注：** {{remark}}\n**📎 关联合同：** {{linked_contract}}\n**📎 关联任务：** {{linked_task}}"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "flow",
+      "horizontal_spacing": "8px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "default",
+              "text": {
+                "tag": "plain_text",
+                "content": "查看关联合同"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{btn_contract_url}}",
+                  "android_url": "{{btn_contract_url}}",
+                  "ios_url": "{{btn_contract_url}}",
+                  "pc_url": "{{btn_contract_url}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "primary",
+              "text": {
+                "tag": "plain_text",
+                "content": "修改"
+              },
+              "behaviors": [
+                {
+                  "type": "callback",
+                  "value": {
+                    "callback_action": "edit",
+                    "table_type": "{{table_type}}",
+                    "record_id": "{{record_id}}",
+                    "extra_data": {}
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -3,10 +3,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "apps" / "agent-host" / "src"
-sys.path.insert(0, str(SRC))
+AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
+sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from core.response.renderer import ResponseRenderer
+from src.core.response.renderer import ResponseRenderer
 
 
 def build_renderer() -> ResponseRenderer:
@@ -47,6 +47,8 @@ def test_render_failure_uses_failure_template_and_assistant_identity():
 
     assert response.text_fallback == "处理失败：executor"
     assert response.meta["assistant_name"] == "小敬"
+    assert response.card_template is not None
+    assert response.card_template.template_id == "error.notice"
 
 
 def test_render_prefers_reply_text_for_text_fallback():
@@ -64,6 +66,129 @@ def test_render_prefers_reply_text_for_text_fallback():
     assert response.text_fallback == "来自 reply_text"
 
 
+def test_render_query_skill_selects_list_template_for_multi_records() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "查询完成",
+            "data": {
+                "records": [{"fields_text": {"案号": "A-1"}}, {"fields_text": {"案号": "A-2"}}],
+                "total": 2,
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+
+
+def test_render_query_skill_selects_list_template_v2_when_enabled() -> None:
+    renderer = ResponseRenderer(query_card_v2_enabled=True)
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "查询完成",
+            "data": {
+                "records": [{"fields_text": {"案号": "A-1"}}, {"fields_text": {"案号": "A-2"}}],
+                "total": 2,
+                "pending_action": {
+                    "action": "query_list_navigation",
+                    "payload": {
+                        "callbacks": {
+                            "query_list_next_page": {"callback_action": "query_list_next_page"},
+                            "query_list_today_hearing": {"callback_action": "query_list_today_hearing"},
+                            "query_list_week_hearing": {"callback_action": "query_list_week_hearing"},
+                        }
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+    assert response.card_template.version == "v2"
+    assert response.card_template.params["actions"]["next_page"]["callback_action"] == "query_list_next_page"
+    assert response.card_template.params["style"] == "T2"
+    assert response.card_template.params["domain"] == "case"
+
+
+def test_render_query_skill_empty_result_uses_query_list_v2_not_found_card() -> None:
+    renderer = ResponseRenderer(query_card_v2_enabled=True)
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "未找到相关案件记录",
+            "data": {
+                "records": [],
+                "total": 0,
+                "query_meta": {"table_name": "合同管理表", "tool": "data.bitable.search"},
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+    assert response.card_template.params["domain"] == "contracts"
+    assert response.card_template.params["style"] == "HT-T2"
+
+
+def test_render_query_skill_selects_table_specific_style() -> None:
+    renderer = ResponseRenderer(query_card_v2_enabled=True)
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "查询完成",
+            "data": {
+                "records": [{"fields_text": {"项目名称": "A"}}, {"fields_text": {"项目名称": "B"}}],
+                "total": 2,
+                "query_meta": {
+                    "table_name": "招投标台账",
+                    "table_id": "tbl_bid_001",
+                    "tool": "data.bitable.search_person",
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "query.list"
+    assert response.card_template.params["domain"] == "bidding"
+    assert response.card_template.params["style"] == "ZB-T2"
+    assert response.card_template.params["table_name"] == "招投标台账"
+    assert response.card_template.params["table_id"] == "tbl_bid_001"
+
+
+def test_render_query_skill_selects_case_style_variant() -> None:
+    renderer = ResponseRenderer(query_card_v2_enabled=True)
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "QuerySkill",
+            "reply_text": "请给我最近开庭安排",
+            "data": {
+                "records": [{"fields_text": {"项目 ID": "A-1"}}, {"fields_text": {"项目 ID": "A-2"}}],
+                "total": 2,
+                "query_meta": {"table_name": "案件项目总库", "tool": "data.bitable.search_date_range"},
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.params["style"] == "T2"
+    assert response.card_template.params["style_variant"] == "T2"
+
+
 def test_render_always_contains_paragraph_block():
     renderer = build_renderer()
 
@@ -71,6 +196,178 @@ def test_render_always_contains_paragraph_block():
 
     assert len(response.blocks) >= 1
     assert response.blocks[0].type == "paragraph"
+
+
+def test_render_kv_list_hides_raw_technical_field() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "SummarySkill",
+            "message": "ok",
+            "data": {"raw": "leak", "status": "ok"},
+        }
+    )
+
+    kv_blocks = [block for block in response.blocks if block.type == "kv_list"]
+    assert len(kv_blocks) == 1
+    assert kv_blocks[0].content["items"] == [{"key": "status", "value": "ok"}]
+
+
+def test_render_create_skill_selects_create_success_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "CreateSkill",
+            "reply_text": "创建成功",
+            "data": {
+                "record_id": "rec_new",
+                "record_url": "https://example.com/rec_new",
+                "table_name": "案件项目总库",
+                "fields": {"案号": "A-100", "委托人": "张三"},
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "create.success"
+    assert response.card_template.params["record_url"] == "https://example.com/rec_new"
+    assert response.card_template.params["table_name"] == "案件项目总库"
+
+
+def test_render_update_skill_selects_update_success_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "更新成功",
+            "data": {
+                "updated_fields": {"状态": "已完成"},
+                "source_fields": {"状态": "待办"},
+                "record_url": "https://example.com/rec_update",
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "update.success"
+    assert response.card_template.params["changes"][0] == {"field": "状态", "old": "待办", "new": "已完成"}
+
+
+def test_render_delete_skill_selects_delete_confirm_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "等待确认删除",
+            "data": {
+                "pending_delete": {"record_id": "rec_del", "case_no": "A-200", "table_id": "tbl_1"},
+                "records": [{"fields_text": {"案号": "A-200", "案由": "合同纠纷"}}],
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "delete.confirm"
+    actions = response.card_template.params["actions"]
+    assert actions["confirm"]["callback_action"] == "delete_record_confirm"
+    assert actions["cancel"]["callback_action"] == "delete_record_cancel"
+
+
+def test_render_delete_skill_selects_delete_cancelled_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "DeleteSkill",
+            "reply_text": "好的，已取消删除操作。",
+            "data": {},
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "delete.cancelled"
+
+
+def test_render_pending_create_action_includes_payload_for_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "CreateSkill",
+            "reply_text": "请确认新增",
+            "data": {
+                "table_name": "案件项目总库",
+                "pending_action": {
+                    "action": "create_record",
+                    "payload": {
+                        "table_name": "案件项目总库",
+                        "fields": {"案号": "(2026)粤0101民初100号"},
+                        "required_fields": ["案号", "委托人"],
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "action.confirm"
+    assert response.card_template.params["action"] == "create_record"
+    assert response.card_template.params["payload"]["fields"]["案号"] == "(2026)粤0101民初100号"
+
+
+def test_render_pending_close_action_uses_close_record_callbacks() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "请确认关闭",
+            "data": {
+                "table_name": "案件项目总库",
+                "pending_action": {
+                    "action": "close_record",
+                    "payload": {
+                        "record_id": "rec_001",
+                        "table_name": "案件项目总库",
+                        "fields": {"案件状态": "已结案"},
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "action.confirm"
+    actions = response.card_template.params["actions"]
+    assert actions["confirm"]["callback_action"] == "close_record_confirm"
+    assert actions["cancel"]["callback_action"] == "close_record_cancel"
+
+
+def test_render_failure_classifies_error_type() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": False,
+            "skill_name": "DeleteSkill",
+            "message": "当前账号权限不足，无法执行删除",
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "error.notice"
+    assert response.card_template.params["error_class"] == "permission_denied"
 
 
 def test_load_templates_falls_back_to_defaults_when_file_missing(tmp_path: Path):

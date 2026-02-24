@@ -1,0 +1,221 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "margin": "0px",
+      "text_size": "normal",
+      "content": "📋 **{{contract_id}}** | {{contract_name}}"
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**合同主体**"
+            },
+            {
+              "tag": "markdown",
+              "content": "🏢 客户：{{client_name}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "👤 主办律师：{{owner}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**金额与付款**"
+            },
+            {
+              "tag": "markdown",
+              "content": "💰 合同金额：{{amount}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 付款节点：{{payment_milestone}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "{{payment_status_markdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "🧾 发票：{{invoice}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**合同期限**"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 签约日期：{{sign_date_with_countdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 开始日期：{{start_date_with_countdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "{{end_date_markdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 盖章日期：{{seal_date_with_countdown}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**文件状态**"
+            },
+            {
+              "tag": "markdown",
+              "content": "{{seal_status_markdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📄 扫描件：{{scan_copy}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📁 原件存档位置：{{archive_location}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "markdown",
+      "margin": "0px",
+      "content": "🔗 关联项目：{{linked_project}}"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "horizontal_spacing": "8px",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "primary_filled",
+              "width": "default",
+              "margin": "4px 0px 4px 0px",
+              "text": {
+                "tag": "plain_text",
+                "content": "查看关联案件"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{btn_case_url}}",
+                  "android_url": "{{btn_case_url}}",
+                  "ios_url": "{{btn_case_url}}",
+                  "pc_url": "{{btn_case_url}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "default",
+              "width": "default",
+              "margin": "4px 0px 4px 0px",
+              "text": {
+                "tag": "plain_text",
+                "content": "修改合同"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{btn_edit_contract_url}}",
+                  "android_url": "{{btn_edit_contract_url}}",
+                  "ios_url": "{{btn_edit_contract_url}}",
+                  "pc_url": "{{btn_edit_contract_url}}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
