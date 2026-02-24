@@ -189,6 +189,8 @@ class SkillRouter:
                     "skill": normalized_name,
                     "success": result.success,
                     "duration_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                    "close_semantic": str((result.data or {}).get("close_semantic") or ""),
+                    "close_profile": str((result.data or {}).get("close_profile") or ""),
                 },
             )
             return result

@@ -68,6 +68,102 @@ def test_root_run_dev_agent_ws_watch_delegates_to_watch_runner(monkeypatch) -> N
     assert captured["repo_root"] == REPO_ROOT
 
 
+def test_root_run_dev_card_preview_passes_send_to_me(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview", "--preset", "t1", "--send-to-me"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    assert "t1" in command
+    assert "--send-to-me" in command
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
+def test_root_run_dev_card_preview_defaults_to_t2(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview_default")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    preset_idx = command.index("--preset") + 1
+    assert command[preset_idx] == "t2"
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
+def test_root_run_dev_card_preview_passes_send_last_user(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview_last_user")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "card-preview", "--preset", "t1", "--send-last-user"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == "/usr/bin/python3"
+    assert command[1] == str(REPO_ROOT / "tools" / "dev" / "preview_card_payload.py")
+    assert "--preset" in command
+    assert "t1" in command
+    assert "--send-last-user" in command
+    assert captured["cwd"] == str(REPO_ROOT)
+
+
 def test_agent_host_run_dev_targets_root_entry(monkeypatch) -> None:
     module = _load_module(REPO_ROOT / "apps" / "agent-host" / "run_dev.py", "agent_host_run_dev")
 

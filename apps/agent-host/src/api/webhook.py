@@ -42,7 +42,7 @@ from src.core.session import SessionManager
 from src.config import get_settings
 from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
-from src.utils.feishu_api import send_message
+from src.utils.feishu_api import send_message, update_message
 from src.utils.metrics import record_inbound_message
 
 
@@ -268,7 +268,59 @@ def _pick_reply_text(reply: dict[str, Any]) -> str:
     return str(reply.get("text") or "")
 
 
-def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dict[str, Any]:
+def _upload_status_from_reason(reason_code: str) -> str:
+    code = str(reason_code or "").strip().lower()
+    if not code:
+        return "failed"
+    if code in {"file_too_large", "unsupported_file_type"}:
+        return "rejected"
+    if code in {"extractor_disabled", "ocr_disabled", "asr_disabled"}:
+        return "disabled"
+    if code in {"extractor_unconfigured", "ocr_unconfigured", "asr_unconfigured"}:
+        return "unconfigured"
+    return "failed"
+
+
+def _build_upload_result_reply(
+    *,
+    guidance_text: str,
+    message_type: str,
+    provider: str,
+    reason_code: str,
+    attachment: Any,
+) -> dict[str, Any]:
+    file_name = str(getattr(attachment, "file_name", "") or "").strip()
+    file_type = str(getattr(attachment, "file_type", "") or "").strip()
+    file_size = getattr(attachment, "file_size", None)
+    status = _upload_status_from_reason(reason_code)
+    return {
+        "type": "text",
+        "text": guidance_text,
+        "outbound": {
+            "text_fallback": guidance_text,
+            "card_template": {
+                "template_id": "upload.result",
+                "version": "v1",
+                "params": {
+                    "status": status,
+                    "guidance": guidance_text,
+                    "reason_code": reason_code,
+                    "provider": provider,
+                    "message_type": message_type,
+                    "file_name": file_name,
+                    "file_type": file_type,
+                    "file_size": file_size,
+                },
+            },
+            "meta": {
+                "skill_name": "UploadPipeline",
+                "source": "file_pipeline",
+            },
+        },
+    }
+
+
+def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True, *, prefer_card: bool = False) -> dict[str, Any]:
     text_fallback = _pick_reply_text(reply)
     outbound = reply.get("outbound") if isinstance(reply, dict) else None
     rendered = RenderedResponse.from_outbound(
@@ -278,7 +330,7 @@ def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dic
 
     formatter = FeishuFormatter(card_enabled=card_enabled)
     try:
-        return formatter.format(rendered)
+        return formatter.format(rendered, prefer_card=prefer_card)
     except Exception as exc:
         logger.warning(
             "格式化 outbound 失败，降级文本: %s",
@@ -415,29 +467,113 @@ def _get_text_content(message: dict[str, Any]) -> str:
 
 
 def _extract_card_action_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
-    action = event.get("action") if isinstance(event.get("action"), dict) else {}
-    value = action.get("value") if isinstance(action.get("value"), dict) else {}
+    event_raw = payload.get("event")
+    event = event_raw if isinstance(event_raw, dict) else {}
+    action_raw = event.get("action")
+    action = action_raw if isinstance(action_raw, dict) else {}
+    value_raw = action.get("value")
+    value = value_raw if isinstance(value_raw, dict) else {}
     callback_action = str(value.get("callback_action") or "").strip()
     if not callback_action:
         callback_action = str(action.get("name") or "").strip()
     if not callback_action:
         return None
-    operator = event.get("operator") if isinstance(event.get("operator"), dict) else {}
+
+    operator_raw = event.get("operator")
+    operator = operator_raw if isinstance(operator_raw, dict) else {}
     op_open_id = ""
-    if isinstance(operator.get("operator_id"), dict):
-        op_open_id = str(operator.get("operator_id", {}).get("open_id") or "").strip()
+    operator_id_raw = operator.get("operator_id")
+    operator_id = operator_id_raw if isinstance(operator_id_raw, dict) else {}
+    if operator_id:
+        op_open_id = str(operator_id.get("open_id") or "").strip()
     if not op_open_id:
         op_open_id = str(operator.get("open_id") or "").strip()
+
     open_chat_id = str(event.get("open_chat_id") or "").strip()
     chat_type = str(event.get("chat_type") or "").strip().lower()
+    message_id = str(
+        event.get("open_message_id")
+        or event.get("message_id")
+        or action.get("open_message_id")
+        or action.get("message_id")
+        or ""
+    ).strip()
+
     return {
         "callback_action": callback_action,
         "event_id": str((payload.get("header") or {}).get("event_id") or payload.get("event_id") or "").strip(),
         "open_id": op_open_id,
         "chat_id": open_chat_id,
         "chat_type": chat_type,
+        "message_id": message_id,
+        "value": value,
     }
+
+
+def _extract_feishu_payload_content(payload: dict[str, Any]) -> tuple[str, dict[str, object]]:
+    msg_type = str(payload.get("msg_type") or "text")
+    if msg_type == "interactive":
+        card_raw = payload.get("card")
+        card = card_raw if isinstance(card_raw, dict) else {}
+        return "interactive", cast(dict[str, object], card)
+    content_raw = payload.get("content")
+    content = content_raw if isinstance(content_raw, dict) else {"text": str(content_raw or "")}
+    return "text", cast(dict[str, object], content)
+
+
+async def _emit_callback_result_message(callback_payload: dict[str, Any], result: dict[str, Any]) -> None:
+    chat_id = str(callback_payload.get("chat_id") or "").strip()
+    if not chat_id:
+        return
+
+    outbound_raw = result.get("outbound")
+    outbound = outbound_raw if isinstance(outbound_raw, dict) else None
+    if outbound is None:
+        return
+
+    text = str(result.get("text") or "").strip()
+
+    reply: dict[str, Any] = {
+        "type": "text",
+        "text": text or "已处理",
+    }
+    reply["outbound"] = outbound
+
+    settings = _get_settings()
+    prefer_card = bool(
+        outbound
+        and isinstance(outbound.get("blocks"), list)
+        and outbound.get("blocks")
+        and not isinstance(outbound.get("card_template"), dict)
+    )
+    if outbound and isinstance(outbound.get("card_template"), dict):
+        prefer_card = True
+
+    payload = _build_send_payload(
+        reply,
+        card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+        prefer_card=prefer_card,
+    )
+    msg_type, content = _extract_feishu_payload_content(payload)
+    message_id = str(callback_payload.get("message_id") or "").strip()
+
+    if message_id:
+        try:
+            await update_message(settings=settings, message_id=message_id, msg_type=msg_type, content=content)
+            return
+        except Exception as exc:
+            logger.warning(
+                "更新回调原卡片失败，回退为发送新消息: %s",
+                exc,
+                extra={
+                    "event_code": "webhook.callback.update_failed",
+                    "message_id": message_id,
+                    "chat_id": chat_id,
+                    "msg_type": msg_type,
+                },
+            )
+
+    await send_message(settings, chat_id, msg_type, content)
 # endregion
 
 
@@ -518,6 +654,10 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             return {"status": "ok", "reason": "已过期"}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
+
+        if str(result.get("status") or "") == "processed":
+            asyncio.create_task(_emit_callback_result_message(callback_payload, result))
+
         text = str(result.get("text") or "")
         if str(result.get("status") or "") == "expired":
             return {"status": "ok", "reason": text or "已过期"}
@@ -757,14 +897,25 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
     user_manager = _get_user_manager()
     file_markdown = ""
     file_provider = "none"
+    file_reason = ""
+    first_attachment = normalized.attachments[0] if normalized.attachments else None
     direct_reply_text = ""
     ocr_completion_text = ""
     if normalized.attachments:
-        file_markdown, guidance, file_provider = await resolve_file_markdown(
+        resolved = await resolve_file_markdown(
             attachments=normalized.attachments,
             settings=settings,
             message_type=normalized.message_type,
         )
+        if isinstance(resolved, tuple):
+            file_markdown = str(resolved[0] or "") if len(resolved) > 0 else ""
+            guidance = str(resolved[1] or "") if len(resolved) > 1 else ""
+            file_provider = str(resolved[2] or "none") if len(resolved) > 2 else "none"
+            file_reason = str(resolved[3] or "") if len(resolved) > 3 else ""
+        else:
+            file_markdown, guidance, file_provider, file_reason = "", "", "none", ""
+        if not file_reason and first_attachment is not None:
+            file_reason = str(getattr(first_attachment, "reject_reason", "") or "").strip()
         if guidance and not file_markdown and normalized.message_type in {"file", "audio", "image"}:
             direct_reply_text = guidance
         elif normalized.message_type == "audio" and file_markdown:
@@ -778,6 +929,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
             reason = "asr_unconfigured"
         elif normalized.message_type == "image":
             reason = "ocr_unconfigured"
+        file_reason = reason
         direct_reply_text = build_file_unavailable_guidance(reason)
     
     try:
@@ -804,7 +956,16 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         
         # 处理消息
         if direct_reply_text:
-            reply = {"type": "text", "text": direct_reply_text}
+            if bool(getattr(settings.reply, "card_enabled", True)) and normalized.message_type in {"file", "audio", "image"}:
+                reply = _build_upload_result_reply(
+                    guidance_text=direct_reply_text,
+                    message_type=normalized.message_type,
+                    provider=file_provider,
+                    reason_code=file_reason,
+                    attachment=first_attachment,
+                )
+            else:
+                reply = {"type": "text", "text": direct_reply_text}
         else:
             reply = await agent_core.handle_message(
                 scoped_user_id,
@@ -827,9 +988,21 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
             return True
         
         # 发送回复消息
+        outbound = reply.get("outbound") if isinstance(reply, dict) else None
+        prefer_card = bool(
+            isinstance(outbound, dict)
+            and isinstance(outbound.get("blocks"), list)
+            and outbound.get("blocks")
+            and not isinstance(outbound.get("card_template"), dict)
+        )
+        if isinstance(outbound, dict) and isinstance(outbound.get("card_template"), dict):
+            template_id = str(outbound.get("card_template", {}).get("template_id") or "").strip()
+            if template_id == "upload.result":
+                prefer_card = True
         payload = _build_send_payload(
             reply,
             card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+            prefer_card=prefer_card,
         )
         msg_type = str(payload.get("msg_type") or "text")
         if msg_type == "interactive":

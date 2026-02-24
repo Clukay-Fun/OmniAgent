@@ -37,6 +37,14 @@ class _FakeLinker:
         return ""
 
 
+class _ReadOnlyTableAdapter:
+    async def resolve_table_context(self, _query: str, _extra: dict[str, Any] | None, _last_result: dict[str, Any] | None):
+        return type("Ctx", (), {"table_id": "tbl_ro", "table_name": "团队成员工作总览（只读）"})()
+
+    def extract_table_id_from_record(self, _record: dict[str, Any] | None) -> str | None:
+        return "tbl_ro"
+
+
 def test_delete_skill_disabled_by_default(monkeypatch) -> None:
     monkeypatch.setenv("CRUD_DELETE_ENABLED", "false")
     skill = DeleteSkill(mcp_client=_FakeMCP(), skills_config={}, data_writer=_FakeWriter())
@@ -64,6 +72,9 @@ def test_delete_skill_creates_pending_action_with_60s_ttl(monkeypatch) -> None:
     assert isinstance(pending_action, dict)
     assert pending_action.get("action") == "delete_record"
     assert pending_action.get("ttl_seconds") == 60
+    payload = pending_action.get("payload") or {}
+    assert payload.get("confirm_type") == "danger"
+    assert payload.get("suggestion")
 
 
 def test_delete_skill_callback_confirm_executes_delete(monkeypatch) -> None:
@@ -136,3 +147,17 @@ def test_delete_skill_passes_idempotency_key(monkeypatch) -> None:
     assert result.success is True
     assert len(writer.delete_calls) == 1
     assert writer.delete_calls[0]["idempotency_key"].startswith("delete-")
+
+
+def test_delete_skill_read_only_table_is_hard_blocked(monkeypatch) -> None:
+    monkeypatch.setenv("CRUD_DELETE_ENABLED", "true")
+    writer = _FakeWriter()
+    skill = DeleteSkill(mcp_client=_FakeMCP(), skills_config={}, data_writer=writer)
+    skill._linker = _FakeLinker()
+    skill._table_adapter = _ReadOnlyTableAdapter()
+
+    result = asyncio.run(skill.execute(SkillContext(query="删除这个任务", user_id="u1", extra={})))
+
+    assert result.success is False
+    assert "只读" in result.reply_text
+    assert writer.delete_calls == []

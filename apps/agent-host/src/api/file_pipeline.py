@@ -78,7 +78,7 @@ async def resolve_file_markdown(
     attachments: list[Any],
     settings: Any,
     message_type: str = "file",
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     metrics_enabled = bool(getattr(getattr(settings, "file_pipeline", None), "metrics_enabled", True))
 
     def _record(stage: str, status: str, provider: str = "none") -> None:
@@ -88,12 +88,13 @@ async def resolve_file_markdown(
 
     if not attachments:
         _record("extract", "skipped", "none")
-        return "", "", "none"
+        return "", "", "none", "no_attachment"
 
     attachment = attachments[0]
     if not attachment.accepted:
         _record("extract", "skipped", "none")
-        return "", build_file_unavailable_guidance(attachment.reject_reason), "none"
+        reject_reason = str(attachment.reject_reason or "").strip()
+        return "", build_file_unavailable_guidance(reject_reason), "none", reject_reason
 
     extractor = ExternalFileExtractor(
         settings=settings.file_extractor,
@@ -112,7 +113,8 @@ async def resolve_file_markdown(
     )
     if result.success:
         _record("extract", "success", result.provider)
-        return result.markdown, "", result.provider
+        return result.markdown, "", result.provider, ""
 
     _record("extract", _status_from_reason(result.reason), result.provider)
-    return "", build_file_unavailable_guidance(result.reason), result.provider
+    reason = str(result.reason or "").strip()
+    return "", build_file_unavailable_guidance(reason), result.provider, reason

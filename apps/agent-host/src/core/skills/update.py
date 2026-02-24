@@ -11,9 +11,11 @@ import hashlib
 import json
 import logging
 import time
+from datetime import date
 from typing import Any
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
@@ -66,12 +68,13 @@ class UpdateSkill(BaseSkill):
             skills_config=skills_config,
             data_writer=self._data_writer,
         )
+        self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
 
         update_cfg = self._skills_config.get("update", {}) if isinstance(self._skills_config, dict) else {}
         if not isinstance(update_cfg, dict):
             update_cfg = {}
         default_options = {
-            "案件状态": ["进行中", "已结案", "暂停"],
+            "案件状态": ["进行中", "已结案", "执行终本", "暂停"],
         }
         raw_options = update_cfg.get("field_options")
         options_cfg: dict[str, Any] = dict(raw_options) if isinstance(raw_options, dict) else {}
@@ -127,6 +130,14 @@ class UpdateSkill(BaseSkill):
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+        denied_text = self._action_service.validate_write_allowed(table_ctx.table_name)
+        if denied_text:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="写入受限",
+                reply_text=denied_text,
+            )
 
         pending_action, pending_payload = self._extract_pending_update(extra)
         if pending_action == "repair_child_update" and pending_payload:
@@ -136,9 +147,10 @@ class UpdateSkill(BaseSkill):
                 pending_payload=pending_payload,
                 table_ctx=table_ctx,
             )
-        if pending_action == "update_record" and pending_payload:
+        if pending_action in {"update_record", "close_record"} and pending_payload:
             return await self._execute_pending_update(
                 query=query,
+                action_name=pending_action,
                 pending_payload=pending_payload,
                 table_ctx=table_ctx,
             )
@@ -206,6 +218,11 @@ class UpdateSkill(BaseSkill):
             )
 
         # 解析更新字段（简化版：从查询中提取）
+        pending_action_name, close_semantic = self._resolve_pending_action_name(
+            query=query,
+            planner_plan=planner_plan,
+            table_name=table_ctx.table_name,
+        )
         fields = self._extract_fields_from_planner(planner_plan)
         parsed_fields = self._parse_update_fields(query)
         kv_fields = self._parse_key_value_fields(query)
@@ -213,6 +230,29 @@ class UpdateSkill(BaseSkill):
             fields[k] = v
         for k, v in kv_fields.items():
             fields[k] = v
+
+        if pending_action_name == "close_record":
+            close_profile_data = self._action_service.build_pending_close_action_data(
+                record_id=str(record_id),
+                fields=fields,
+                source_fields=self._extract_source_fields(record),
+                diff_items=[],
+                table_id=table_ctx.table_id,
+                table_name=table_ctx.table_name,
+                idempotency_key=idempotency_key,
+                created_at=time.time(),
+                ttl_seconds=self._confirm_ttl_seconds,
+                append_date=date.today().isoformat(),
+                close_semantic=close_semantic,
+                intent_text=query,
+            )
+            close_payload = close_profile_data.get("pending_action", {}).get("payload", {})
+            if isinstance(close_payload, dict):
+                status_field = str(close_payload.get("close_status_field") or "案件状态").strip() or "案件状态"
+                target_status = str(close_payload.get("close_status_value") or "已结案").strip() or "已结案"
+                if status_field not in fields:
+                    fields[status_field] = target_status
+
         if not fields:
             return SkillResult(
                 success=False,
@@ -258,7 +298,12 @@ class UpdateSkill(BaseSkill):
             fields = adapted_fields
 
         source_fields = self._extract_source_fields(record)
-        diff_items = self._build_update_diff(source_fields, fields)
+        effective_preview_fields, diff_items, append_date = self._action_service.build_update_preview(
+            table_name=table_ctx.table_name,
+            fields=fields,
+            source_fields=source_fields,
+            append_date=None,
+        )
         if not diff_items:
             return SkillResult(
                 success=True,
@@ -277,8 +322,10 @@ class UpdateSkill(BaseSkill):
             idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
 
         return self._build_pending_update_result(
+            action_name=pending_action_name,
             record_id=record_id,
             fields=fields,
+            preview_fields=effective_preview_fields,
             source_fields=source_fields,
             diff_items=diff_items,
             table_id=table_ctx.table_id,
@@ -286,6 +333,8 @@ class UpdateSkill(BaseSkill):
             idempotency_key=idempotency_key,
             created_at=time.time(),
             ttl_seconds=self._confirm_ttl_seconds,
+            append_date=append_date,
+            close_semantic=close_semantic,
         )
     
     def _parse_update_fields(self, query: str) -> dict[str, Any]:
@@ -337,7 +386,7 @@ class UpdateSkill(BaseSkill):
         if not isinstance(pending, dict):
             return None, {}
         action = str(pending.get("action") or "").strip()
-        if action not in {"repair_child_update", "update_record"}:
+        if action not in {"repair_child_update", "update_record", "close_record"}:
             return None, {}
         payload = pending.get("payload")
         if not isinstance(payload, dict):
@@ -348,6 +397,7 @@ class UpdateSkill(BaseSkill):
         self,
         *,
         query: str,
+        action_name: str,
         pending_payload: dict[str, Any],
         table_ctx: Any,
     ) -> SkillResult:
@@ -385,16 +435,31 @@ class UpdateSkill(BaseSkill):
                 for item in diff_raw:
                     if not isinstance(item, dict):
                         continue
-                    diff_items.append(
-                        {
-                            "field": str(item.get("field") or ""),
-                            "old": str(item.get("old") or ""),
-                            "new": str(item.get("new") or ""),
-                        }
-                    )
+                    normalized_item = {
+                        "field": str(item.get("field") or ""),
+                        "old": str(item.get("old") or ""),
+                        "new": str(item.get("new") or ""),
+                    }
+                    mode = str(item.get("mode") or "").strip()
+                    delta = str(item.get("delta") or "").strip()
+                    if mode:
+                        normalized_item["mode"] = mode
+                    if delta:
+                        normalized_item["delta"] = delta
+                    diff_items.append(normalized_item)
+            preview_fields_raw = pending_payload.get("preview_fields")
+            preview_fields = dict(preview_fields_raw) if isinstance(preview_fields_raw, dict) else dict(fields)
+            append_date = str(pending_payload.get("append_date") or "").strip() or date.today().isoformat()
+            close_semantic = str(pending_payload.get("close_semantic") or "").strip() or self._action_service.resolve_close_semantic(
+                query,
+                str(pending_payload.get("table_name") or table_ctx.table_name or ""),
+                default="default",
+            )
             return self._build_pending_update_result(
+                action_name=action_name,
                 record_id=str(pending_payload.get("record_id") or "").strip(),
                 fields=fields,
+                preview_fields=preview_fields,
                 source_fields=source_fields,
                 diff_items=diff_items,
                 table_id=str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None,
@@ -402,6 +467,8 @@ class UpdateSkill(BaseSkill):
                 idempotency_key=str(pending_payload.get("idempotency_key") or "").strip() or None,
                 created_at=created_at,
                 ttl_seconds=self._resolve_pending_ttl(pending_payload.get("pending_ttl_seconds")),
+                append_date=append_date,
+                close_semantic=close_semantic,
             )
 
         record_id = str(pending_payload.get("record_id") or "").strip()
@@ -416,11 +483,59 @@ class UpdateSkill(BaseSkill):
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
         table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        denied_text = self._action_service.validate_write_allowed(table_name)
+        if denied_text:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="写入受限",
+                reply_text=denied_text,
+            )
         fields_raw = pending_payload.get("fields")
         fields: dict[str, Any] = dict(fields_raw) if isinstance(fields_raw, dict) else {}
         source_fields_raw = pending_payload.get("source_fields")
         source_fields: dict[str, Any] = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
-        diff_items = self._build_update_diff(source_fields, fields)
+        idempotency_key = str(pending_payload.get("idempotency_key") or "").strip() or None
+        if not idempotency_key:
+            idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
+        close_semantic = str(pending_payload.get("close_semantic") or "").strip() or self._action_service.resolve_close_semantic(
+            query,
+            table_name,
+            default="default",
+        )
+        if action_name == "close_record":
+            close_profile_data = self._action_service.build_pending_close_action_data(
+                record_id=record_id,
+                fields=fields,
+                source_fields=source_fields,
+                diff_items=[],
+                table_id=table_id,
+                table_name=table_name,
+                idempotency_key=idempotency_key,
+                created_at=time.time(),
+                ttl_seconds=self._confirm_ttl_seconds,
+                append_date=str(pending_payload.get("append_date") or date.today().isoformat()),
+                close_semantic=close_semantic,
+                intent_text=query,
+            )
+            close_payload = close_profile_data.get("pending_action", {}).get("payload", {})
+            status_field = str((close_payload or {}).get("close_status_field") or pending_payload.get("close_status_field") or "案件状态").strip() or "案件状态"
+            close_status_raw = pending_payload.get("close_status_value")
+            if not close_status_raw and isinstance(close_payload, dict):
+                close_status_raw = close_payload.get("close_status_value")
+            close_status = str(close_status_raw).strip() if close_status_raw is not None else ""
+            if not close_status:
+                close_status = "已结案"
+            if status_field not in fields:
+                fields[status_field] = close_status
+        append_date = str(pending_payload.get("append_date") or "").strip() or None
+        effective_preview_fields, diff_items, normalized_append_date = self._action_service.build_update_preview(
+            table_name=table_name,
+            fields=fields,
+            source_fields=source_fields,
+            append_date=append_date,
+        )
         if not diff_items:
             return SkillResult(
                 success=True,
@@ -430,22 +545,24 @@ class UpdateSkill(BaseSkill):
                 reply_text="该字段已是目标值，无需更新。",
             )
 
-        idempotency_key = str(pending_payload.get("idempotency_key") or "").strip() or None
-        if not idempotency_key:
-            idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
-
         try:
-            write_result = await self._data_writer.update(
-                table_id,
-                record_id,
-                fields,
+            outcome = await self._action_service.execute_update(
+                action_name=action_name,
+                table_id=table_id,
+                table_name=table_name,
+                record_id=record_id,
+                fields=fields,
+                source_fields=source_fields,
                 idempotency_key=idempotency_key,
+                append_date=normalized_append_date,
+                close_semantic=close_semantic,
             )
-            if not write_result.success:
-                error = write_result.error or "未知错误"
+            if not outcome.success:
                 return self._build_pending_update_result(
+                    action_name=action_name,
                     record_id=record_id,
                     fields=fields,
+                    preview_fields=effective_preview_fields,
                     source_fields=source_fields,
                     diff_items=diff_items,
                     table_id=table_id,
@@ -453,53 +570,17 @@ class UpdateSkill(BaseSkill):
                     idempotency_key=idempotency_key,
                     created_at=time.time(),
                     ttl_seconds=self._confirm_ttl_seconds,
-                    reply_text=f"更新失败：{error}\n请回复“确认”重试，或回复“取消”终止。",
+                    reply_text=outcome.reply_text,
+                    append_date=normalized_append_date,
+                    close_semantic=close_semantic,
                 )
-
-            record_url = write_result.record_url or ""
-            opener = pool.pick("update_success", "✅ 更新成功！")
-            field_list = "\n".join([f"  • {k}: {v}" for k, v in fields.items()])
-            reply_text = f"{opener}\n\n已更新字段：\n{field_list}\n\n🔗 查看详情：{record_url}"
-
-            link_sync = await self._linker.sync_after_update(
-                parent_table_id=table_id,
-                parent_table_name=table_name,
-                updated_fields=fields,
-                source_fields=source_fields,
-            )
-            link_summary = self._linker.summarize(link_sync)
-            repair_payload = self._linker.build_repair_pending(link_sync)
-            next_pending_action = None
-            if repair_payload:
-                repair_action = str(repair_payload.get("repair_action") or "repair_child_create").strip()
-                next_pending_action = {
-                    "action": repair_action,
-                    "payload": repair_payload,
-                }
-                reply_text += (
-                    "\n\n"
-                    "子表同步失败，请补充或修正后继续。"
-                    "例如：金额是1000，状态是待支付。"
-                )
-            if link_summary:
-                reply_text += f"\n\n{link_summary}"
 
             return SkillResult(
                 success=True,
                 skill_name=self.name,
-                data={
-                    "clear_pending_action": False if next_pending_action else True,
-                    "pending_action": next_pending_action,
-                    "record_id": record_id,
-                    "updated_fields": fields,
-                    "record_url": record_url,
-                    "table_id": table_id,
-                    "table_name": table_name,
-                    "source_fields": source_fields,
-                    "link_sync": link_sync,
-                },
-                message="更新成功",
-                reply_text=reply_text,
+                data=outcome.data,
+                message=outcome.message,
+                reply_text=outcome.reply_text,
             )
         except Exception as exc:
             logger.error("UpdateSkill pending execution error: %s", exc, exc_info=True)
@@ -529,8 +610,10 @@ class UpdateSkill(BaseSkill):
     def _build_pending_update_result(
         self,
         *,
+        action_name: str = "update_record",
         record_id: str,
         fields: dict[str, Any],
+        preview_fields: dict[str, Any],
         source_fields: dict[str, Any],
         diff_items: list[dict[str, str]],
         table_id: str | None,
@@ -538,35 +621,43 @@ class UpdateSkill(BaseSkill):
         idempotency_key: str | None,
         created_at: float,
         ttl_seconds: int,
+        append_date: str,
+        close_semantic: str = "default",
         reply_text: str | None = None,
     ) -> SkillResult:
-        payload: dict[str, Any] = {
-            "record_id": record_id,
-            "fields": fields,
-            "source_fields": source_fields,
-            "diff": diff_items,
-            "table_id": table_id,
-            "table_name": table_name,
-            "created_at": created_at,
-            "pending_ttl_seconds": ttl_seconds,
-        }
-        if idempotency_key:
-            payload["idempotency_key"] = idempotency_key
+        if action_name == "close_record":
+            pending_data = self._action_service.build_pending_close_action_data(
+                record_id=record_id,
+                fields=preview_fields,
+                source_fields=source_fields,
+                diff_items=diff_items,
+                table_id=table_id,
+                table_name=table_name,
+                idempotency_key=idempotency_key,
+                created_at=created_at,
+                ttl_seconds=ttl_seconds,
+                append_date=append_date,
+                close_semantic=close_semantic,
+            )
+        else:
+            pending_data = self._action_service.build_pending_update_action_data(
+                action_name=action_name,
+                record_id=record_id,
+                fields=fields,
+                preview_fields=preview_fields,
+                source_fields=source_fields,
+                diff_items=diff_items,
+                table_id=table_id,
+                table_name=table_name,
+                idempotency_key=idempotency_key,
+                created_at=created_at,
+                ttl_seconds=ttl_seconds,
+                append_date=append_date,
+            )
         return SkillResult(
             success=True,
             skill_name=self.name,
-            data={
-                "pending_action": {
-                    "action": "update_record",
-                    "payload": payload,
-                    "ttl_seconds": ttl_seconds,
-                },
-                "record_id": record_id,
-                "table_id": table_id,
-                "table_name": table_name,
-                "updated_fields": fields,
-                "source_fields": source_fields,
-            },
+            data=pending_data,
             message="等待确认更新",
             reply_text=reply_text or self._build_update_confirm_reply(diff_items, ttl_seconds),
         )
@@ -577,7 +668,16 @@ class UpdateSkill(BaseSkill):
             field = str(item.get("field") or "")
             old = str(item.get("old") or "")
             new = str(item.get("new") or "")
-            lines.append(f"- {field}: {old} -> {new}")
+            mode = str(item.get("mode") or "").strip().lower()
+            if mode == "append":
+                delta = str(item.get("delta") or "").strip()
+                lines.append(f"- {field}: 追加模式")
+                lines.append(f"  旧值: {old}")
+                if delta:
+                    lines.append(f"  新增: {delta}")
+                lines.append(f"  追加后: {new}")
+            else:
+                lines.append(f"- {field}: {old} -> {new}")
         lines.append(f"请在 {ttl_seconds} 秒内回复“确认”继续，回复“取消”终止。")
         return "\n".join(lines)
 
@@ -955,6 +1055,49 @@ class UpdateSkill(BaseSkill):
                 continue
             fields[field_name] = value
         return fields
+
+    def _resolve_pending_action_name(
+        self,
+        *,
+        query: str,
+        planner_plan: dict[str, Any] | None,
+        table_name: str | None,
+    ) -> tuple[str, str]:
+        close_semantic = self._extract_close_semantic_from_planner(planner_plan)
+        if close_semantic:
+            return "close_record", close_semantic
+
+        inferred_semantic = self._action_service.resolve_close_semantic(query, table_name, default="")
+        if inferred_semantic:
+            return "close_record", inferred_semantic
+        return "update_record", "default"
+
+    def _extract_close_semantic_from_planner(self, planner_plan: dict[str, Any] | None) -> str:
+        if not isinstance(planner_plan, dict):
+            return ""
+
+        tool = str(planner_plan.get("tool") or "").strip()
+        intent = str(planner_plan.get("intent") or "").strip().lower()
+        params_raw = planner_plan.get("params")
+        params = params_raw if isinstance(params_raw, dict) else {}
+        explicit = str(params.get("close_semantic") or "").strip()
+        if explicit:
+            if explicit in {"default", "enforcement_end"}:
+                return explicit
+            logger.warning(
+                "Planner close_semantic invalid, fallback to default",
+                extra={
+                    "event_code": "update.planner.close_semantic.invalid",
+                    "close_semantic": explicit,
+                },
+            )
+            return "default"
+
+        if tool == "record.close":
+            return "default"
+        if intent in {"close_record", "record.close", "close"}:
+            return "default"
+        return ""
 
     def _parse_key_value_fields(self, query: str) -> dict[str, Any]:
         import re

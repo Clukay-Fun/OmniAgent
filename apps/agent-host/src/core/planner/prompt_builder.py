@@ -51,6 +51,7 @@ def build_planner_system_prompt(rules: list[dict[str, Any]]) -> str:
         "- 张三在中院本周 -> intent=query_advanced, tool=search_advanced",
         "- 新建/创建 -> intent=create_record, tool=record.create",
         "- 修改/更新 -> intent=update_record, tool=record.update",
+        "- 结案/终本/关闭案件 -> intent=close_record, tool=record.close, params.close_semantic in {default,enforcement_end}",
         "- 删除 -> intent=delete_record, tool=record.delete",
         "- 提醒我 -> intent=create_reminder, tool=reminder.create",
         "- 我有哪些提醒 -> intent=list_reminders, tool=reminder.list",
@@ -72,7 +73,7 @@ def build_planner_system_prompt(rules: list[dict[str, Any]]) -> str:
         rule_lines = default_rules
 
     schema_text = (
-        '{"intent":"...","tool":"...","params":{},"confidence":0.0,"clarify_question":""}'
+        '{"intent":"...","tool":"...","params":{},"confidence":0.0,"clarify_question":""}；若 intent=close_record，params 必须包含 close_semantic，且仅可为 default 或 enforcement_end'
     )
 
     return "\n\n".join(

@@ -14,6 +14,79 @@ from src.core.response.models import Block, RenderedResponse
 from src.core.response.renderer import ResponseRenderer
 
 
+def _card_elements(payload: dict) -> list[dict]:
+    card_raw = payload.get("card")
+    card = card_raw if isinstance(card_raw, dict) else {}
+    body_raw = card.get("body")
+    body = body_raw if isinstance(body_raw, dict) else {}
+    elements_raw = body.get("elements")
+    if isinstance(elements_raw, list):
+        return elements_raw
+    fallback_raw = card.get("elements")
+    return fallback_raw if isinstance(fallback_raw, list) else []
+
+
+def _card_markdown_text(payload: dict) -> str:
+    texts: list[str] = []
+
+    def _collect(items: list[dict]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tag = item.get("tag")
+            if tag == "markdown":
+                content = item.get("content")
+                if isinstance(content, str):
+                    texts.append(content)
+                continue
+            if tag == "column_set":
+                columns_raw = item.get("columns")
+                columns = columns_raw if isinstance(columns_raw, list) else []
+                for column in columns:
+                    if not isinstance(column, dict):
+                        continue
+                    column_elements_raw = column.get("elements")
+                    column_elements = column_elements_raw if isinstance(column_elements_raw, list) else []
+                    _collect([entry for entry in column_elements if isinstance(entry, dict)])
+
+    _collect(_card_elements(payload))
+    return "\n".join(texts)
+
+
+def _card_button_texts(payload: dict) -> list[str]:
+    texts: list[str] = []
+
+    def _collect(items: list[dict]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tag = item.get("tag")
+            if tag == "button":
+                text_raw = item.get("text")
+                text = text_raw if isinstance(text_raw, dict) else {}
+                content = text.get("content")
+                if isinstance(content, str) and content:
+                    texts.append(content)
+                continue
+            if tag == "action":
+                actions_raw = item.get("actions")
+                actions = actions_raw if isinstance(actions_raw, list) else []
+                _collect([entry for entry in actions if isinstance(entry, dict)])
+                continue
+            if tag == "column_set":
+                columns_raw = item.get("columns")
+                columns = columns_raw if isinstance(columns_raw, list) else []
+                for column in columns:
+                    if not isinstance(column, dict):
+                        continue
+                    column_elements_raw = column.get("elements")
+                    column_elements = column_elements_raw if isinstance(column_elements_raw, list) else []
+                    _collect([entry for entry in column_elements if isinstance(entry, dict)])
+
+    _collect(_card_elements(payload))
+    return texts
+
+
 def test_format_returns_text_payload_when_card_disabled() -> None:
     formatter = FeishuFormatter(card_enabled=False)
     rendered = RenderedResponse(
@@ -40,7 +113,9 @@ def test_format_returns_interactive_card_when_blocks_available() -> None:
 
     assert payload["msg_type"] == "interactive"
     assert isinstance(payload["card"], dict)
-    assert payload["card"]["elements"]
+    assert payload["card"]["schema"] == "2.0"
+    assert payload["card"]["config"]["update_multi"] is True
+    assert _card_elements(payload)
 
 
 @pytest.mark.parametrize(
@@ -76,7 +151,7 @@ def test_format_maps_block_types_to_card_elements(
     payload = formatter.format(rendered)
 
     assert payload["msg_type"] == "interactive"
-    element = payload["card"]["elements"][0]
+    element = _card_elements(payload)[0]
     assert element["tag"] == expected_tag
     if expected_content is None:
         assert "content" not in element
@@ -111,7 +186,7 @@ def test_format_filters_empty_content_and_invalid_items() -> None:
     payload = formatter.format(rendered)
 
     assert payload["msg_type"] == "interactive"
-    elements = payload["card"]["elements"]
+    elements = _card_elements(payload)
     assert len(elements) == 2
     assert elements[0]["tag"] == "markdown"
     assert "- 有效项" in elements[0]["content"]
@@ -160,7 +235,7 @@ def test_format_uses_template_registry_when_card_template_present() -> None:
     payload = formatter.format(rendered)
 
     assert payload["msg_type"] == "interactive"
-    assert "模板错误提示" in payload["card"]["elements"][0]["content"]
+    assert "模板错误提示" in _card_markdown_text(payload)
 
 
 def test_format_supports_query_list_v2_template() -> None:
@@ -189,7 +264,9 @@ def test_format_supports_query_list_v2_template() -> None:
     payload = formatter.format(rendered)
 
     assert payload["msg_type"] == "interactive"
-    assert payload["card"]["elements"][-1]["tag"] == "action"
+    elements = _card_elements(payload)
+    assert any(item.get("tag") == "column_set" for item in elements)
+    assert payload.get("card", {}).get("header", {}).get("title", {}).get("content") == "案件查询结果"
 
 
 def test_format_falls_back_to_text_when_template_render_fails(caplog) -> None:
@@ -268,12 +345,16 @@ def test_format_crud_templates_from_renderer_skill_results() -> None:
     delete_success_payload = formatter.format(delete_success_rendered)
 
     assert create_payload["msg_type"] == "interactive"
-    assert "查看原记录" in create_payload["card"]["elements"][-1]["content"]
+    assert "查看详情" in _card_button_texts(create_payload)
     assert update_payload["msg_type"] == "interactive"
-    assert "->" in update_payload["card"]["elements"][1]["content"]
-    assert delete_confirm_payload["card"]["elements"][-1]["tag"] == "action"
+    update_text = _card_markdown_text(update_payload)
+    assert "->" in update_text
+    delete_buttons = _card_button_texts(delete_confirm_payload)
+    assert "⛔ 确认删除" in delete_buttons
+    assert "❌ 取消" in delete_buttons
     assert delete_success_payload["msg_type"] == "interactive"
-    assert "删除成功" in delete_success_payload["card"]["elements"][0]["content"]
+    delete_success_title = delete_success_payload.get("card", {}).get("header", {}).get("title", {}).get("content", "")
+    assert "删除成功" in delete_success_title
 
 
 def test_format_falls_back_to_text_when_create_template_build_fails(monkeypatch, caplog) -> None:

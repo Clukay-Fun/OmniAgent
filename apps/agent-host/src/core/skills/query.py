@@ -139,6 +139,18 @@ class QuerySkill(BaseSkill):
         self._all_cases_ignore_default_view = bool(
             query_cfg.get("all_cases_ignore_default_view", True)
         )
+        classification_fields_raw = query_cfg.get("classification_fields", ["项目类型", "案件分类"])
+        self._classification_fields = [
+            str(item).strip() for item in classification_fields_raw if str(item).strip()
+        ] if isinstance(classification_fields_raw, list) else ["项目类型", "案件分类"]
+        raw_aliases = query_cfg.get("classification_aliases", {
+            "非诉": ["非诉", "非诉类型", "非诉案件", "非诉类"],
+            "诉讼": ["诉讼", "诉讼类型", "诉讼案件"],
+            "劳动仲裁": ["劳动仲裁", "劳动争议仲裁", "仲裁案件"],
+            "执行": ["执行案件", "执行", "终本执行"],
+        })
+        self._classification_aliases = self._normalize_classification_aliases(raw_aliases)
+        self._classification_alias_pairs = self._build_classification_alias_pairs(self._classification_aliases)
         reply_settings = getattr(settings, "reply", None) if settings is not None else None
         self._query_card_v2_enabled = bool(getattr(reply_settings, "query_card_v2_enabled", False))
 
@@ -245,6 +257,8 @@ class QuerySkill(BaseSkill):
             query_meta = {
                 "tool": tool_name,
                 "params": {k: v for k, v in params.items() if k != "page_token"},
+                "table_name": table_result.get("table_name") or "",
+                "table_id": table_result.get("table_id") or params.get("table_id") or "",
             }
 
             if not records:
@@ -278,6 +292,7 @@ class QuerySkill(BaseSkill):
                 records,
                 notice=notice,
                 schema=schema,
+                table_name=str(table_result.get("table_name") or ""),
                 pagination={
                     "has_more": has_more,
                     "page_token": page_token,
@@ -774,6 +789,26 @@ class QuerySkill(BaseSkill):
         if table_id:
             params["table_id"] = table_id
 
+        classification_target = self._extract_case_classification_target(query, table_result)
+        if classification_target:
+            compatible_selected = selected_tool in {
+                None,
+                "data.bitable.search",
+                "data.bitable.search_keyword",
+                "data.bitable.search_advanced",
+            }
+            if compatible_selected:
+                params.pop("conditions", None)
+                params.pop("conjunction", None)
+                params.pop("keyword", None)
+                params.pop("fields", None)
+                params.pop("filters", None)
+                params["keyword"] = classification_target
+                params["fields"] = list(self._classification_fields)
+                self._maybe_ignore_default_view(params, query)
+                logger.info("Query scenario: case_classification")
+                return "data.bitable.search_keyword", params
+
         if isinstance(planner_plan, dict):
             mapped_tool = selected_tool or self._map_planner_tool(str(planner_plan.get("tool") or ""))
             if mapped_tool:
@@ -909,6 +944,60 @@ class QuerySkill(BaseSkill):
     def _should_keep_view_filter(self, query: str) -> bool:
         normalized = query.replace(" ", "")
         return any(token in normalized for token in self._keep_view_keywords)
+
+    def _normalize_classification_aliases(self, raw: Any) -> dict[str, list[str]]:
+        if not isinstance(raw, dict):
+            return {}
+        output: dict[str, list[str]] = {}
+        for target_raw, aliases_raw in raw.items():
+            target = str(target_raw).strip()
+            if not target:
+                continue
+            aliases: list[str] = [target]
+            if isinstance(aliases_raw, list):
+                aliases.extend(str(item).strip() for item in aliases_raw if str(item).strip())
+            output[target] = aliases
+        return output
+
+    def _build_classification_alias_pairs(self, aliases: dict[str, list[str]]) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        for target, items in aliases.items():
+            for alias in items:
+                text = str(alias).strip()
+                if text:
+                    pairs.append((text, target))
+        pairs.sort(key=lambda item: len(item[0]), reverse=True)
+        return pairs
+
+    def _extract_case_classification_target(
+        self,
+        query: str,
+        table_result: dict[str, Any],
+    ) -> str:
+        if not self._classification_alias_pairs:
+            return ""
+        normalized = query.replace(" ", "")
+        if not normalized:
+            return ""
+        if any(token in normalized for token in ("我的", "自己", "我负责", "我经手")):
+            return ""
+
+        table_name = str(table_result.get("table_name") or "").strip()
+        if table_name and all(token not in table_name for token in ["案件", "诉讼", "项目总库"]):
+            return ""
+        if not table_name and not self._is_case_domain_query(query):
+            return ""
+
+        target = ""
+        for alias, mapped in self._classification_alias_pairs:
+            if alias and alias in normalized:
+                if mapped == "诉讼" and "非诉" in normalized:
+                    continue
+                target = mapped
+                break
+        if not target:
+            return ""
+        return target
 
     def _guess_date_field(self, query: str) -> str:
         normalized = query.replace(" ", "")
@@ -1138,6 +1227,7 @@ class QuerySkill(BaseSkill):
         records: list[dict[str, Any]],
         notice: str | None = None,
         schema: list[dict[str, Any]] | None = None,
+        table_name: str = "",
         pagination: dict[str, Any] | None = None,
         query_meta: dict[str, Any] | None = None,
     ) -> SkillResult:
@@ -1150,7 +1240,7 @@ class QuerySkill(BaseSkill):
         # 随机开场白
         opener_pool = self._response_pool.get("result_opener")
         opener = random.choice(opener_pool) if opener_pool else ""
-        title = f"{opener}📌 案件查询结果（共 {title_count} 条）"
+        title = f"{opener}OK 案件查询结果（共 {title_count} 条）"
         
         items = []
         df = self._display_fields  # 使用配置的字段名
@@ -1163,11 +1253,11 @@ class QuerySkill(BaseSkill):
             court = self._clean_text_value(fields.get(df.get("court", "审理法院"), ""))
             stage = self._clean_text_value(fields.get(df.get("stage", "程序阶段"), ""))
             item = (
-                f"{i}️⃣ {left} vs {right}｜{suffix}\n"
+                f"{i}. {left} vs {right}｜{suffix}\n"
                 f"   • 案号：{case_no}\n"
                 f"   • 法院：{court}\n"
                 f"   • 程序：{stage}\n"
-                f"   • 🔗 查看详情：{record.get('record_url', '')}"
+                f"   • 查看详情：{record.get('record_url', '')}"
             )
             items.append(item)
         
@@ -1184,6 +1274,7 @@ class QuerySkill(BaseSkill):
         result_data: dict[str, Any] = {
             "records": records,
             "total": title_count,
+            "table_name": table_name,
             "schema": schema or [],
             "pagination": pagination or {
                 "has_more": False,
@@ -1329,14 +1420,14 @@ class QuerySkill(BaseSkill):
     def _format_doc_result(self, documents: list[dict[str, Any]]) -> SkillResult:
         """格式化文档查询结果"""
         count = len(documents)
-        title = f"📄 文档搜索结果（共 {count} 条）"
+        title = f"OK 文档搜索结果（共 {count} 条）"
         
         items = []
         for i, doc in enumerate(documents, start=1):
             item = (
                 f"{i}. {doc.get('title', '未命名文档')}\n"
                 f"   {doc.get('preview', '')}\n"
-                f"   🔗 {doc.get('url', '')}"
+                f"   链接: {doc.get('url', '')}"
             )
             items.append(item)
         

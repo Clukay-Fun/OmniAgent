@@ -1,0 +1,26 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "{{headline}}",
+      "text_size": "normal",
+      "margin": "0px"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{identity}}",
+      "text_size": "normal",
+      "margin": "0px"
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{body}}",
+      "text_size": "normal",
+      "margin": "0px"
+    }
+  ]
+}

@@ -28,6 +28,7 @@ def test_usage_logger_writes_jsonl_with_date_template(tmp_path: Path) -> None:
         usage_source="text",
         estimated=True,
         metadata={"route_label": "primary_default", "model_selected": "gpt-4o-mini"},
+        business_metadata={"action_classification": "close_case", "close_semantic": "default"},
     )
 
     ok = logger.log(record)
@@ -39,6 +40,8 @@ def test_usage_logger_writes_jsonl_with_date_template(tmp_path: Path) -> None:
     assert '"user_id": "u1"' in line
     assert '"token_count": 123' in line
     assert '"route_label": "primary_default"' in line
+    assert '"business_metadata"' in line
+    assert '"close_semantic": "default"' in line
 
 
 def test_usage_logger_fail_open_returns_false_on_error() -> None:

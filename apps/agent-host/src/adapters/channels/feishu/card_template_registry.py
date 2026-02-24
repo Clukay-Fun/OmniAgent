@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from src.adapters.channels.feishu.card_template_config import is_template_enabled
 from src.adapters.channels.feishu.card_templates import (
@@ -28,7 +28,7 @@ class TemplateValidationError(Exception):
     pass
 
 
-TemplateRenderer = Callable[[dict[str, Any]], list[dict[str, Any]]]
+TemplateRenderer = Callable[[dict[str, Any]], Any]
 
 
 @dataclass(frozen=True)
@@ -53,11 +53,22 @@ class CardTemplateRegistry:
             raise TemplateLookupError(f"template disabled: {template_id}.{version}")
         return definition
 
-    def render(self, template_id: str, version: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    def render(self, template_id: str, version: str, params: dict[str, Any]) -> Any:
         definition = self.lookup(template_id, version)
         self._validate(definition, params)
-        elements = definition.renderer(params)
-        return [item for item in elements if isinstance(item, dict)]
+        payload = definition.renderer(params)
+
+        if isinstance(payload, Mapping):
+            elements_raw = payload.get("elements")
+            elements = [item for item in elements_raw if isinstance(item, dict)] if isinstance(elements_raw, list) else []
+            wrapper = payload.get("wrapper")
+            normalized: dict[str, Any] = {"elements": elements}
+            if isinstance(wrapper, Mapping):
+                normalized["wrapper"] = dict(wrapper)
+            return normalized
+
+        elements_raw = payload if isinstance(payload, list) else []
+        return [item for item in elements_raw if isinstance(item, dict)]
 
     def register(self, definition: CardTemplateDefinition) -> None:
         self._definitions[(definition.template_id, definition.version)] = definition

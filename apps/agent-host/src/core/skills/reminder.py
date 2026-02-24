@@ -112,6 +112,20 @@ class ReminderSkill(BaseSkill):
             raw_params: Any = planner_plan.get("params")
             if isinstance(raw_params, dict):
                 planner_params = {str(k): v for k, v in raw_params.items()}
+
+        pending_action_raw = context.extra.get("pending_action") if isinstance(context.extra, dict) else None
+        pending_action = pending_action_raw if isinstance(pending_action_raw, dict) else {}
+        callback_intent = str(context.extra.get("callback_intent") or "").strip().lower() if isinstance(context.extra, dict) else ""
+        if str(pending_action.get("action") or "") == "create_reminder":
+            pending_payload_raw = pending_action.get("payload")
+            pending_payload = pending_payload_raw if isinstance(pending_payload_raw, dict) else {}
+            return await self._execute_pending_auto_reminders(
+                user_id=user_id,
+                chat_id=chat_id,
+                callback_intent=callback_intent,
+                payload=pending_payload,
+            )
+
         if planner_intent == "list_reminders":
             return await self._list_reminders(user_id)
         if planner_intent == "cancel_reminder":
@@ -291,6 +305,75 @@ class ReminderSkill(BaseSkill):
                 message=str(e),
                 reply_text="提醒创建失败，请稍后重试。",
             )
+
+    async def _execute_pending_auto_reminders(
+        self,
+        *,
+        user_id: str,
+        chat_id: str | None,
+        callback_intent: str,
+        payload: dict[str, Any],
+    ) -> SkillResult:
+        if callback_intent == "cancel":
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="已取消自动提醒",
+                reply_text="好的，已取消自动创建提醒。",
+            )
+
+        reminders_raw = payload.get("reminders")
+        reminders = reminders_raw if isinstance(reminders_raw, list) else []
+        if not reminders:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="无可用提醒",
+                reply_text="未检测到可创建的提醒。",
+            )
+
+        created = 0
+        preview: list[str] = []
+        for item in reminders[:20]:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            remind_time = self._parse_planner_time(item.get("remind_time"))
+            if not content or remind_time is None:
+                continue
+            priority = str(item.get("priority") or "medium").strip().lower() or "medium"
+            await self._save_reminder(
+                user_id=user_id,
+                chat_id=chat_id,
+                content=content,
+                remind_time=remind_time,
+                priority=priority,
+            )
+            created += 1
+            preview.append(f"- {content} @ {remind_time.strftime('%Y-%m-%d %H:%M')}")
+
+        if created <= 0:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="自动提醒创建失败",
+                reply_text="自动提醒创建失败，请稍后重试。",
+            )
+
+        return SkillResult(
+            success=True,
+            skill_name=self.name,
+            data={
+                "clear_pending_action": True,
+                "action": "create_batch",
+                "created_count": created,
+            },
+            message="自动提醒创建成功",
+            reply_text=f"✅ 已创建 {created} 条自动提醒\n" + "\n".join(preview),
+        )
 
     def _extract_content(self, query: str) -> str | None:
         """从 Query 中提取提醒内容的核心部分 (去除无关词)"""

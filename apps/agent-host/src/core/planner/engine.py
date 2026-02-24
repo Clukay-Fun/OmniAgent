@@ -53,6 +53,7 @@ class PlannerEngine:
             if not isinstance(raw, dict) or not raw:
                 return self._fallback_plan(query)
             try:
+                self._warn_close_semantic_drift(raw)
                 output = PlannerOutput.model_validate(raw)
             except ValidationError as exc:
                 logger.warning("Planner schema validation failed: %s", exc)
@@ -175,6 +176,22 @@ class PlannerEngine:
                 tool="record.update",
                 params={},
                 confidence=0.86,
+            )
+
+        if any(token in normalized for token in ["结案", "判决生效", "撤诉", "调解结案"]):
+            return PlannerOutput(
+                intent="close_record",
+                tool="record.close",
+                params={"close_semantic": "default"},
+                confidence=0.9,
+            )
+
+        if any(token in normalized for token in ["执行终本", "终本", "终结本次执行", "执行不了了"]):
+            return PlannerOutput(
+                intent="close_record",
+                tool="record.close",
+                params={"close_semantic": "enforcement_end"},
+                confidence=0.9,
             )
 
         if any(token in normalized for token in ["删除", "移除"]) and any(token in normalized for token in ["案件", "案号", "项目", "记录"]):
@@ -347,3 +364,34 @@ class PlannerEngine:
             )
 
         return None
+
+    def _warn_close_semantic_drift(self, raw: dict[str, Any]) -> None:
+        intent = str(raw.get("intent") or "").strip()
+        tool = str(raw.get("tool") or "").strip()
+        params_raw = raw.get("params")
+        params = params_raw if isinstance(params_raw, dict) else {}
+        close_related = intent == "close_record" or tool == "record.close"
+        if not close_related:
+            return
+
+        if "close_semantic" not in params and any(alias in params for alias in ("close_type", "close_profile", "profile")):
+            logger.warning(
+                "Planner close semantic alias is not allowed, fallback to default",
+                extra={
+                    "event_code": "planner.schema.close_semantic.alias_rejected",
+                    "intent": intent,
+                    "tool": tool,
+                },
+            )
+
+        semantic = str(params.get("close_semantic") or "").strip()
+        if semantic and semantic not in {"default", "enforcement_end"}:
+            logger.warning(
+                "Planner close semantic invalid, fallback to default",
+                extra={
+                    "event_code": "planner.schema.close_semantic.invalid",
+                    "intent": intent,
+                    "tool": tool,
+                    "close_semantic": semantic,
+                },
+            )

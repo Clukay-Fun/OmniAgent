@@ -241,6 +241,63 @@ def _auth_health(endpoint: str) -> int:
         return 1
 
 
+def _run_card_preview(repo_root: Path, args: argparse.Namespace) -> int:
+    """运行卡片 payload 预览工具。"""
+    script_path = repo_root / "tools" / "dev" / "preview_card_payload.py"
+    cmd = [sys.executable, str(script_path)]
+
+    default_preset = "t2"
+    preset = str(getattr(args, "preset", "") or "").strip()
+    template_id = str(getattr(args, "template_id", "") or "").strip()
+    template_version = str(getattr(args, "template_version", "") or "").strip()
+    domain = str(getattr(args, "domain", "") or "").strip()
+    style = str(getattr(args, "style", "") or "").strip()
+    total = int(getattr(args, "total", 1) or 1)
+    mock_file = str(getattr(args, "mock_file", "") or "").strip()
+    send_chat_id = str(getattr(args, "send_chat_id", "") or "").strip()
+    send_open_id = str(getattr(args, "send_open_id", "") or "").strip()
+    send_user_id = str(getattr(args, "send_user_id", "") or "").strip()
+    send_to_me = bool(getattr(args, "send_to_me", False))
+    send_last_user = bool(getattr(args, "send_last_user", False))
+
+    if (
+        not preset
+        and not template_id
+        and not template_version
+        and not mock_file
+        and not domain
+        and not style
+        and int(total) == 1
+    ):
+        preset = default_preset
+
+    if preset:
+        cmd.extend(["--preset", preset])
+    if template_id:
+        cmd.extend(["--template-id", template_id])
+    if template_version:
+        cmd.extend(["--template-version", template_version])
+    if domain:
+        cmd.extend(["--domain", domain])
+    if style:
+        cmd.extend(["--style", style])
+    cmd.extend(["--total", str(total)])
+    if mock_file:
+        cmd.extend(["--mock-file", mock_file])
+    if send_chat_id:
+        cmd.extend(["--send-chat-id", send_chat_id])
+    if send_open_id:
+        cmd.extend(["--send-open-id", send_open_id])
+    if send_user_id:
+        cmd.extend(["--send-user-id", send_user_id])
+    if send_to_me:
+        cmd.append("--send-to-me")
+    if send_last_user:
+        cmd.append("--send-last-user")
+
+    return _run_command(cmd, repo_root)
+
+
 def _parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(description="OmniAgent 开发栈统一入口")
@@ -257,6 +314,7 @@ def _parse_args() -> argparse.Namespace:
             "clean",
             "agent-ws",
             "agent-ws-watch",
+            "card-preview",
             "refresh-schema",
             "scan",
             "sync",
@@ -275,6 +333,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--table-id", default="", help="指定目标表 ID（refresh-schema/scan 使用）")
     parser.add_argument("--app-token", default="", help="指定 app_token（refresh-schema/scan 使用）")
     parser.add_argument("--drill", action="store_true", help="refresh-schema 时触发风险演练")
+    parser.add_argument("--preset", default="", help="card-preview 预设（如 t1/t2/c1/c2/c3/all）")
+    parser.add_argument("--template-id", default="", help="card-preview 模板 ID")
+    parser.add_argument("--template-version", default="", help="card-preview 模板版本")
+    parser.add_argument("--domain", default="", help="card-preview 查询域")
+    parser.add_argument("--style", default="", help="card-preview 样式")
+    parser.add_argument("--total", type=int, default=1, help="card-preview 模拟记录数")
+    parser.add_argument("--mock-file", default="", help="card-preview mock JSON 文件")
+    parser.add_argument("--send-chat-id", default="", help="card-preview 发送目标 chat_id")
+    parser.add_argument("--send-open-id", default="", help="card-preview 发送目标 open_id")
+    parser.add_argument("--send-user-id", default="", help="card-preview 发送目标 user_id")
+    parser.add_argument("--send-to-me", action="store_true", help="card-preview 发送到 FEISHU_PREVIEW_OPEN_ID")
+    parser.add_argument("--send-last-user", action="store_true", help="card-preview 自动发送给最近对话用户")
     return parser.parse_args()
 
 
@@ -320,6 +390,9 @@ def main() -> int:
 
     if action == "agent-ws-watch":
         return _run_agent_ws_watch(repo_root)
+
+    if action == "card-preview":
+        return _run_card_preview(repo_root, args)
 
     if action == "refresh-schema":
         table_id = str(args.table_id or "").strip()

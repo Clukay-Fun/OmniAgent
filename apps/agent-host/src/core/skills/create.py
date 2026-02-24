@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
@@ -63,6 +64,7 @@ class CreateSkill(BaseSkill):
             skills_config=skills_config,
             data_writer=self._data_writer,
         )
+        self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
         
         # 字段映射：用户可能使用的别名 -> 实际字段名
         self._field_aliases = {
@@ -162,7 +164,8 @@ class CreateSkill(BaseSkill):
         missing_fields = self._missing_required_fields(fields, required_fields)
 
         if awaiting_duplicate_confirm and not self._is_confirm(query):
-            case_no = str(fields.get("案号") or "").strip()
+            duplicate_field = str(pending_payload.get("duplicate_field") or self._action_service.resolve_duplicate_field_name(table_ctx.table_name) or "案号").strip()
+            duplicate_value = str(pending_payload.get("duplicate_value") or fields.get(duplicate_field) or "").strip()
             duplicate_count = int(pending_payload.get("duplicate_count") or 1)
             return self._build_pending_result(
                 action_name=pending_action_name,
@@ -172,19 +175,22 @@ class CreateSkill(BaseSkill):
                 table_name=table_ctx.table_name,
                 message="案号重复待确认",
                 reply_text=(
-                    f"案号“{case_no}”已存在（命中 {duplicate_count} 条记录）。\n"
+                    f"字段“{duplicate_field}”值“{duplicate_value}”已存在（命中 {duplicate_count} 条记录）。\n"
                     "如果仍需创建，请回复“确认”。"
                 ),
                 awaiting_duplicate_confirm=True,
                 duplicate_count=duplicate_count,
+                duplicate_field=duplicate_field,
+                duplicate_value=duplicate_value,
                 duplicate_checked=True,
                 idempotency_key=idempotency_key,
             )
 
         if not missing_fields and not skip_duplicate_check:
-            case_no = str(fields.get("案号") or "").strip()
-            if case_no and not duplicate_checked and not awaiting_duplicate_confirm:
-                duplicate_count = await self._count_case_duplicates(case_no, table_ctx.table_id)
+            duplicate_field = self._action_service.resolve_duplicate_field_name(table_ctx.table_name)
+            duplicate_value = str(fields.get(duplicate_field or "") or "").strip() if duplicate_field else ""
+            if duplicate_field and duplicate_value and not duplicate_checked and not awaiting_duplicate_confirm:
+                duplicate_count = await self._count_duplicates(duplicate_field, duplicate_value, table_ctx.table_id)
                 if duplicate_count > 0:
                     return self._build_pending_result(
                         action_name=pending_action_name,
@@ -194,11 +200,13 @@ class CreateSkill(BaseSkill):
                         table_name=table_ctx.table_name,
                         message="案号重复待确认",
                         reply_text=(
-                            f"案号“{case_no}”已存在（命中 {duplicate_count} 条记录）。\n"
+                            f"字段“{duplicate_field}”值“{duplicate_value}”已存在（命中 {duplicate_count} 条记录）。\n"
                             "如果仍需创建，请回复“确认”；若取消请回复“取消”。"
                         ),
                         awaiting_duplicate_confirm=True,
                         duplicate_count=duplicate_count,
+                        duplicate_field=duplicate_field,
+                        duplicate_value=duplicate_value,
                         duplicate_checked=True,
                         idempotency_key=idempotency_key,
                     )
@@ -285,71 +293,26 @@ class CreateSkill(BaseSkill):
             fields = adapted_fields
         
         try:
-            write_result = await self._data_writer.create(
-                table_ctx.table_id,
-                fields,
+            outcome = await self._action_service.execute_create(
+                table_id=table_ctx.table_id,
+                table_name=table_ctx.table_name,
+                fields=fields,
                 idempotency_key=idempotency_key,
             )
-
-            if not write_result.success:
+            if not outcome.success:
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
-                    message=write_result.error or "创建失败",
-                    reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
+                    message=outcome.message,
+                    reply_text=outcome.reply_text or pool.pick("error", "创建记录失败，请稍后重试。"),
                 )
-
-            record_url = write_result.record_url or ""
-            record_id = write_result.record_id or ""
-            
-            # 格式化已创建的字段
-            fields_text = "\n".join([f"• {k}：{v}" for k, v in fields.items()])
-            
-            opener = pool.pick("create_success", "✅ 创建成功！")
-            reply_text = (
-                f"{opener}\n\n"
-                f"{fields_text}\n\n"
-            )
-            if record_url:
-                reply_text += f"🔗 查看详情：{record_url}"
-
-            link_sync = await self._linker.sync_after_create(
-                parent_table_id=table_ctx.table_id,
-                parent_table_name=table_ctx.table_name,
-                parent_fields=fields,
-            )
-            link_summary = self._linker.summarize(link_sync)
-            repair_payload = self._linker.build_repair_pending(link_sync)
-            pending_action = None
-            if repair_payload:
-                repair_action = str(repair_payload.get("repair_action") or "repair_child_create").strip()
-                pending_action = {
-                    "action": repair_action,
-                    "payload": repair_payload,
-                }
-                reply_text += (
-                    "\n\n"
-                    "子表写入失败，请补充或修正后继续。"
-                    "例如：金额是1000，状态是待支付。"
-                )
-            if link_summary:
-                reply_text += f"\n\n{link_summary}"
 
             return SkillResult(
                 success=True,
                 skill_name=self.name,
-                data={
-                    "clear_pending_action": False if pending_action else True,
-                    "pending_action": pending_action,
-                    "record_id": record_id,
-                    "fields": fields,
-                    "record_url": record_url,
-                    "table_id": table_ctx.table_id,
-                    "table_name": table_ctx.table_name,
-                    "link_sync": link_sync,
-                },
-                message="创建成功",
-                reply_text=reply_text,
+                data=outcome.data,
+                message=outcome.message,
+                reply_text=outcome.reply_text,
             )
                 
         except Exception as e:
@@ -476,6 +439,8 @@ class CreateSkill(BaseSkill):
         awaiting_confirm: bool = False,
         awaiting_duplicate_confirm: bool = False,
         duplicate_count: int = 0,
+        duplicate_field: str = "",
+        duplicate_value: str = "",
         duplicate_checked: bool = False,
         skip_duplicate_check: bool = False,
         idempotency_key: str | None = None,
@@ -486,6 +451,8 @@ class CreateSkill(BaseSkill):
             "awaiting_confirm": awaiting_confirm,
             "awaiting_duplicate_confirm": awaiting_duplicate_confirm,
             "duplicate_count": duplicate_count,
+            "duplicate_field": duplicate_field,
+            "duplicate_value": duplicate_value,
             "duplicate_checked": duplicate_checked,
             "skip_duplicate_check": skip_duplicate_check,
             "table_id": table_id,
@@ -508,13 +475,13 @@ class CreateSkill(BaseSkill):
             reply_text=reply_text,
         )
 
-    async def _count_case_duplicates(self, case_no: str, table_id: str | None) -> int:
-        if not case_no:
+    async def _count_duplicates(self, field_name: str, value: str, table_id: str | None) -> int:
+        if not field_name or not value:
             return 0
         try:
             records = await self._table_adapter.search_exact_records(
-                field="案号",
-                value=case_no,
+                field=field_name,
+                value=value,
                 table_id=table_id,
             )
             return len(records)

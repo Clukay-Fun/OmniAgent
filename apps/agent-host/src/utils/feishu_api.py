@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import json
 import httpx
@@ -23,6 +23,69 @@ from src.utils.metrics import record_credential_refresh
 class FeishuAPIError(RuntimeError):
     """飞书 API 调用异常"""
     pass
+
+
+def _is_action_unsupported_error(error_text: str) -> bool:
+    normalized = str(error_text or "").lower()
+    tokens = (
+        "not support tag: action_list",
+        "unsupported tag action",
+        "schema v2 no longer support this capability",
+        "no longer support this capability",
+    )
+    return any(token in normalized for token in tokens)
+
+
+def _card_has_action_element(card: Mapping[str, Any]) -> bool:
+    body_raw = card.get("body")
+    body = body_raw if isinstance(body_raw, Mapping) else {}
+    elements_raw = body.get("elements")
+    elements = elements_raw if isinstance(elements_raw, list) else []
+    for item in elements:
+        if not isinstance(item, Mapping):
+            continue
+        tag = str(item.get("tag") or "").strip().lower()
+        if tag in {"action", "action_list"}:
+            return True
+    return False
+
+
+def _convert_card_v2_to_legacy(card: Mapping[str, Any]) -> dict[str, Any] | None:
+    schema = str(card.get("schema") or "").strip()
+    if schema != "2.0":
+        return None
+    if not _card_has_action_element(card):
+        return None
+
+    body_raw = card.get("body")
+    body = body_raw if isinstance(body_raw, Mapping) else {}
+    elements_raw = body.get("elements")
+    elements: list[dict[str, Any]] = []
+    if isinstance(elements_raw, list):
+        for item in elements_raw:
+            if not isinstance(item, Mapping):
+                continue
+            normalized = dict(item)
+            if str(normalized.get("tag") or "").strip().lower() == "action_list":
+                normalized["tag"] = "action"
+            elements.append(normalized)
+    if not elements:
+        return None
+
+    legacy: dict[str, Any] = {"elements": elements}
+    for key in ("config", "header", "card_link", "i18n_elements", "i18n_header"):
+        value = card.get(key)
+        if value is not None:
+            if key == "header" and isinstance(value, Mapping):
+                header = dict(value)
+                icon_raw = header.get("icon")
+                icon = icon_raw if isinstance(icon_raw, Mapping) else {}
+                if str(icon.get("tag") or "").strip().lower() == "standard_icon":
+                    header.pop("icon", None)
+                legacy[key] = header
+            else:
+                legacy[key] = value
+    return legacy
 
 
 class TokenManager:
@@ -163,13 +226,31 @@ async def send_message(
         timeout=settings.feishu.message.reply_timeout,
         trust_env=False,
     ) as client:
-        response = await client.post(
-            url,
-            params=params,
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                url,
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            can_retry = msg_type == "interactive" and isinstance(content, Mapping)
+            response_text = exc.response.text if exc.response is not None else ""
+            legacy_card = _convert_card_v2_to_legacy(content) if can_retry else None
+            if legacy_card is not None and _is_action_unsupported_error(response_text):
+                retry_payload = dict(payload)
+                retry_payload["content"] = json.dumps(legacy_card, ensure_ascii=False)
+                response = await client.post(
+                    url,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=retry_payload,
+                )
+                response.raise_for_status()
+            else:
+                raise
+
         data = response.json()
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to send message")
@@ -233,12 +314,31 @@ async def update_message(
         timeout=settings.feishu.message.reply_timeout,
         trust_env=False,
     ) as client:
-        response = await client.patch(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
-        )
-        response.raise_for_status()
+        try:
+            response = await client.patch(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            can_retry = msg_type == "interactive" and isinstance(content, Mapping)
+            response_text = exc.response.text if exc.response is not None else ""
+            legacy_card = _convert_card_v2_to_legacy(content) if can_retry else None
+            if legacy_card is not None and _is_action_unsupported_error(response_text):
+                retry_payload = {
+                    "msg_type": msg_type,
+                    "content": json.dumps(legacy_card, ensure_ascii=False),
+                }
+                response = await client.patch(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=retry_payload,
+                )
+                response.raise_for_status()
+            else:
+                raise
+
         data = response.json()
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg") or "Failed to update message")
@@ -249,12 +349,12 @@ async def set_message_reaction(
     message_id: str,
     reaction_type: str,
     credential_source: str = "default",
-) -> None:
+) -> str:
     token = await get_token_manager(settings, credential_source=credential_source).get_token()
     normalized_message_id = str(message_id or "").strip()
     normalized_reaction_type = str(reaction_type or "").strip()
     if not normalized_message_id or not normalized_reaction_type:
-        return
+        return ""
 
     url = f"{settings.feishu.api_base}/im/v1/messages/{normalized_message_id}/reactions"
     payload = {

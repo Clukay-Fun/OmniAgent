@@ -130,19 +130,79 @@ async def handle_message_async(
         
         file_markdown = ""
         file_provider = "none"
+        file_reason = ""
+        first_attachment = attachments[0] if attachments else None
+        direct_reply_text = ""
         if attachments:
-            file_markdown, guidance, file_provider = await resolve_file_markdown(
+            resolved = await resolve_file_markdown(
                 attachments=attachments,
                 settings=settings,
                 message_type=message_type,
             )
+            if isinstance(resolved, tuple):
+                file_markdown = str(resolved[0] or "") if len(resolved) > 0 else ""
+                guidance = str(resolved[1] or "") if len(resolved) > 1 else ""
+                file_provider = str(resolved[2] or "none") if len(resolved) > 2 else "none"
+                file_reason = str(resolved[3] or "") if len(resolved) > 3 else ""
+            else:
+                file_markdown, guidance, file_provider, file_reason = "", "", "none", ""
+            if not file_reason and first_attachment is not None:
+                file_reason = str(getattr(first_attachment, "reject_reason", "") or "").strip()
             if guidance and not file_markdown and message_type in {"file", "audio", "image"}:
-                text = guidance
+                if bool(getattr(settings.reply, "card_enabled", True)):
+                    reply = _build_upload_result_reply(
+                        guidance_text=guidance,
+                        message_type=message_type,
+                        provider=file_provider,
+                        reason_code=file_reason,
+                        attachment=first_attachment,
+                    )
+                    payload = _build_send_payload(reply, card_enabled=True, prefer_card=True)
+                    msg_type = str(payload.get("msg_type") or "text")
+                    if msg_type == "interactive":
+                        card_payload = payload.get("card")
+                        content = dict(card_payload) if isinstance(card_payload, dict) else {}
+                    else:
+                        msg_type = "text"
+                        content_payload = payload.get("content")
+                        content = dict(content_payload) if isinstance(content_payload, dict) else {"text": guidance}
+                    await send_reply(chat_id, msg_type, content, message_id)
+                    record_inbound_message("ws", message_type, "processed")
+                    return
+                direct_reply_text = guidance
         elif message_type in {"file", "audio", "image"}:
-            text = build_file_unavailable_guidance("extractor_disabled")
+            reason = "extractor_disabled"
+            if message_type == "audio":
+                reason = "asr_unconfigured"
+            elif message_type == "image":
+                reason = "ocr_unconfigured"
+            guidance = build_file_unavailable_guidance(reason)
+            if bool(getattr(settings.reply, "card_enabled", True)):
+                reply = _build_upload_result_reply(
+                    guidance_text=guidance,
+                    message_type=message_type,
+                    provider="none",
+                    reason_code=reason,
+                    attachment=None,
+                )
+                payload = _build_send_payload(reply, card_enabled=True, prefer_card=True)
+                msg_type = str(payload.get("msg_type") or "text")
+                if msg_type == "interactive":
+                    card_payload = payload.get("card")
+                    content = dict(card_payload) if isinstance(card_payload, dict) else {}
+                else:
+                    msg_type = "text"
+                    content_payload = payload.get("content")
+                    content = dict(content_payload) if isinstance(content_payload, dict) else {"text": guidance}
+                await send_reply(chat_id, msg_type, content, message_id)
+                record_inbound_message("ws", message_type, "processed")
+                return
+            direct_reply_text = guidance
 
         # 调用 Agent 处理
-        if message_type in {"file", "audio", "image"} and text.startswith("已收到文件"):
+        if direct_reply_text:
+            reply = {"type": "text", "text": direct_reply_text}
+        elif message_type in {"file", "audio", "image"} and text.startswith("已收到文件"):
             reply = {"type": "text", "text": text}
         else:
             reply = await agent_core.handle_message(
@@ -156,7 +216,22 @@ async def handle_message_async(
             )
         
         # 发送回复
-        payload = _build_send_payload(reply, card_enabled=bool(getattr(settings.reply, "card_enabled", True)))
+        outbound = reply.get("outbound") if isinstance(reply, dict) else None
+        prefer_card = bool(
+            isinstance(outbound, dict)
+            and isinstance(outbound.get("blocks"), list)
+            and outbound.get("blocks")
+            and not isinstance(outbound.get("card_template"), dict)
+        )
+        if isinstance(outbound, dict) and isinstance(outbound.get("card_template"), dict):
+            template_id = str(outbound.get("card_template", {}).get("template_id") or "").strip()
+            if template_id == "upload.result":
+                prefer_card = True
+        payload = _build_send_payload(
+            reply,
+            card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+            prefer_card=prefer_card,
+        )
         msg_type = str(payload.get("msg_type") or "text")
         if msg_type == "interactive":
             card_payload = payload.get("card")
@@ -195,7 +270,59 @@ def _pick_reply_text(reply: dict[str, Any]) -> str:
     return str(reply.get("text") or "")
 
 
-def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dict[str, Any]:
+def _upload_status_from_reason(reason_code: str) -> str:
+    code = str(reason_code or "").strip().lower()
+    if not code:
+        return "failed"
+    if code in {"file_too_large", "unsupported_file_type"}:
+        return "rejected"
+    if code in {"extractor_disabled", "ocr_disabled", "asr_disabled"}:
+        return "disabled"
+    if code in {"extractor_unconfigured", "ocr_unconfigured", "asr_unconfigured"}:
+        return "unconfigured"
+    return "failed"
+
+
+def _build_upload_result_reply(
+    *,
+    guidance_text: str,
+    message_type: str,
+    provider: str,
+    reason_code: str,
+    attachment: Any,
+) -> dict[str, Any]:
+    file_name = str(getattr(attachment, "file_name", "") or "").strip()
+    file_type = str(getattr(attachment, "file_type", "") or "").strip()
+    file_size = getattr(attachment, "file_size", None)
+    status = _upload_status_from_reason(reason_code)
+    return {
+        "type": "text",
+        "text": guidance_text,
+        "outbound": {
+            "text_fallback": guidance_text,
+            "card_template": {
+                "template_id": "upload.result",
+                "version": "v1",
+                "params": {
+                    "status": status,
+                    "guidance": guidance_text,
+                    "reason_code": reason_code,
+                    "provider": provider,
+                    "message_type": message_type,
+                    "file_name": file_name,
+                    "file_type": file_type,
+                    "file_size": file_size,
+                },
+            },
+            "meta": {
+                "skill_name": "UploadPipeline",
+                "source": "file_pipeline",
+            },
+        },
+    }
+
+
+def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True, *, prefer_card: bool = False) -> dict[str, Any]:
     text_fallback = _pick_reply_text(reply)
     outbound = reply.get("outbound") if isinstance(reply, dict) else None
     rendered = RenderedResponse.from_outbound(
@@ -205,7 +332,7 @@ def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True) -> dic
 
     formatter = FeishuFormatter(card_enabled=card_enabled)
     try:
-        return formatter.format(rendered)
+        return formatter.format(rendered, prefer_card=prefer_card)
     except Exception as exc:
         logger.warning(
             "格式化 outbound 失败，降级文本: %s",

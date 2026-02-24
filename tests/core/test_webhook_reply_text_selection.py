@@ -19,6 +19,18 @@ sys.modules.setdefault("Crypto.Cipher", crypto_cipher_module)
 from src.api.webhook import _build_send_payload, _pick_reply_text
 
 
+def _card_elements(payload: dict) -> list[dict]:
+    card_raw = payload.get("card")
+    card = card_raw if isinstance(card_raw, dict) else {}
+    body_raw = card.get("body")
+    body = body_raw if isinstance(body_raw, dict) else {}
+    elements_raw = body.get("elements")
+    if isinstance(elements_raw, list):
+        return elements_raw
+    fallback_raw = card.get("elements")
+    return fallback_raw if isinstance(fallback_raw, list) else []
+
+
 def test_pick_reply_text_prefers_outbound_text_fallback() -> None:
     reply = {
         "text": "reply text",
@@ -68,8 +80,8 @@ def test_build_send_payload_uses_card_for_rich_long_response() -> None:
     payload = _build_send_payload(reply, card_enabled=True)
 
     assert payload["msg_type"] == "interactive"
-    assert payload["card"]["elements"][0]["tag"] == "markdown"
-    assert "查询结果" in payload["card"]["elements"][0]["content"]
+    assert _card_elements(payload)[0]["tag"] == "markdown"
+    assert "查询结果" in _card_elements(payload)[0]["content"]
 
 
 def test_build_send_payload_prefers_template_card_when_selected() -> None:
@@ -100,7 +112,7 @@ def test_build_send_payload_prefers_template_card_when_selected() -> None:
     payload = _build_send_payload(reply, card_enabled=True)
 
     assert payload["msg_type"] == "interactive"
-    assert "案件查询结果" in payload["card"]["elements"][0]["content"]
+    assert "案件查询结果" in _card_elements(payload)[0]["content"]
 
 
 def test_build_send_payload_uses_text_for_error_reply_even_with_template() -> None:

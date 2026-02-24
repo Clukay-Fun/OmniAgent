@@ -88,12 +88,22 @@ class ResponseRenderer:
         if skill_name == "DeleteSkill":
             pending_delete = data.get("pending_delete")
             if isinstance(pending_delete, Mapping):
+                table_type = str(data.get("table_type") or pending_delete.get("table_type") or "")
                 return CardTemplateSpec(
                     template_id="delete.confirm",
                     version="v1",
                     params={
+                        "title": str(pending_delete.get("delete_title") or ""),
+                        "subtitle": str(pending_delete.get("delete_subtitle") or ""),
                         "summary": self._build_delete_summary(pending_delete, data),
                         "actions": self._build_delete_actions(pending_delete),
+                        "table_type": table_type,
+                        "record_id": str(pending_delete.get("record_id") or ""),
+                        "warnings": pending_delete.get("warnings") if isinstance(pending_delete.get("warnings"), list) else [],
+                        "suggestion": str(pending_delete.get("suggestion") or ""),
+                        "confirm_text": str(pending_delete.get("confirm_text") or ""),
+                        "cancel_text": str(pending_delete.get("cancel_text") or ""),
+                        "confirm_type": str(pending_delete.get("confirm_type") or ""),
                     },
                 )
 
@@ -119,6 +129,11 @@ class ResponseRenderer:
         pending_action = data.get("pending_action")
         if isinstance(pending_action, Mapping) and skill_name != "QuerySkill":
             action_name = str(pending_action.get("action") or "")
+            pending_payload_raw = pending_action.get("payload")
+            pending_payload = pending_payload_raw if isinstance(pending_payload_raw, Mapping) else {}
+            table_name = str(data.get("table_name") or pending_payload.get("table_name") or "")
+            table_type = str(data.get("table_type") or pending_payload.get("table_type") or "")
+            record_id = str(data.get("record_id") or pending_payload.get("record_id") or "")
             return CardTemplateSpec(
                 template_id="action.confirm",
                 version="v1",
@@ -126,34 +141,65 @@ class ResponseRenderer:
                     "title": "请确认操作",
                     "message": text_fallback,
                     "action": action_name,
+                    "payload": dict(cast(Mapping[str, Any], pending_payload)),
+                    "table_name": table_name,
+                    "table_type": table_type,
+                    "record_id": record_id,
                     "actions": self._build_generic_actions(action_name),
+                    "confirm_text": str(pending_payload.get("confirm_text") or ""),
+                    "cancel_text": str(pending_payload.get("cancel_text") or ""),
+                    "confirm_type": str(pending_payload.get("confirm_type") or ""),
                 },
             )
 
         if skill_name == "QuerySkill":
             records = data.get("records")
-            if isinstance(records, list) and len(records) > 1:
+            if isinstance(records, list):
+                query_text = text_fallback
+                domain = self._detect_query_domain(data)
+                style = self._select_query_style(
+                    domain=domain,
+                    query_text=query_text,
+                    data=data,
+                    record_count=len(records),
+                )
+                style_variant = self._select_query_style_variant(
+                    domain=domain,
+                    style=style,
+                    query_text=query_text,
+                    data=data,
+                    record_count=len(records),
+                )
+                title = self._query_title_by_domain(domain)
                 if self._query_card_v2_enabled:
                     actions = self._build_query_list_actions(data)
+                    query_meta_raw = data.get("query_meta")
+                    query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
                     return CardTemplateSpec(
                         template_id="query.list",
                         version="v2",
                         params={
-                            "title": "案件查询结果",
+                            "title": title,
                             "total": int(data.get("total") or len(records)),
                             "records": records,
                             "actions": actions,
+                            "style": style,
+                            "style_variant": style_variant,
+                            "domain": domain,
+                            "table_name": str(query_meta.get("table_name") or data.get("table_name") or ""),
+                            "table_id": str(query_meta.get("table_id") or data.get("table_id") or ""),
                         },
                     )
-                return CardTemplateSpec(
-                    template_id="query.list",
-                    version="v1",
-                    params={
-                        "title": "查询结果",
-                        "total": int(data.get("total") or len(records)),
-                        "records": records,
-                    },
-                )
+                if len(records) > 1:
+                    return CardTemplateSpec(
+                        template_id="query.list",
+                        version="v1",
+                        params={
+                            "title": "查询结果",
+                            "total": int(data.get("total") or len(records)),
+                            "records": records,
+                        },
+                    )
             if isinstance(records, list) and len(records) == 1 and isinstance(records[0], Mapping):
                 return CardTemplateSpec(
                     template_id="query.detail",
@@ -168,6 +214,7 @@ class ResponseRenderer:
             fields_raw = data.get("fields")
             fields = fields_raw if isinstance(fields_raw, Mapping) else {}
             fields_text = {str(key): value for key, value in fields.items()}
+            table_name = str(data.get("table_name") or "")
             return CardTemplateSpec(
                 template_id="create.success",
                 version="v1",
@@ -179,6 +226,7 @@ class ResponseRenderer:
                             "fields_text": fields_text,
                         },
                         "record_url": str(data.get("record_url") or ""),
+                        "table_name": table_name,
                     },
                 )
 
@@ -192,6 +240,7 @@ class ResponseRenderer:
                     "changes": changes,
                     "record_url": str(data.get("record_url") or ""),
                     "record_id": str(data.get("record_id") or ""),
+                    "progress_append": self._extract_progress_append(data),
                 },
             )
 
@@ -292,6 +341,7 @@ class ResponseRenderer:
         callback_prefix = {
             "create_record": "create_record",
             "update_record": "update_record",
+            "close_record": "close_record",
             "delete_record": "delete_record",
         }.get(action_name, action_name or "pending_action")
         return {
@@ -310,11 +360,15 @@ class ResponseRenderer:
         payload = pending_action.get("payload") if isinstance(pending_action, Mapping) else {}
         callbacks = payload.get("callbacks") if isinstance(payload, Mapping) else {}
         callback_map = callbacks if isinstance(callbacks, Mapping) else {}
+        table_type = str(data.get("table_type") or self._detect_query_domain(data))
 
         def _pick(name: str, fallback_action: str) -> dict[str, Any]:
             raw = callback_map.get(name)
             picked = dict(raw) if isinstance(raw, Mapping) else {}
             picked.setdefault("callback_action", fallback_action)
+            picked.setdefault("table_type", table_type)
+            picked.setdefault("record_id", "")
+            picked.setdefault("extra_data", {})
             return picked
 
         return {
@@ -322,6 +376,107 @@ class ResponseRenderer:
             "today_hearing": _pick("query_list_today_hearing", "query_list_today_hearing"),
             "week_hearing": _pick("query_list_week_hearing", "query_list_week_hearing"),
         }
+
+    def _extract_progress_append(self, data: Mapping[str, Any]) -> str:
+        updated_fields_raw = data.get("updated_fields")
+        if not isinstance(updated_fields_raw, Mapping):
+            return ""
+        for key, value in updated_fields_raw.items():
+            field_name = str(key)
+            if any(token in field_name for token in ("进展", "备注", "跟进", "状态")):
+                text = str(value or "").strip()
+                if text:
+                    return text
+        return ""
+
+    def _query_title_by_domain(self, domain: str) -> str:
+        return {
+            "case": "案件项目总库查询结果",
+            "contracts": "合同管理表查询结果",
+            "bidding": "招投标台账查询结果",
+            "team_overview": "团队成员工作总览（只读）",
+        }.get(domain, "查询结果")
+
+    def _detect_query_domain(self, data: Mapping[str, Any]) -> str:
+        query_meta_raw = data.get("query_meta")
+        query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+        table_name = str(query_meta.get("table_name") or data.get("table_name") or "")
+        combined = table_name.replace(" ", "")
+        if "合同" in combined:
+            return "contracts"
+        if any(token in combined for token in ("招投标", "投标", "台账")):
+            return "bidding"
+        if any(token in combined for token in ("团队", "成员", "工作总览")):
+            return "team_overview"
+        return "case"
+
+    def _select_query_style(self, domain: str, query_text: str, data: Mapping[str, Any], record_count: int) -> str:
+        _ = query_text
+        query_meta_raw = data.get("query_meta")
+        query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+
+        style_hint = str(
+            query_meta.get("style_hint")
+            or query_meta.get("style")
+            or data.get("style_hint")
+            or ""
+        ).strip().upper()
+        if self._is_style_allowed_for_domain(domain, style_hint):
+            return style_hint
+
+        if record_count == 1:
+            return self._default_detail_style(domain)
+        return self._default_list_style(domain)
+
+    def _select_query_style_variant(
+        self,
+        domain: str,
+        style: str,
+        query_text: str,
+        data: Mapping[str, Any],
+        record_count: int,
+    ) -> str:
+        _ = query_text
+        _ = record_count
+        query_meta_raw = data.get("query_meta")
+        query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+        variant_hint = str(
+            query_meta.get("style_variant")
+            or query_meta.get("variant")
+            or data.get("style_variant")
+            or ""
+        ).strip().upper()
+        if self._is_style_allowed_for_domain(domain, variant_hint):
+            return variant_hint
+        return style
+
+    def _default_detail_style(self, domain: str) -> str:
+        return {
+            "case": "T1",
+            "contracts": "HT-T1",
+            "bidding": "ZB-T1",
+            "team_overview": "RW-T1",
+        }.get(domain, "T1")
+
+    def _default_list_style(self, domain: str) -> str:
+        return {
+            "case": "T2",
+            "contracts": "HT-T2",
+            "bidding": "ZB-T2",
+            "team_overview": "RW-T2",
+        }.get(domain, "T2")
+
+    def _is_style_allowed_for_domain(self, domain: str, style: str) -> bool:
+        normalized = str(style or "").strip().upper()
+        if not normalized:
+            return False
+        if domain == "contracts":
+            return normalized.startswith("HT-")
+        if domain == "bidding":
+            return normalized.startswith("ZB-")
+        if domain == "team_overview":
+            return normalized.startswith("RW-")
+        return normalized.startswith("T")
 
     def _load_templates(self, templates_path: str | Path | None) -> Dict[str, str]:
         path = Path(templates_path) if templates_path else self._default_template_path()

@@ -32,6 +32,7 @@ def test_aggregate_usage_groups_user_skill_and_model() -> None:
             "usage_source": "text",
             "latency_ms": 100,
             "metadata": {"route_label": "ab_simple", "complexity": "simple"},
+            "business_metadata": {"action_classification": "close_case", "close_semantic": "default", "close_profile": "default"},
         },
         {
             "user_id": "u2",
@@ -71,6 +72,9 @@ def test_aggregate_usage_groups_user_skill_and_model() -> None:
     assert round(float(data["by_source"]["file"]["cost"]), 2) == 0.18
     assert data["by_route"]["ab_simple"] == 1
     assert data["by_complexity"]["complex"] == 1
+    assert data["by_action_classification"]["close_case"] == 1
+    assert data["by_close_semantic"]["default"] == 1
+    assert data["by_close_profile"]["default"] == 1
 
 
 def test_render_report_handles_missing_fields_robustly(tmp_path: Path) -> None:
@@ -83,6 +87,7 @@ def test_render_report_handles_missing_fields_robustly(tmp_path: Path) -> None:
     assert "Total cost:" in text
     assert "Source distribution:" in text
     assert "Route distribution:" in text
+    assert "Business semantics:" in text
 
 
 def test_aggregate_usage_handles_malformed_metadata() -> None:

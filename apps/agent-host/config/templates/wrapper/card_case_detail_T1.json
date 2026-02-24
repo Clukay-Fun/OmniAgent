@@ -1,0 +1,21 @@
+{
+  "schema": "2.0",
+  "header": {
+    "icon": {
+      "tag": "standard_icon",
+      "token": "law_outlined"
+    },
+    "padding": "12px 8px 12px 8px",
+    "template": "blue",
+    "title": {
+      "tag": "plain_text",
+      "content": "{{header_title}}"
+    }
+  },
+  "body": {
+    "direction": "vertical"
+  },
+  "config": {
+    "update_multi": true
+  }
+}

@@ -1,0 +1,216 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "margin": "0px",
+      "text_size": "normal",
+      "content": "📌 **{{bid_id}}** | {{project_name}}"
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**项目基础**"
+            },
+            {
+              "tag": "markdown",
+              "content": "🏢 招标方：{{bidder_name}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "👤 承办律师：{{owner}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📍 当前阶段：{{phase}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**关键时间**"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 标书购买截止：{{book_deadline_with_countdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 投标截止：{{close_date_with_countdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 开标时间：{{open_date_with_countdown}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "📅 保证金截止：{{deposit_deadline_with_countdown}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**执行状态**"
+            },
+            {
+              "tag": "markdown",
+              "content": "📚 标书领取状态：{{book_status}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "💳 保证金缴纳状态：{{deposit_status}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "🛠️ 文件编制进度：{{doc_progress}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "🧾 标书类型：{{book_type}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "hr",
+      "margin": "0px"
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "weighted",
+          "weight": 1,
+          "vertical_spacing": "4px",
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**结果与备注**"
+            },
+            {
+              "tag": "markdown",
+              "content": "🏁 是否中标：{{bid_result}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "💰 中标金额：{{bid_amount}}"
+            },
+            {
+              "tag": "markdown",
+              "content": "💡 备注：{{remark}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "column_set",
+      "flex_mode": "stretch",
+      "horizontal_spacing": "8px",
+      "margin": "0px",
+      "columns": [
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "primary_filled",
+              "width": "default",
+              "margin": "4px 0px 4px 0px",
+              "text": {
+                "tag": "plain_text",
+                "content": "查看项目"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{btn_project_url}}",
+                  "android_url": "{{btn_project_url}}",
+                  "ios_url": "{{btn_project_url}}",
+                  "pc_url": "{{btn_project_url}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "column",
+          "width": "auto",
+          "elements": [
+            {
+              "tag": "button",
+              "type": "default",
+              "width": "default",
+              "margin": "4px 0px 4px 0px",
+              "text": {
+                "tag": "plain_text",
+                "content": "修改招投标"
+              },
+              "behaviors": [
+                {
+                  "type": "open_url",
+                  "default_url": "{{btn_edit_bid_url}}",
+                  "android_url": "{{btn_edit_bid_url}}",
+                  "ios_url": "{{btn_edit_bid_url}}",
+                  "pc_url": "{{btn_edit_bid_url}}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

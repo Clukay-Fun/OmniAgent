@@ -150,11 +150,16 @@ def _ensure_minimal_outbound(
     meta["assistant_name"] = str(meta.get("assistant_name") or assistant_name)
     meta["skill_name"] = str(meta.get("skill_name") or "fallback")
 
-    reply["outbound"] = {
+    normalized_outbound: dict[str, Any] = {
         "text_fallback": text_fallback,
         "blocks": blocks,
         "meta": meta,
     }
+    card_template = outbound.get("card_template")
+    if isinstance(card_template, dict):
+        normalized_outbound["card_template"] = card_template
+
+    reply["outbound"] = normalized_outbound
     return reply
 
 
@@ -272,6 +277,7 @@ class AgentOrchestrator:
 
         # 加载技能配置（含技能市场）
         self._skills_config = self._load_skills_config(skills_config_path)
+        self._table_identity_fields = self._load_table_identity_fields(self._skills_config)
         self._assistant_name = _resolve_assistant_name(self._skills_config)
         self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
         self._casual_responses = _load_casual_responses()
@@ -542,6 +548,22 @@ class AgentOrchestrator:
             merged["skills"] = skills_registry
         return merged
 
+    def _load_table_identity_fields(self, skills_config: dict[str, Any] | None) -> dict[str, list[str]]:
+        mapping: dict[str, list[str]] = {}
+        if not isinstance(skills_config, dict):
+            return mapping
+        raw = skills_config.get("table_identity_fields")
+        table_cfg = raw if isinstance(raw, dict) else {}
+        for table_name, cfg in table_cfg.items():
+            name = str(table_name or "").strip()
+            if not name or not isinstance(cfg, dict):
+                continue
+            fields_raw = cfg.get("fields")
+            fields = [str(item).strip() for item in fields_raw if str(item).strip()] if isinstance(fields_raw, list) else []
+            if fields:
+                mapping[name] = fields
+        return mapping
+
     def _load_l0_rules(self, skills_config_path: str) -> dict[str, Any]:
         """加载 L0 规则配置。"""
         config_path = Path(skills_config_path)
@@ -591,6 +613,7 @@ class AgentOrchestrator:
             "query_advanced": "QuerySkill",
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
+            "close_record": "UpdateSkill",
             "delete_record": "DeleteSkill",
             "create_reminder": "ReminderSkill",
             "list_reminders": "ReminderSkill",
@@ -647,6 +670,9 @@ class AgentOrchestrator:
         status = "success"
         usage_skill = "unknown"
         usage_source = "text"
+        usage_business_metadata: dict[str, Any] = {}
+        close_semantic = ""
+        close_profile = ""
         route_decision = RoutingDecision(
             model_selected=str(getattr(getattr(self, "_llm", None), "model_name", "")),
             route_label="primary_default",
@@ -859,18 +885,17 @@ class AgentOrchestrator:
                         _resolved_table_name = str(
                             extra.get("table_name")
                             or extra.get("active_table_name")
-                            or (planner_output.table_name if planner_output and hasattr(planner_output, "table_name") else "")
+                            or (
+                                planner_output.params.get("table_name")
+                                if planner_output and isinstance(getattr(planner_output, "params", None), dict)
+                                else ""
+                            )
                             or ""
                         ).strip()
                         if _resolved_table_name:
-                            from src.api.webhook import _get_user_manager as _wh_get_user_manager
-                            try:
-                                _um = _wh_get_user_manager()
-                                _tif = _um.get_identity_fields_for_table(_resolved_table_name)
-                                if _tif:
-                                    extra["table_identity_fields"] = _tif
-                            except Exception:
-                                pass  # 静默失败，不影响主流程
+                            _tif = self._table_identity_fields.get(_resolved_table_name, [])
+                            if _tif:
+                                extra["table_identity_fields"] = list(_tif)
 
                         extra["complexity"] = route_decision.complexity
                         extra["route_label"] = route_decision.route_label
@@ -905,6 +930,9 @@ class AgentOrchestrator:
                             )
                             result = await self._router.route(intent, context)
                         usage_skill = result.skill_name
+                        close_semantic = str((result.data or {}).get("close_semantic") or "")
+                        close_profile = str((result.data or {}).get("close_profile") or "")
+                        usage_business_metadata = self._extract_usage_business_metadata(result.data or {})
 
                         # Step 4: 更新上下文（保存结果供后续链式调用）
                         if result.success and result.data:
@@ -985,6 +1013,8 @@ class AgentOrchestrator:
                     "event_code": "orchestrator.request.completed",
                     "status": status,
                     "duration_ms": round(duration * 1000, 2),
+                    "close_semantic": close_semantic,
+                    "close_profile": close_profile,
                 },
             )
             
@@ -1001,6 +1031,7 @@ class AgentOrchestrator:
                 skill_name=usage_skill,
                 usage_source=usage_source,
                 route_decision=route_decision,
+                business_metadata=usage_business_metadata,
             )
         except Exception:
             pass
@@ -1060,7 +1091,9 @@ class AgentOrchestrator:
         skill_name = {
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
+            "close_record": "UpdateSkill",
             "delete_record": "DeleteSkill",
+            "create_reminder": "ReminderSkill",
         }.get(action_name)
         if not skill_name:
             return {"status": "processed", "text": "已处理"}
@@ -1191,6 +1224,7 @@ class AgentOrchestrator:
         skill_name: str,
         usage_source: str,
         route_decision: RoutingDecision,
+        business_metadata: dict[str, Any] | None = None,
     ) -> None:
         usage_logger = getattr(self, "_usage_logger", None)
         if usage_logger is None:
@@ -1239,6 +1273,7 @@ class AgentOrchestrator:
                 usage_source=str(usage_source or "text"),
                 estimated=estimated,
                 metadata=metadata,
+                business_metadata=dict(business_metadata or {}),
             )
             ok = usage_logger.log(record)
             if not ok:
@@ -1246,6 +1281,21 @@ class AgentOrchestrator:
             record_usage_log_write("ok" if ok else "noop")
         except Exception:
             record_usage_log_write("error")
+
+    def _extract_usage_business_metadata(self, result_data: dict[str, Any]) -> dict[str, Any]:
+        data = result_data if isinstance(result_data, dict) else {}
+        close_semantic = str(data.get("close_semantic") or "").strip()
+        close_profile = str(data.get("close_profile") or "").strip()
+        if not close_semantic and not close_profile:
+            return {}
+
+        action_classification = "close_case" if close_semantic else ""
+        output: dict[str, Any] = {
+            "action_classification": action_classification,
+            "close_semantic": close_semantic,
+            "close_profile": close_profile or close_semantic,
+        }
+        return {key: value for key, value in output.items() if str(value).strip()}
 
     def _drain_latest_llm_usage(self) -> dict[str, Any] | None:
         usages: list[dict[str, Any]] = []
@@ -2052,10 +2102,14 @@ class AgentOrchestrator:
             extra={"event_code": "orchestrator.config.reload_start"},
         )
         self._skills_config = self._load_skills_config(config_path)
+        self._table_identity_fields = self._load_table_identity_fields(self._skills_config)
         self._assistant_name = _resolve_assistant_name(self._skills_config)
         self._chitchat_allow_llm = _resolve_chitchat_allow_llm(self._skills_config)
         self._casual_responses = _load_casual_responses()
-        self._response_renderer = ResponseRenderer(assistant_name=self._assistant_name)
+        self._response_renderer = ResponseRenderer(
+            assistant_name=self._assistant_name,
+            query_card_v2_enabled=bool(getattr(self._settings.reply, "query_card_v2_enabled", False)),
+        )
         
         # 重新初始化解析器和路由器
         self._intent_parser = IntentParser(

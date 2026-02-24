@@ -313,6 +313,7 @@ def test_record_usage_log_computes_cost_with_pricing_and_unknown_fallback() -> N
                     "cost": record.cost,
                     "estimated": record.estimated,
                     "metadata": record.metadata,
+                    "business_metadata": getattr(record, "business_metadata", {}),
                 }
             )
             return True
@@ -358,7 +359,14 @@ def test_record_usage_log_computes_cost_with_pricing_and_unknown_fallback() -> N
         metadata={},
     )
 
-    orchestrator._record_usage_log("u1", "c1", "QuerySkill", "text", route_decision)
+    orchestrator._record_usage_log(
+        "u1",
+        "c1",
+        "QuerySkill",
+        "text",
+        route_decision,
+        business_metadata={"action_classification": "close_case", "close_semantic": "default"},
+    )
     orchestrator._record_usage_log("u1", "c1", "QuerySkill", "text", route_decision)
 
     assert len(records) == 2
@@ -367,3 +375,4 @@ def test_record_usage_log_computes_cost_with_pricing_and_unknown_fallback() -> N
     assert records[1]["estimated"] is True
     assert float(records[1]["cost"]) == 0.0
     assert records[1]["metadata"].get("cost_warning") == "unknown_model_pricing"
+    assert records[0]["business_metadata"].get("close_semantic") == "default"

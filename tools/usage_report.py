@@ -74,6 +74,9 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
     by_model_cost: dict[str, float] = defaultdict(float)
     by_model_latency_sum: Counter[str] = Counter()
     by_model_latency_count: Counter[str] = Counter()
+    by_action_classification: Counter[str] = Counter()
+    by_close_semantic: Counter[str] = Counter()
+    by_close_profile: Counter[str] = Counter()
 
     for row in records:
         token_count = _safe_int(row.get("token_count"), 0)
@@ -111,6 +114,18 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
             by_model_latency_sum[model] += int(latency_ms)
             by_model_latency_count[model] += 1
 
+        business_raw = row.get("business_metadata")
+        business = business_raw if isinstance(business_raw, dict) else {}
+        action_classification = str(business.get("action_classification") or "").strip()
+        close_semantic = str(business.get("close_semantic") or "").strip()
+        close_profile = str(business.get("close_profile") or "").strip()
+        if action_classification:
+            by_action_classification[action_classification] += 1
+        if close_semantic:
+            by_close_semantic[close_semantic] += 1
+        if close_profile:
+            by_close_profile[close_profile] += 1
+
     model_stats: dict[str, dict[str, float | int | None]] = {}
     for model, calls in by_model_calls.items():
         latency_count = int(by_model_latency_count.get(model, 0))
@@ -145,6 +160,9 @@ def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
         "by_source": source_stats,
         "by_route": by_route,
         "by_complexity": by_complexity,
+        "by_action_classification": by_action_classification,
+        "by_close_semantic": by_close_semantic,
+        "by_close_profile": by_close_profile,
     }
 
 
@@ -209,6 +227,17 @@ def render_report(aggregated: dict[str, Any], selected_date: str, path: Path) ->
     for complexity, count in aggregated["by_complexity"].most_common():
         lines.append(f"- {complexity}: {count}")
     if not aggregated["by_complexity"]:
+        lines.append("- (none)")
+
+    lines.append("")
+    lines.append("Business semantics:")
+    for action_classification, count in aggregated["by_action_classification"].most_common():
+        lines.append(f"- action_classification.{action_classification}: {count}")
+    for close_semantic, count in aggregated["by_close_semantic"].most_common():
+        lines.append(f"- close_semantic.{close_semantic}: {count}")
+    for close_profile, count in aggregated["by_close_profile"].most_common():
+        lines.append(f"- close_profile.{close_profile}: {count}")
+    if not aggregated["by_action_classification"] and not aggregated["by_close_semantic"] and not aggregated["by_close_profile"]:
         lines.append("- (none)")
 
     return "\n".join(lines)

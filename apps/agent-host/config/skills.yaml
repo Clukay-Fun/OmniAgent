@@ -67,6 +67,14 @@ query:
     - 仅视图
     - 视图内
     - 只看视图
+  classification_fields:
+    - 项目类型
+    - 案件分类
+  classification_aliases:
+    非诉: [非诉, 非诉类型, 非诉案件, 非诉类]
+    诉讼: [诉讼, 诉讼类型, 诉讼案件]
+    劳动仲裁: [劳动仲裁, 劳动争议仲裁, 仲裁案件]
+    执行: [执行案件, 执行, 终本执行]
 
 create:
   keywords:

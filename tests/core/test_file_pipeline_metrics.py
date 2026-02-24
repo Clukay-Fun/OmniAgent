@@ -80,13 +80,14 @@ def test_resolve_file_markdown_records_extract_metrics(monkeypatch) -> None:
         reject_reason="",
     )
 
-    markdown, guidance, provider = asyncio.run(
+    markdown, guidance, provider, reason = asyncio.run(
         file_pipeline_module.resolve_file_markdown([attachment], settings=settings, message_type="file")
     )
 
     assert markdown == "# md"
     assert guidance == ""
     assert provider == "mineru"
+    assert reason == ""
     assert ("extract", "success", "mineru") in recorded
 
 

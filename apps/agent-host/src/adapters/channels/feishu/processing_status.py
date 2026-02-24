@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 _REACTION_BY_STATUS: dict[ProcessingStatus, str] = {
     ProcessingStatus.THINKING: "OK",
-    ProcessingStatus.SEARCHING: "WOW",
-    ProcessingStatus.DONE: "DONE",
+    ProcessingStatus.SEARCHING: "OK",
+    ProcessingStatus.DONE: "OK",
 }
 
 
@@ -23,6 +23,7 @@ class FeishuReactionStatusEmitter:
         self._disabled_statuses: set[ProcessingStatus] = set()
         # 上一阶段添加的 reaction_id，用于切换时先撤回
         self._last_reaction_id: str = ""
+        self._last_reaction_type: str = ""
 
     async def __call__(self, event: ProcessingStatusEvent) -> None:
         if not self._message_id:
@@ -31,6 +32,9 @@ class FeishuReactionStatusEmitter:
             return
         reaction_type = _REACTION_BY_STATUS.get(event.status)
         if not reaction_type:
+            return
+
+        if self._last_reaction_id and self._last_reaction_type == reaction_type:
             return
 
         # 1. 先撤回上一个阶段的 reaction，保持消息上只有一个表情
@@ -53,6 +57,7 @@ class FeishuReactionStatusEmitter:
                     },
                 )
             self._last_reaction_id = ""
+            self._last_reaction_type = ""
 
         # 2. 添加当前阶段的 reaction
         try:
@@ -62,6 +67,7 @@ class FeishuReactionStatusEmitter:
                 reaction_type=reaction_type,
             )
             self._last_reaction_id = str(reaction_id or "")
+            self._last_reaction_type = reaction_type
         except Exception as exc:
             error_text = str(exc).lower()
             if "reaction type is invalid" in error_text:

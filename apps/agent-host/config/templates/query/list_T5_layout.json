@@ -1,0 +1,24 @@
+{
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "### {{header_summary}}"
+    },
+    {
+      "tag": "hr",
+      "margin": "8px 0px 8px 0px"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{content}}"
+    },
+    {
+      "tag": "hr",
+      "margin": "8px 0px 8px 0px"
+    },
+    {
+      "tag": "markdown",
+      "content": "{{stats_summary}}"
+    }
+  ]
+}

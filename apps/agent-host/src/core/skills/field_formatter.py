@@ -148,12 +148,12 @@ def _format_person(value: Any) -> tuple[str, str]:
 
 def _format_bool(value: Any) -> tuple[str, str]:
     if isinstance(value, bool):
-        return ("✅" if value else "❌"), "success"
+        return ("OK 是" if value else "OK 否"), "success"
     normalized = _safe_text(value).strip().lower()
     if normalized in {"1", "true", "yes", "y", "on"}:
-        return "✅", "success"
+        return "OK 是", "success"
     if normalized in {"0", "false", "no", "n", "off", ""}:
-        return "❌", "success"
+        return "OK 否", "success"
     return _safe_text(value), "malformed"
 
 
@@ -168,7 +168,7 @@ def _format_attachment(value: Any) -> tuple[str, str]:
         names = [name for name in names if name]
         if not names:
             return "", "malformed"
-        return "、".join([f"📎 {name}" for name in names]), "success"
+        return "、".join([f"OK {name}" for name in names]), "success"
 
     if isinstance(value, dict):
         nested_files = value.get("files") or value.get("value")
@@ -178,7 +178,7 @@ def _format_attachment(value: Any) -> tuple[str, str]:
     name = _extract_name(value)
     if not name:
         return _safe_text(value), "malformed"
-    return f"📎 {name}", "success"
+    return f"OK {name}", "success"
 
 
 def _is_currency(field_meta: dict[str, Any] | None) -> bool:

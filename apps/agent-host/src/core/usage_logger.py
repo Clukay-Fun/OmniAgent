@@ -26,6 +26,7 @@ class UsageRecord:
     completion_tokens: int = 0
     estimated: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    business_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
         payload: dict[str, Any] = {
@@ -43,6 +44,8 @@ class UsageRecord:
         }
         if self.metadata:
             payload["metadata"] = self.metadata
+        if self.business_metadata:
+            payload["business_metadata"] = self.business_metadata
         return json.dumps(payload, ensure_ascii=False)
 
 

@@ -27,11 +27,11 @@ class FeishuFormatter:
         self._template_registry = CardTemplateRegistry()
         self._short_text_max_chars = 36
 
-    def format(self, rendered: RenderedResponse) -> Dict[str, Any]:
+    def format(self, rendered: RenderedResponse, *, prefer_card: bool = False) -> Dict[str, Any]:
         if not self._card_enabled:
             return self._text_payload(rendered)
 
-        if self._should_force_text(rendered):
+        if not prefer_card and self._should_force_text(rendered):
             return self._text_payload(rendered)
 
         if rendered.card_template is not None:
@@ -99,8 +99,15 @@ class FeishuFormatter:
         return block.type == "paragraph"
 
     def _build_template_card(self, template_id: str, version: str, params: dict[str, Any]) -> Dict[str, Any] | None:
-        elements = self._template_registry.render(template_id=template_id, version=version, params=params)
-        return build_card_payload(elements)
+        rendered = self._template_registry.render(template_id=template_id, version=version, params=params)
+        if isinstance(rendered, dict):
+            elements_raw = rendered.get("elements")
+            elements = [item for item in elements_raw if isinstance(item, dict)] if isinstance(elements_raw, list) else []
+            wrapper = rendered.get("wrapper") if isinstance(rendered.get("wrapper"), dict) else None
+            return build_card_payload(elements, wrapper=wrapper)
+
+        elements = rendered if isinstance(rendered, list) else []
+        return build_card_payload([item for item in elements if isinstance(item, dict)])
 
     def _text_payload(self, rendered: RenderedResponse) -> Dict[str, Any]:
         return build_text_payload(rendered.text_fallback)

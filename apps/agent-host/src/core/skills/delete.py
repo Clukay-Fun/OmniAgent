@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 from src.core.skills.bitable_adapter import BitableAdapter
+from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.base import BaseSkill
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
@@ -63,6 +64,7 @@ class DeleteSkill(BaseSkill):
         self._data_writer: DataWriter = data_writer
         self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
         self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
+        self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
@@ -93,6 +95,14 @@ class DeleteSkill(BaseSkill):
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+        denied_text = self._action_service.validate_write_allowed(table_ctx.table_name)
+        if denied_text:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                message="写入受限",
+                reply_text=denied_text,
+            )
 
         if not self._delete_enabled():
             return SkillResult(
@@ -108,6 +118,16 @@ class DeleteSkill(BaseSkill):
         pending_payload_raw = pending_action.get("payload")
         pending_payload: dict[str, Any] = pending_payload_raw if isinstance(pending_payload_raw, dict) else {}
         if str(pending_action.get("action") or "") == "delete_record" and pending_payload:
+            pending_table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+            pending_denied_text = self._action_service.validate_write_allowed(pending_table_name)
+            if pending_denied_text:
+                return SkillResult(
+                    success=False,
+                    skill_name=self.name,
+                    data={"clear_pending_action": True, "clear_pending_delete": True},
+                    message="写入受限",
+                    reply_text=pending_denied_text,
+                )
             if callback_intent == "cancel":
                 return SkillResult(
                     success=True,
@@ -146,25 +166,28 @@ class DeleteSkill(BaseSkill):
                 planner_pending["table_id"] = table_ctx.table_id
             if table_ctx.table_name and not planner_pending.get("table_name"):
                 planner_pending["table_name"] = table_ctx.table_name
-            planner_pending["idempotency_key"] = self._build_delete_idempotency_key(
+            idempotency_key = self._build_delete_idempotency_key(
                 record_id=str(planner_pending.get("record_id") or ""),
                 table_id=str(planner_pending.get("table_id") or ""),
+            )
+            pending_data = self._action_service.build_pending_delete_action_data(
+                record_id=str(planner_pending.get("record_id") or ""),
+                case_no=str(planner_pending.get("case_no") or "未知案号"),
+                table_id=planner_pending.get("table_id"),
+                table_name=planner_pending.get("table_name"),
+                idempotency_key=idempotency_key,
+                ttl_seconds=self._confirm_ttl_seconds,
             )
             return SkillResult(
                 success=True,
                 skill_name=self.name,
                 data={
-                    "pending_delete": planner_pending,
-                    "pending_action": {
-                        "action": "delete_record",
-                        "payload": planner_pending,
-                        "ttl_seconds": self._confirm_ttl_seconds,
-                    },
+                    **pending_data,
                     "records": records,
                 },
                 message="等待用户确认删除",
                 reply_text=(
-                    f"⚠️ 确认删除\n\n"
+                    f"OK 确认删除\n\n"
                     f"您即将删除案件：{planner_pending.get('case_no', '未知案号')}\n\n"
                     f"此操作不可撤销，请回复'确认删除'以继续。"
                 ),
@@ -212,34 +235,26 @@ class DeleteSkill(BaseSkill):
         case_no = fields.get("案号", "未知案号")
         
         reply_text = (
-            f"⚠️ 确认删除\n\n"
+            f"OK 确认删除\n\n"
             f"您即将删除案件：{case_no}\n\n"
             f"此操作不可撤销，请回复'确认删除'以继续。"
         )
         idempotency_key = self._build_delete_idempotency_key(record_id=str(record_id), table_id=str(table_ctx.table_id or ""))
+        pending_data = self._action_service.build_pending_delete_action_data(
+            record_id=str(record_id),
+            case_no=str(case_no),
+            table_id=table_ctx.table_id,
+            table_name=table_ctx.table_name,
+            idempotency_key=idempotency_key,
+            ttl_seconds=self._confirm_ttl_seconds,
+        )
         
         # 保存待删除的记录 ID 到上下文
         return SkillResult(
             success=True,
             skill_name=self.name,
             data={
-                "pending_delete": {
-                    "record_id": record_id,
-                    "case_no": case_no,
-                    "table_id": table_ctx.table_id,
-                    "table_name": table_ctx.table_name,
-                },
-                "pending_action": {
-                    "action": "delete_record",
-                    "payload": {
-                        "record_id": record_id,
-                        "case_no": case_no,
-                        "table_id": table_ctx.table_id,
-                        "table_name": table_ctx.table_name,
-                        "idempotency_key": idempotency_key,
-                    },
-                    "ttl_seconds": self._confirm_ttl_seconds,
-                },
+                **pending_data,
                 "records": records,  # 保留记录供确认后使用
             },
             message="等待用户确认删除",
@@ -291,46 +306,27 @@ class DeleteSkill(BaseSkill):
                 table_id=str(table_id or ""),
             )
         
-        # 调用 MCP 删除工具
         try:
-            write_result = await self._data_writer.delete(
-                table_id,
-                str(record_id),
+            outcome = await self._action_service.execute_delete(
+                table_id=table_id,
+                table_name=str(pending.get("table_name") or "").strip() or None,
+                record_id=str(record_id),
+                case_no=str(case_no),
                 idempotency_key=idempotency_key,
             )
-
-            if not write_result.success:
-                error = write_result.error or "未知错误"
+            if not outcome.success:
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
-                    message=f"删除失败: {error}",
-                    reply_text=f"删除失败：{error}",
+                    message=outcome.message,
+                    reply_text=outcome.reply_text,
                 )
-            
-            link_sync = await self._linker.sync_after_delete(
-                parent_table_id=table_id,
-                parent_table_name=str(pending.get("table_name") or "").strip() or None,
-                parent_fields={"案号": case_no},
-            )
-            link_summary = self._linker.summarize(link_sync)
-            reply_text = f"{pool.pick('delete_success', '✅ 已删除')}\n案件：{case_no}"
-            if link_summary:
-                reply_text += f"\n\n{link_summary}"
-            
             return SkillResult(
                 success=True,
                 skill_name=self.name,
-                data={
-                    "record_id": record_id,
-                    "case_no": case_no,
-                    "table_id": table_id,
-                    "record_url": write_result.record_url or "",
-                    "link_sync": link_sync,
-                    "clear_pending_action": True,
-                },
-                message="删除成功",
-                reply_text=reply_text,
+                data=outcome.data,
+                message=outcome.message,
+                reply_text=outcome.reply_text,
             )
             
         except Exception as e:

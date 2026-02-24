@@ -19,7 +19,7 @@ def build_record_link_line(record_id: str | None, record_url: str | None) -> str
     url = str(record_url or "").strip()
     if not rid or not url:
         return ""
-    return f"📎 [查看原记录]({url})"
+    return f"[查看原记录]({url})"
 
 
 def extract_record_id(record: dict[str, Any]) -> str:
