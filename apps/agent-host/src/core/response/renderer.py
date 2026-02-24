@@ -134,6 +134,27 @@ class ResponseRenderer:
             table_name = str(data.get("table_name") or pending_payload.get("table_name") or "")
             table_type = str(data.get("table_type") or pending_payload.get("table_type") or "")
             record_id = str(data.get("record_id") or pending_payload.get("record_id") or "")
+
+            if action_name == "update_collect_fields":
+                return CardTemplateSpec(
+                    template_id="update.guide",
+                    version="v1",
+                    params={
+                        "title": "修改案件",
+                        "record_id": record_id,
+                        "table_name": table_name,
+                        "table_type": table_type,
+                        "record_case_no": str(data.get("record_case_no") or pending_payload.get("record_case_no") or ""),
+                        "record_identity": str(data.get("record_identity") or pending_payload.get("record_identity") or ""),
+                        "cancel_action": {
+                            "callback_action": "update_collect_fields_cancel",
+                            "table_type": table_type,
+                            "record_id": record_id,
+                            "extra_data": {},
+                        },
+                    },
+                )
+
             return CardTemplateSpec(
                 template_id="action.confirm",
                 version="v1",
@@ -262,7 +283,7 @@ class ResponseRenderer:
         normalized = str(message or "").lower()
         if any(token in normalized for token in ["权限", "无权", "forbidden", "permission denied", "access denied"]):
             return "permission_denied"
-        if any(token in normalized for token in ["未找到", "不存在", "没有找到", "not found"]):
+        if any(token in normalized for token in ["未找到", "不存在", "没有找到", "not found", "recordidnotfound", "notfound"]):
             return "record_not_found"
         if any(token in normalized for token in ["缺少", "必填", "参数", "未提供", "无法解析更新字段"]):
             return "missing_params"

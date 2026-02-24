@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -183,3 +183,92 @@ def test_format_case_result_adds_query_navigation_pending_action_when_enabled() 
     callbacks = pending.get("payload", {}).get("callbacks", {})
     assert callbacks["query_list_next_page"]["kind"] == "pagination"
     assert callbacks["query_list_today_hearing"]["query"] == "今天开庭"
+
+
+def test_build_params_structured_party_query_maps_to_target_fields() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "当事人是张三的案子",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "张三"
+    assert "委托人" in params["fields"]
+    assert "对方当事人" in params["fields"]
+
+
+def test_build_params_structured_court_query_maps_to_court_field() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "法院是广州中院的案件",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "广州中院"
+    assert params["fields"] == ["审理法院"]
+
+
+def test_build_params_past_hearing_query_uses_date_to_before_today() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "已经开过庭的案子",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_date_range"
+    assert params["field"] == "开庭日"
+    assert params["date_to"] == (date.today() - timedelta(days=1)).isoformat()
+
+
+def test_build_params_future_hearing_query_uses_date_from_today() -> None:
+    skill = _build_skill()
+    tool, params = skill._build_bitable_params(
+        "后续要开庭的案子",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_date_range"
+    assert params["field"] == "开庭日"
+    assert params["date_from"] == date.today().isoformat()
+
+
+def test_parse_time_range_supports_last_month() -> None:
+    today = date.today()
+    prev_month_end = today.replace(day=1) - timedelta(days=1)
+    prev_month_start = prev_month_end.replace(day=1)
+
+    parsed = parse_time_range("上个月开庭安排")
+
+    assert parsed is not None
+    assert parsed.date_from == prev_month_start.isoformat()
+    assert parsed.date_to == prev_month_end.isoformat()
+
+
+def test_parse_time_range_supports_after_two_days_phrase() -> None:
+    parsed = parse_time_range("过两天开庭")
+    assert parsed is not None
+    target = date.today() + timedelta(days=2)
+    assert parsed.date_from == target.isoformat()
+    assert parsed.date_to == target.isoformat()
+
+
+def test_parse_time_range_supports_future_n_days_phrase() -> None:
+    parsed = parse_time_range("未来7天开庭安排")
+    assert parsed is not None
+    assert parsed.date_from == date.today().isoformat()
+    assert parsed.date_to == (date.today() + timedelta(days=7)).isoformat()
+
+
+def test_parse_time_range_supports_month_only_phrase() -> None:
+    today = date.today()
+    parsed = parse_time_range("2月开庭的案子")
+
+    assert parsed is not None
+    assert parsed.date_from == f"{today.year}-02-01"
+    assert parsed.date_to.startswith(f"{today.year}-02-")

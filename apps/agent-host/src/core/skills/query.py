@@ -809,6 +809,17 @@ class QuerySkill(BaseSkill):
                 logger.info("Query scenario: case_classification")
                 return "data.bitable.search_keyword", params
 
+        structured_query = self._extract_structured_query_params(query)
+        if structured_query:
+            structured_tool = str(structured_query.get("tool") or "").strip()
+            structured_params_raw = structured_query.get("params")
+            structured_params = structured_params_raw if isinstance(structured_params_raw, dict) else {}
+            params.update(structured_params)
+            self._maybe_ignore_default_view(params, query)
+            logger.info("Query scenario: structured_query")
+            if structured_tool:
+                return structured_tool, params
+
         if isinstance(planner_plan, dict):
             mapped_tool = selected_tool or self._map_planner_tool(str(planner_plan.get("tool") or ""))
             if mapped_tool:
@@ -1014,6 +1025,63 @@ class QuerySkill(BaseSkill):
         if "截止" in normalized or "到期" in normalized:
             return "截止日"
         return "开庭日"
+
+    def _extract_structured_query_params(self, query: str) -> dict[str, Any] | None:
+        normalized = query.replace(" ", "")
+
+        labelled_rules: list[tuple[tuple[str, ...], list[str]]] = [
+            (("对方当事人",), ["对方当事人"]),
+            (("联系人",), ["联系人"]),
+            (("法官", "承办法官"), ["承办法官"]),
+            (("法院", "审理法院"), ["审理法院"]),
+            (("案由",), ["案由"]),
+            (("当事人",), ["委托人", "对方当事人", "联系人"]),
+        ]
+        for labels, fields in labelled_rules:
+            value = self._extract_labeled_value(query, labels)
+            if not value:
+                continue
+            return {
+                "tool": "data.bitable.search_keyword",
+                "params": {
+                    "keyword": value,
+                    "fields": fields,
+                },
+            }
+
+        today = date.today()
+        if any(token in normalized for token in ["已经开过庭", "开过庭的", "已开庭的", "开过庭"]):
+            return {
+                "tool": "data.bitable.search_date_range",
+                "params": {
+                    "field": "开庭日",
+                    "date_to": (today - timedelta(days=1)).isoformat(),
+                },
+            }
+
+        if any(token in normalized for token in ["后续要开庭", "后续开庭", "待开庭", "未来开庭", "接下来开庭"]):
+            return {
+                "tool": "data.bitable.search_date_range",
+                "params": {
+                    "field": "开庭日",
+                    "date_from": today.isoformat(),
+                    "date_to": (today + timedelta(days=3650)).isoformat(),
+                },
+            }
+        return None
+
+    def _extract_labeled_value(self, query: str, labels: tuple[str, ...]) -> str:
+        for label in labels:
+            pattern = rf"(?:{re.escape(label)})\s*(?:是|为|=|:|：)?\s*([^，。,.！？!\s][^，。,.！？!]{{0,40}})"
+            match = re.search(pattern, query)
+            if not match:
+                continue
+            value = match.group(1).strip()
+            value = re.sub(r"(?:的)?(?:案件|案子|项目)$", "", value).strip()
+            value = self._sanitize_search_keyword(value)
+            if value:
+                return value
+        return ""
 
     def _is_hearing_query(self, query: str) -> bool:
         normalized = query.replace(" ", "")

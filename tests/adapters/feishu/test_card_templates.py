@@ -87,6 +87,36 @@ def _button_texts(payload: object) -> list[str]:
     return texts
 
 
+def _buttons(payload: object) -> list[dict]:
+    buttons: list[dict] = []
+
+    def _collect(items: list[dict]) -> None:
+        for item in items:
+            tag = item.get("tag")
+            if tag == "button":
+                buttons.append(item)
+                continue
+
+            if tag == "action":
+                actions_raw = item.get("actions")
+                actions = actions_raw if isinstance(actions_raw, list) else []
+                _collect([entry for entry in actions if isinstance(entry, dict)])
+                continue
+
+            if tag == "column_set":
+                columns_raw = item.get("columns")
+                columns = columns_raw if isinstance(columns_raw, list) else []
+                for column in columns:
+                    if not isinstance(column, dict):
+                        continue
+                    column_elements_raw = column.get("elements")
+                    column_elements = column_elements_raw if isinstance(column_elements_raw, list) else []
+                    _collect([entry for entry in column_elements if isinstance(entry, dict)])
+
+    _collect(_elements(payload))
+    return buttons
+
+
 def test_render_query_list_v1() -> None:
     registry = CardTemplateRegistry()
 
@@ -145,6 +175,40 @@ def test_render_query_list_v2_shows_top3_and_actions() -> None:
     markdown_blocks = [item for item in elements_list if item.get("tag") == "markdown"]
     assert any("找到 4 个相关案件（显示前4条）" in str(item.get("content", "")) for item in markdown_blocks)
     assert not any(item.get("tag") == "action" for item in elements_list)
+
+
+def test_render_query_list_v2_next_page_uses_callback_value_without_behaviors() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="query.list",
+        version="v2",
+        params={
+            "title": "案件查询结果",
+            "total": 6,
+            "records": [
+                {"fields_text": {"案号": "A-1", "案由": "合同纠纷"}},
+                {"fields_text": {"案号": "A-2", "案由": "借款纠纷"}},
+            ],
+            "style": "T2",
+            "domain": "case",
+            "actions": {
+                "next_page": {"callback_action": "query_list_next_page"},
+            },
+        },
+    )
+
+    next_buttons = [
+        button
+        for button in _buttons(elements)
+        if isinstance(button.get("text"), dict)
+        and "下一页" in str(button.get("text", {}).get("content", ""))
+    ]
+    assert next_buttons
+    next_button = next_buttons[0]
+    assert isinstance(next_button.get("value"), dict)
+    assert next_button["value"].get("callback_action") == "query_list_next_page"
+    assert "behaviors" not in next_button
 
 
 def test_render_query_list_v2_case_t2_uses_template_files_and_wrapper() -> None:
@@ -1243,6 +1307,16 @@ def test_render_action_confirm_v1_create_record_shows_fields_and_missing() -> No
     button_texts = _button_texts(elements)
     assert "✏️ 修改" in button_texts
 
+    callback_buttons = [
+        button
+        for button in _buttons(elements)
+        if any(token in str(button.get("text", {}).get("content", "")) for token in ("确认", "修改", "取消"))
+    ]
+    assert callback_buttons
+    for button in callback_buttons:
+        assert isinstance(button.get("value"), dict)
+        assert "behaviors" not in button
+
 
 def test_render_action_confirm_v1_update_record_shows_diff_and_suggestion() -> None:
     registry = CardTemplateRegistry()
@@ -1395,6 +1469,17 @@ def test_render_create_success_v1() -> None:
 
     button_texts = _button_texts(elements)
     assert "查看详情" in button_texts
+    detail_buttons = [
+        button
+        for button in _buttons(elements)
+        if str(button.get("text", {}).get("content", "")) == "查看详情"
+    ]
+    assert detail_buttons
+    detail_button = detail_buttons[0]
+    behaviors = detail_button.get("behaviors")
+    assert isinstance(behaviors, list) and behaviors
+    assert behaviors[0].get("type") == "open_url"
+    assert "value" not in detail_button
 
 
 def test_render_create_success_v1_shows_auto_reminders() -> None:
@@ -1445,6 +1530,39 @@ def test_render_update_success_v1() -> None:
 
     button_texts = _button_texts(elements)
     assert "查看详情" in button_texts
+
+
+def test_render_update_guide_v1_shows_record_summary_and_cancel_button() -> None:
+    registry = CardTemplateRegistry()
+
+    elements = registry.render(
+        template_id="update.guide",
+        version="v1",
+        params={
+            "title": "修改案件",
+            "record_id": "rec_guide_1",
+            "table_type": "case",
+            "record_case_no": "JFTD-20260001",
+            "record_identity": "香港华艺设计顾问 vs 广州荔富汇景",
+            "cancel_action": {"callback_action": "update_collect_fields_cancel"},
+        },
+    )
+
+    wrapper = _wrapper(elements)
+    assert wrapper.get("header", {}).get("title", {}).get("content") == "修改案件"
+
+    text = _markdown_text(elements)
+    assert "已定位到案件" in text
+    assert "JFTD-20260001" in text
+    assert "开庭日改成2024-12-01" in text
+
+    cancel_buttons = [
+        button
+        for button in _buttons(elements)
+        if "取消" in str(button.get("text", {}).get("content", ""))
+    ]
+    assert cancel_buttons
+    assert cancel_buttons[0].get("value", {}).get("callback_action") == "update_collect_fields_cancel"
 
 
 def test_render_delete_confirm_v1() -> None:

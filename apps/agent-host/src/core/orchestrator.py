@@ -16,7 +16,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ContextManager as TypingContextManager, cast
+from typing import Any, ContextManager as TypingContextManager, Mapping, cast
 
 import yaml
 
@@ -811,7 +811,7 @@ class AgentOrchestrator:
                         )
 
                         planner_start = time.perf_counter()
-                        planner_output = await self._planner.plan(text)
+                        planner_output = await self._planner.plan(text, user_profile=user_profile)
                         planner_duration = time.perf_counter() - planner_start
 
                         if planner_output and planner_output.intent == "clarify_needed":
@@ -1071,13 +1071,20 @@ class AgentOrchestrator:
         self,
         user_id: str,
         callback_action: str,
+        callback_value: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        callback = str(callback_action or "").strip().lower()
+        value = dict(callback_value) if isinstance(callback_value, Mapping) else {}
+        if callback in {"edit", "modify", "update_record_edit"}:
+            edit_result = await self._handle_edit_callback(user_id=user_id, callback_value=value)
+            if edit_result is not None:
+                return edit_result
+
         pending = self._state_manager.get_pending_action(user_id)
         if pending is None:
             return {"status": "expired", "text": "操作已过期"}
 
         action_name = pending.action
-        callback = str(callback_action or "").strip().lower()
 
         if action_name == "query_list_navigation":
             query_callback_result = await self._handle_query_list_navigation_callback(
@@ -1091,6 +1098,7 @@ class AgentOrchestrator:
         skill_name = {
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
+            "update_collect_fields": "UpdateSkill",
             "close_record": "UpdateSkill",
             "delete_record": "DeleteSkill",
             "create_reminder": "ReminderSkill",
@@ -1148,10 +1156,92 @@ class AgentOrchestrator:
         rendered = self._response_renderer.render(result)
         rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
         return {
-            "status": "processed" if result.success else "expired",
-            "text": rendered.text_fallback if result.success else "操作已过期",
+            "status": "processed",
+            "text": rendered.text_fallback,
             "outbound": rendered.to_dict(),
         }
+
+    async def _handle_edit_callback(self, user_id: str, callback_value: Mapping[str, Any]) -> dict[str, Any] | None:
+        skill = self._router.get_skill("UpdateSkill")
+        if skill is None:
+            return {"status": "expired", "text": "操作已过期"}
+
+        record = self._resolve_record_from_callback(user_id=user_id, callback_value=callback_value)
+        record_id = str(record.get("record_id") or "").strip()
+        if not record_id:
+            return {"status": "expired", "text": "操作已过期"}
+
+        context = SkillContext(
+            query="修改该案件内容",
+            user_id=user_id,
+            last_result={"records": [record]},
+            last_skill="UpdateSkill",
+            extra={"active_record": record},
+        )
+        result = await skill.execute(context)
+        self._sync_state_after_result(user_id, context.query, result)
+
+        rendered = self._response_renderer.render(result)
+        rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
+        return {
+            "status": "processed",
+            "text": rendered.text_fallback,
+            "outbound": rendered.to_dict(),
+        }
+
+    def _resolve_record_from_callback(self, user_id: str, callback_value: Mapping[str, Any]) -> dict[str, Any]:
+        record_id = str(callback_value.get("record_id") or "").strip()
+        table_type = str(callback_value.get("table_type") or "").strip().lower()
+        table_name_hint = self._table_name_from_type(table_type)
+
+        active = self._state_manager.get_active_record(user_id)
+        if active is not None and (not record_id or active.record_id == record_id):
+            active_record = dict(active.record) if isinstance(active.record, dict) else {}
+            active_record.setdefault("record_id", active.record_id)
+            if active.table_id:
+                active_record.setdefault("table_id", active.table_id)
+            if active.table_name:
+                active_record.setdefault("table_name", active.table_name)
+            elif table_name_hint:
+                active_record.setdefault("table_name", table_name_hint)
+            return active_record
+
+        last_result = self._state_manager.get_last_result(user_id)
+        if last_result is not None and isinstance(last_result.records, list):
+            for item in last_result.records:
+                if not isinstance(item, dict):
+                    continue
+                current_record_id = str(item.get("record_id") or "").strip()
+                if record_id and current_record_id != record_id:
+                    continue
+                resolved = dict(item)
+                if record_id:
+                    resolved.setdefault("record_id", record_id)
+                if table_name_hint:
+                    resolved.setdefault("table_name", table_name_hint)
+                return resolved
+
+        if record_id:
+            fallback: dict[str, Any] = {
+                "record_id": record_id,
+                "fields_text": {
+                    "项目ID": record_id,
+                },
+            }
+            if table_name_hint:
+                fallback["table_name"] = table_name_hint
+            return fallback
+
+        return {}
+
+    def _table_name_from_type(self, table_type: str) -> str:
+        mapping = {
+            "case": "案件项目总库",
+            "contracts": "合同管理表",
+            "bidding": "招投标台账",
+            "team_overview": "团队成员工作总览",
+        }
+        return mapping.get(table_type, "")
 
     async def _handle_query_list_navigation_callback(
         self,
@@ -1212,8 +1302,8 @@ class AgentOrchestrator:
         rendered = self._response_renderer.render(result)
         rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
         return {
-            "status": "processed" if result.success else "expired",
-            "text": rendered.text_fallback if result.success else "操作已过期",
+            "status": "processed",
+            "text": rendered.text_fallback,
             "outbound": rendered.to_dict(),
         }
 

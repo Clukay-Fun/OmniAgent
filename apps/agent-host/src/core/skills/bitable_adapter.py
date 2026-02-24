@@ -213,6 +213,9 @@ class BitableAdapter:
     def extract_table_id_from_record(self, record: dict[str, Any] | None) -> str | None:
         if not isinstance(record, dict):
             return None
+        direct_table_id = str(record.get("table_id") or "").strip()
+        if direct_table_id:
+            return direct_table_id
         url = record.get("record_url")
         if not isinstance(url, str) or not url:
             return None
@@ -250,8 +253,24 @@ class BitableAdapter:
             return self._tables_cache
 
     def _extract_from_extra(self, extra: dict[str, Any]) -> TableContext:
-        table_id = str(extra.get("table_id") or "").strip() or None
-        table_name = str(extra.get("table_name") or "").strip() or None
+        table_id = str(extra.get("table_id") or extra.get("active_table_id") or "").strip() or None
+        table_name = str(extra.get("table_name") or extra.get("active_table_name") or "").strip() or None
+
+        active_record = extra.get("active_record")
+        if isinstance(active_record, dict):
+            if not table_id:
+                table_id = str(active_record.get("table_id") or "").strip() or None
+            if not table_name:
+                table_name = str(active_record.get("table_name") or "").strip() or None
+
+        pending = extra.get("pending_action")
+        if isinstance(pending, dict):
+            payload = pending.get("payload")
+            if isinstance(payload, dict):
+                if not table_id:
+                    table_id = str(payload.get("table_id") or "").strip() or None
+                if not table_name:
+                    table_name = str(payload.get("table_name") or "").strip() or None
 
         planner = extra.get("planner_plan")
         if isinstance(planner, dict):

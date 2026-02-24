@@ -1,7 +1,11 @@
+# OmniAgent 项目聚合环境依赖
+# 说明：
+# 如果使用根目录的 run_dev.py 启动项目，它会自动在容器内处理各模块依赖，无需手动执行此文件。
+# 若要在宿主机直接调试，请在根目录执行 `pip install -r requirements.txt`，它将自动聚合安装所有底层服务的依赖。
+
 -r apps/agent-host/requirements.txt
 -r integrations/feishu-mcp-server/requirements.txt
 -r requirements/dev.txt
-
 # Workspace-level tooling and optional adapters
 nanobot-ai
 markitdown

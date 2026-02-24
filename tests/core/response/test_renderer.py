@@ -354,6 +354,35 @@ def test_render_pending_close_action_uses_close_record_callbacks() -> None:
     assert actions["cancel"]["callback_action"] == "close_record_cancel"
 
 
+def test_render_pending_update_collect_fields_uses_update_guide_template() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "已定位到案件，请告诉我要修改什么。",
+            "data": {
+                "record_id": "rec_guide_1",
+                "table_type": "case",
+                "record_case_no": "JFTD-20260001",
+                "record_identity": "香港华艺设计顾问 vs 广州荔富汇景",
+                "pending_action": {
+                    "action": "update_collect_fields",
+                    "payload": {
+                        "record_id": "rec_guide_1",
+                        "table_type": "case",
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "update.guide"
+    assert response.card_template.params["cancel_action"]["callback_action"] == "update_collect_fields_cancel"
+
+
 def test_render_failure_classifies_error_type() -> None:
     renderer = build_renderer()
 
@@ -368,6 +397,22 @@ def test_render_failure_classifies_error_type() -> None:
     assert response.card_template is not None
     assert response.card_template.template_id == "error.notice"
     assert response.card_template.params["error_class"] == "permission_denied"
+
+
+def test_render_failure_classifies_record_id_not_found() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": False,
+            "skill_name": "UpdateSkill",
+            "message": "[1254043] RecordIdNotFound",
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "error.notice"
+    assert response.card_template.params["error_class"] == "record_not_found"
 
 
 def test_load_templates_falls_back_to_defaults_when_file_missing(tmp_path: Path):

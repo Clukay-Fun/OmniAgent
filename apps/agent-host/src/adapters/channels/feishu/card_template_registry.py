@@ -15,6 +15,7 @@ from src.adapters.channels.feishu.card_templates import (
     render_query_list_v1,
     render_query_list_v2,
     render_todo_reminder_v1,
+    render_update_guide_v1,
     render_update_success_v1,
     render_upload_result_v1,
 )
@@ -154,6 +155,14 @@ class CardTemplateRegistry:
                 version="v1",
                 required_params=("changes",),
                 renderer=render_update_success_v1,
+            )
+        )
+        self.register(
+            CardTemplateDefinition(
+                template_id="update.guide",
+                version="v1",
+                required_params=("record_id",),
+                renderer=render_update_guide_v1,
             )
         )
         self.register(
