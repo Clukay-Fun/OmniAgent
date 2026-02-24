@@ -46,7 +46,7 @@ class ResponseRenderer:
         blocks = [Block(type="paragraph", content={"text": str(text_fallback)})]
 
         data = payload.get("data")
-        if isinstance(data, Mapping) and data and skill_name != "QuerySkill":
+        if isinstance(data, Mapping) and data and skill_name not in ["QuerySkill", "ChitchatSkill"]:
             items = self._build_safe_kv_items(data)
             if items:
                 blocks.append(Block(type="kv_list", content={"items": items}))

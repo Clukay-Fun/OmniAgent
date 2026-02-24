@@ -94,7 +94,7 @@ class PlannerEngine:
                 tool="none",
                 params={},
                 confidence=0.6,
-                clarify_question="请说明您要查询哪类数据，例如：案件、收费、招投标。",
+                clarify_question="请问您想查哪方面的数据呢？比如：案件、收费、还是招投标？",
             )
 
         if normalized in {"查数据", "看看数据", "查一下数据", "数据"}:
@@ -103,7 +103,7 @@ class PlannerEngine:
                 tool="none",
                 params={},
                 confidence=0.55,
-                clarify_question="请补充您要查的数据类型，例如：查所有案件、查收费记录。",
+                clarify_question="能具体说说查哪一块的数据吗？例如查所有案件，或是查收费记录~",
             )
 
         if any(token in normalized for token in ["表", "台账", "登记", "库"]) and any(
@@ -417,7 +417,7 @@ class PlannerEngine:
                 tool="none",
                 params={},
                 confidence=0.2,
-                clarify_question="请再描述一下您的需求，例如：查所有案件、我的案件、查案号 XXX。",
+                clarify_question="哎呀，没太明白您的意思 😅 能再说具体点吗？例如您可以说：查所有案件、我的案件、或者查案号 XXX。",
             )
 
         return None

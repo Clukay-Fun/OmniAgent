@@ -42,8 +42,23 @@
 
 ```text
 OmniAgent/
-├── apps/agent-host/                 # 🤖 单 Agent 主应用入口 (包含意图/技能/对话逻辑)
-├── integrations/feishu-mcp-server/  # 🔌 飞书 MCP 服务主入口 (含多维表格操作/自动化规则引擎)
+├── apps/agent-host/                 # 🤖 单 Agent 主应用入口
+│   ├── config/                      # ⚙️ 配置文件目录 (技能提示词与回复文案池)
+│   ├── src/                         
+│   │   ├── core/                    # 🧠 Agent 核心引擎层 (意图/路由/技能/编排)
+│   │   ├── adapters/                # 🔌 渠道适配器层 (优先支持飞书渠道)
+│   │   ├── db/                      # 🗄️ 专属数据持久化层操作
+│   │   ├── llm/                     # 🌐 底层大模型客户端封装库
+│   │   ├── mcp/                     # 🔗 核心模型上下文协议(MCP)交互端
+│   │   └── utils/                   # 🛠️ 通用工具组件
+│   └── README.md                    # 📖 Agent 主应用详细使用说明
+├── integrations/feishu-mcp-server/  # 🔌 飞书 MCP 服务主入口
+│   ├── src/
+│   │   ├── automation/              # ⚙️ 自动化规则引擎 (监听回调及数据流转)
+│   │   ├── feishu/                  # 🟢 飞书开放平台 SDK 封装层
+│   │   ├── server/                  # 📡 MCP Server 协议与服务层绑定
+│   │   └── tools/                   # 🧰 暴露给 MCP 客户端的具体能力 (如增删改查表单)
+│   └── README.md                    # 📖 MCP 服务详细能力文档
 ├── deploy/                          
 │   ├── docker/                      # 🐳 Docker Compose 容器编排文件
 │   └── monitoring/                  # 📊 Prometheus 与 Grafana 监控配置
@@ -51,8 +66,9 @@ OmniAgent/
 │   ├── dev/                         # 🛠️ 本地调试与对账脚本
 │   └── ci/                          # 🧪 验证与覆盖率检查脚本
 └── docs/                            
-    ├── scenarios/                   # 📝 自动化场景演练与人类评审用例
-    └── deploy/                      # 🚢 云服部署与上线相关文档
+    ├── scenarios/                   # 📝 自动化场景演练与人类评审用例 (各类自动化验收清单)
+    ├── deploy/                      # 🚢 云服部署与上线相关文档 (架构设计及各阶段部署手册)
+    └── ROADMAP.md                   # 🗺️ 项目未来演进路线图
 ```
 
 ---

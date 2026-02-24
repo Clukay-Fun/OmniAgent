@@ -2535,7 +2535,7 @@ def render_query_list_v2(params: dict[str, Any]) -> Any:
 
     count = max(total, len(records))
     if count <= 0 or not records:
-        not_found = _safe_text(_render_value("query_list_v2.texts.not_found", "未找到相关记录。")) or "未找到相关记录。"
+        not_found = _safe_text(_render_value("query_list_v2.texts.not_found", "咦，好像没能查到任何相关记录 🤔")) or "咦，好像没能查到任何相关记录 🤔"
         suggestion = _safe_text(params.get("not_found_suggestion")) or _safe_text(
             _render_value("query_list_v2.texts.not_found_suggestion", "建议补充案号、负责人、时间范围等条件后重试。")
         )

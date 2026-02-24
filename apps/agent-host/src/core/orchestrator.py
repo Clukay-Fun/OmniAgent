@@ -1657,6 +1657,9 @@ class AgentOrchestrator:
     ) -> RenderedResponse:
         if not bool(getattr(self, "_reply_personalization_enabled", False)):
             return rendered
+            
+        if rendered.meta and rendered.meta.get("skill_name") == "ChitchatSkill":
+            return rendered
 
         explicit = self._extract_explicit_reply_preferences(user_text)
         if explicit:

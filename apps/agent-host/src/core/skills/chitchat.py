@@ -82,7 +82,6 @@ class ChitchatSkill(BaseSkill):
         "out_of_scope": ["案件相关的事可以问我哦～"],
         "help": ["请问需要什么帮助？"],
         "result_opener": ["查到啦~ "],
-        "empty_result": ["未找到相关记录。"],
     }
     # endregion
     # ============================================
@@ -106,6 +105,7 @@ class ChitchatSkill(BaseSkill):
         # region 加载回复模板配置
         # ============================================
         self._responses = self._load_responses()
+        self._system_prompt = self._load_system_prompt()
         # endregion
         # ============================================
         
@@ -191,11 +191,7 @@ class ChitchatSkill(BaseSkill):
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是一个友好、智能的助理。请用简洁、自然的中文回答用户的问题。"
-                        "如果用户的问题涉及案件查询、开庭安排等，"
-                        "可以告诉他们使用相关功能，比如\"你可以问我'今天有什么庭'\"。"
-                    ),
+                    "content": self._system_prompt,
                 },
                 {"role": "user", "content": query},
             ]
@@ -264,6 +260,24 @@ class ChitchatSkill(BaseSkill):
     # ============================================
     # region 配置加载 + 时间感知 + 随机选择
     # ============================================
+    def _load_system_prompt(self) -> str:
+        """从 config/prompts.yaml 加载 System Prompt"""
+        default_prompt = (
+            "你是一个友好、智能的助理。请用简洁、自然的中文回答用户的问题。"
+            "如果用户的问题涉及案件查询、开庭安排等，"
+            "可以告诉他们使用相关功能，比如\"你可以问我'今天有什么庭'\"。"
+        )
+        prompts_path = Path("config/prompts.yaml")
+        if not prompts_path.exists():
+            return default_prompt
+        try:
+            data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
+            chitchat_cfg = data.get("chitchat", {})
+            return chitchat_cfg.get("system", default_prompt)
+        except Exception as exc:
+            logger.warning("Failed to load prompts.yaml for ChitchatSkill: %s", exc)
+            return default_prompt
+
     def _load_responses(self) -> dict[str, list[str]]:
         """从 config/responses.yaml 加载回复模板，加载失败时用默认值"""
         responses_path = Path("config/responses.yaml")

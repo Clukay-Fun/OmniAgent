@@ -160,7 +160,7 @@ reminder:
     low: [有空, 方便时]
 
 chitchat:
-  allow_llm: false
+  allow_llm: true
   whitelist:
     - 你好
     - 早上好
