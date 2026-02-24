@@ -70,6 +70,25 @@ class _FakeTableAdapter:
     def extract_table_id_from_record(self, record: dict[str, Any] | None) -> str | None:
         return None
 
+    async def search_exact_records(self, *, field: str, value: Any, table_id: str | None = None) -> list[dict[str, Any]]:
+        text = str(value or "").strip()
+        if text in {"JFTD-20260001", "(2024)粤01民终28497号"}:
+            return [
+                {
+                    "record_id": "rec_123",
+                    "table_id": table_id or "tbl_main",
+                    "table_name": "案件台账",
+                    "fields_text": {
+                        "项目ID": "JFTD-20260001",
+                        "案号": "(2024)粤01民终28497号",
+                        "委托人": "香港华艺设计顾问",
+                        "对方当事人": "广州荔富汇景",
+                        "开庭日": "2024-11-30",
+                    },
+                }
+            ]
+        return []
+
 
 class _FakeLinker:
     async def sync_after_create(self, **kwargs: Any) -> dict[str, Any]:
@@ -266,6 +285,228 @@ def test_update_skill_pending_timeout_clears_action() -> None:
     assert result.data.get("clear_pending_action") is True
     assert "超时" in result.reply_text
     assert writer.update_calls == []
+
+
+def test_update_skill_missing_fields_returns_collect_guidance_pending_action() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-20260001案件的内容",
+                user_id="u1",
+                extra={
+                    "active_record": {
+                        "record_id": "rec_123",
+                        "table_id": "tbl_main",
+                        "table_name": "案件台账",
+                        "fields_text": {
+                            "项目ID": "JFTD-20260001",
+                            "委托人": "香港华艺设计顾问",
+                            "对方当事人": "广州荔富汇景",
+                        },
+                    },
+                },
+            )
+        )
+    )
+
+    assert result.success is True
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    assert pending_action.get("action") == "update_collect_fields"
+    assert "请告诉我要修改什么" in result.reply_text
+    assert result.data.get("record_case_no") == "JFTD-20260001"
+
+
+def test_update_skill_bare_project_id_without_active_record_returns_collect_guidance() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-20260001案件的内容",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is True
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    assert pending_action.get("action") == "update_collect_fields"
+    assert result.data.get("record_id") == "rec_123"
+
+
+def test_update_skill_identifier_query_prefers_exact_search_over_active_record() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-20260001案件的内容",
+                user_id="u1",
+                extra={
+                    "active_record": {
+                        "record_id": "rec_stale",
+                        "table_id": "tbl_old",
+                        "table_name": "案件台账",
+                        "fields_text": {
+                            "项目ID": "JFTD-20260001",
+                            "案号": "(2020)旧案号",
+                        },
+                    }
+                },
+            )
+        )
+    )
+
+    assert result.success is True
+    assert result.data.get("record_id") == "rec_123"
+
+
+def test_update_skill_unknown_project_id_returns_not_found_hint() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-99999999案件的内容",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is False
+    assert "未找到对应案件" in result.reply_text
+
+
+def test_update_skill_project_id_with_remark_field_parses_direct_update() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-20260001案件的备注内容为：明天开庭",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is True
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    assert pending_action.get("action") == "update_record"
+    payload = pending_action.get("payload")
+    assert isinstance(payload, dict)
+    fields = payload.get("fields")
+    assert isinstance(fields, dict)
+    assert fields.get("备注") == "明天开庭"
+
+
+def test_update_skill_pending_confirm_record_not_found_clears_pending() -> None:
+    writer = _FakeWriter(update_result=WriteResult(success=False, error="[1254043] RecordIdNotFound"))
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="确认",
+                user_id="u1",
+                extra={
+                    "pending_action": {
+                        "action": "update_record",
+                        "payload": {
+                            "record_id": "rec_missing",
+                            "fields": {"案号": "(2026)粤06民终28498号"},
+                            "source_fields": {"案号": "(2024)粤01民终28497号"},
+                            "table_id": "tbl_main",
+                            "table_name": "案件台账",
+                            "created_at": time.time(),
+                            "pending_ttl_seconds": 60,
+                        },
+                    }
+                },
+            )
+        )
+    )
+
+    assert result.success is False
+    assert result.data.get("clear_pending_action") is True
+    assert "不存在" in result.reply_text
+
+
+def test_update_skill_collect_guidance_pending_accepts_next_field_message() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    first = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="修改JFTD-20260001案件的内容",
+                user_id="u1",
+                extra={
+                    "active_record": {
+                        "record_id": "rec_123",
+                        "table_id": "tbl_main",
+                        "table_name": "案件台账",
+                        "fields_text": {
+                            "项目ID": "JFTD-20260001",
+                            "开庭日": "2024-11-30",
+                            "委托人": "香港华艺设计顾问",
+                            "对方当事人": "广州荔富汇景",
+                        },
+                    },
+                },
+            )
+        )
+    )
+    pending_action = first.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    assert pending_action.get("action") == "update_collect_fields"
+
+    second = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="开庭日改成2024-12-01",
+                user_id="u1",
+                extra={"pending_action": pending_action},
+            )
+        )
+    )
+
+    assert second.success is True
+    next_pending = second.data.get("pending_action")
+    assert isinstance(next_pending, dict)
+    next_pending_dict = next_pending
+    assert next_pending_dict.get("action") == "update_record"
+    payload_raw = next_pending_dict.get("payload")
+    assert isinstance(payload_raw, dict)
+    fields_raw = payload_raw.get("fields")
+    assert isinstance(fields_raw, dict)
+    assert fields_raw.get("开庭日") == "2024-12-01"
 
 
 def test_update_skill_close_record_confirm_injects_closed_status() -> None:

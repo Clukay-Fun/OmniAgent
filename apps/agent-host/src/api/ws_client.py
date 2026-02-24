@@ -418,6 +418,212 @@ async def send_reply(
         content,
         reply_message_id=reply_message_id,
     )
+
+
+def _extract_ws_card_action_payload(data: Any) -> dict[str, Any] | None:
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+
+    action = getattr(event, "action", None)
+    if action is None:
+        return None
+    value_raw = getattr(action, "value", None)
+    value = value_raw if isinstance(value_raw, dict) else {}
+    callback_action = str(value.get("callback_action") or getattr(action, "name", "") or "").strip()
+    if not callback_action:
+        return None
+
+    operator = getattr(event, "operator", None)
+    open_id = str(getattr(operator, "open_id", "") or "").strip()
+    if not open_id:
+        operator_id = getattr(operator, "operator_id", None)
+        open_id = str(getattr(operator_id, "open_id", "") or "").strip()
+
+    context = getattr(event, "context", None)
+    message_id = str(getattr(context, "open_message_id", "") or "").strip()
+    chat_id = str(getattr(context, "open_chat_id", "") or "").strip()
+
+    header = getattr(data, "header", None)
+    event_id = str(getattr(header, "event_id", "") or "").strip()
+
+    return {
+        "callback_action": callback_action,
+        "event_id": event_id,
+        "open_id": open_id,
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "value": value,
+    }
+
+
+def _build_callback_user_candidates(open_id: str, chat_id: str) -> list[str]:
+    candidates: list[str] = []
+    for chat_type in ("group", "p2p", ""):
+        candidate = build_session_key(
+            user_id=open_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            channel_type="feishu",
+        )
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+async def _emit_callback_result_message(callback_payload: dict[str, Any], result: dict[str, Any]) -> None:
+    outbound_raw = result.get("outbound")
+    outbound = outbound_raw if isinstance(outbound_raw, dict) else None
+    if outbound is None:
+        return
+
+    text = str(result.get("text") or "").strip()
+    reply: dict[str, Any] = {
+        "type": "text",
+        "text": text or "已处理",
+        "outbound": outbound,
+    }
+
+    prefer_card = bool(
+        isinstance(outbound.get("blocks"), list)
+        and outbound.get("blocks")
+        and not isinstance(outbound.get("card_template"), dict)
+    )
+    if isinstance(outbound.get("card_template"), dict):
+        prefer_card = True
+
+    payload = _build_send_payload(
+        reply,
+        card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+        prefer_card=prefer_card,
+    )
+    msg_type = str(payload.get("msg_type") or "text")
+    if msg_type == "interactive":
+        card_payload = payload.get("card")
+        content = dict(card_payload) if isinstance(card_payload, dict) else {}
+    else:
+        msg_type = "text"
+        content_payload = payload.get("content")
+        content = dict(content_payload) if isinstance(content_payload, dict) else {"text": reply["text"]}
+
+    message_id = str(callback_payload.get("message_id") or "").strip()
+    if message_id:
+        try:
+            from src.utils.feishu_api import update_message
+
+            await update_message(
+                settings=settings,
+                message_id=message_id,
+                msg_type=msg_type,
+                content=content,
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "更新回调原卡片失败，回退发送新消息: %s",
+                exc,
+                extra={
+                    "event_code": "ws.callback.update_failed",
+                    "message_id": message_id,
+                    "chat_id": str(callback_payload.get("chat_id") or ""),
+                    "msg_type": msg_type,
+                },
+            )
+
+    chat_id = str(callback_payload.get("chat_id") or "").strip()
+    if not chat_id:
+        return
+    await send_reply(chat_id, msg_type, content)
+
+
+async def _handle_card_action_callback_async(callback_payload: dict[str, Any]) -> None:
+    callback_action = str(callback_payload.get("callback_action") or "").strip()
+    open_id = str(callback_payload.get("open_id") or "").strip()
+    chat_id = str(callback_payload.get("chat_id") or "").strip()
+    event_id = str(callback_payload.get("event_id") or "").strip()
+    if not callback_action or not open_id:
+        return
+
+    result: dict[str, Any] = {"status": "expired", "text": "操作已过期"}
+    for scoped_user_id in _build_callback_user_candidates(open_id, chat_id):
+        try:
+            current = await agent_core.handle_card_action_callback(
+                user_id=scoped_user_id,
+                callback_action=callback_action,
+                callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
+            )
+        except Exception:
+            logger.exception(
+                "处理 WS 卡片回调失败",
+                extra={
+                    "event_code": "ws.callback.handle_failed",
+                    "event_id": event_id,
+                    "callback_action": callback_action,
+                    "user_id": scoped_user_id,
+                },
+            )
+            return
+
+        if isinstance(current, dict):
+            result = current
+        if str(result.get("status") or "") != "expired":
+            break
+
+    logger.info(
+        "WS 卡片回调处理完成",
+        extra={
+            "event_code": "ws.callback.completed",
+            "event_id": event_id,
+            "callback_action": callback_action,
+            "status": str(result.get("status") or ""),
+            "text": str(result.get("text") or "")[:120],
+        },
+    )
+
+    if str(result.get("status") or "") == "processed":
+        try:
+            await _emit_callback_result_message(callback_payload, result)
+        except Exception:
+            logger.exception(
+                "发送 WS 回调结果失败",
+                extra={
+                    "event_code": "ws.callback.emit_failed",
+                    "event_id": event_id,
+                    "callback_action": callback_action,
+                    "chat_id": chat_id,
+                },
+            )
+
+
+def _run_or_schedule(coro: Any) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coro)
+        return
+    loop.create_task(coro)
+
+
+def on_card_action_trigger(data: Any) -> dict[str, Any]:
+    try:
+        callback_payload = _extract_ws_card_action_payload(data)
+        if callback_payload is None:
+            return {}
+
+        logger.info(
+            "收到 WS 卡片回调事件",
+            extra={
+                "event_code": "ws.callback.received",
+                "event_id": str(callback_payload.get("event_id") or ""),
+                "callback_action": str(callback_payload.get("callback_action") or ""),
+            },
+        )
+
+        _run_or_schedule(_handle_card_action_callback_async(callback_payload))
+        return {}
+    except Exception:
+        logger.exception("处理 WS 卡片回调事件失败", extra={"event_code": "ws.callback.handler_error"})
+        return {}
 # endregion
 
 
@@ -437,6 +643,7 @@ def create_event_handler() -> lark.EventDispatcherHandler:
             verification_token=settings.feishu.verification_token or "",
         )
         .register_p2_im_message_receive_v1(on_message_receive)
+        .register_p2_card_action_trigger(on_card_action_trigger)
         .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
             _noop_event_handler("im.chat.access_event.bot_p2p_chat_entered_v1")
         )

@@ -157,3 +157,88 @@ def test_close_record_callback_routes_to_update_skill() -> None:
 
     assert result["status"] == "processed"
     assert captured["query"] == "确认"
+
+
+def test_edit_callback_routes_to_update_skill_with_active_record() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    record = {
+        "record_id": "rec_edit_1",
+        "fields_text": {
+            "项目ID": "JFTD-20260001",
+            "委托人": "香港华艺设计顾问",
+            "对方当事人": "广州荔富汇景",
+        },
+    }
+    orchestrator._state_manager = SimpleNamespace(
+        get_pending_action=lambda _user_id: None,
+        get_active_record=lambda _user_id: SimpleNamespace(
+            record_id="rec_edit_1",
+            record=record,
+            table_id="tbl_main",
+            table_name="案件项目总库",
+        ),
+        get_last_result=lambda _user_id: None,
+    )
+
+    captured: dict[str, str] = {}
+
+    class _FakeUpdateSkill:
+        async def execute(self, context):
+            captured["query"] = context.query
+            active_record = context.extra.get("active_record") if isinstance(context.extra, dict) else {}
+            captured["record_id"] = str((active_record or {}).get("record_id") or "")
+            return SimpleNamespace(
+                success=True,
+                skill_name="UpdateSkill",
+                data={"pending_action": {"action": "update_collect_fields", "payload": {"record_id": "rec_edit_1"}}},
+                reply_text="已定位到案件，请告诉我要修改什么。",
+                message="",
+            )
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda _result: SimpleNamespace(
+            text_fallback="已定位到案件，请告诉我要修改什么。",
+            to_dict=lambda: {"text_fallback": "已定位到案件，请告诉我要修改什么。"},
+        )
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(
+        orchestrator.handle_card_action_callback(
+            "u1",
+            "edit",
+            callback_value={"record_id": "rec_edit_1", "table_type": "case"},
+        )
+    )
+
+    assert result["status"] == "processed"
+    assert captured["query"] == "修改该案件内容"
+    assert captured["record_id"] == "rec_edit_1"
+
+
+def test_callback_skill_failure_still_returns_processed_with_error_outbound() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._state_manager = SimpleNamespace(
+        get_pending_action=lambda _user_id: SimpleNamespace(
+            action="update_record",
+            payload={"record_id": "rec_missing", "fields": {"案号": "A-1"}, "source_fields": {"案号": "A-0"}},
+        )
+    )
+
+    class _FakeUpdateSkill:
+        async def execute(self, _context):
+            return SimpleNamespace(success=False, skill_name="UpdateSkill", data={}, reply_text="目标记录不存在", message="")
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda _result: SimpleNamespace(text_fallback="目标记录不存在", to_dict=lambda: {"text_fallback": "目标记录不存在"})
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "update_record_confirm"))
+
+    assert result["status"] == "processed"
+    assert "不存在" in result["text"]

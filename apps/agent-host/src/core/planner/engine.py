@@ -9,6 +9,7 @@ L1 Planner 引擎。
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 import logging
 import re
 from typing import Any
@@ -35,13 +36,13 @@ class PlannerEngine:
         self._rules = load_scenario_rules(scenarios_dir)
         self._system_prompt = build_planner_system_prompt(self._rules)
 
-    async def plan(self, query: str) -> PlannerOutput | None:
+    async def plan(self, query: str, *, user_profile: Any = None) -> PlannerOutput | None:
         if not self._enabled:
-            return self._fallback_plan(query)
+            return self._fallback_plan(query, user_profile=user_profile)
 
         # 无可用 LLM 配置则直接规则降级
         if not getattr(getattr(self._llm, "_settings", None), "api_key", ""):
-            return self._fallback_plan(query)
+            return self._fallback_plan(query, user_profile=user_profile)
 
         user_prompt = f"用户输入：{query}\n请输出 JSON。"
         try:
@@ -51,19 +52,19 @@ class PlannerEngine:
                 timeout=10,
             )
             if not isinstance(raw, dict) or not raw:
-                return self._fallback_plan(query)
+                return self._fallback_plan(query, user_profile=user_profile)
             try:
                 self._warn_close_semantic_drift(raw)
                 output = PlannerOutput.model_validate(raw)
             except ValidationError as exc:
                 logger.warning("Planner schema validation failed: %s", exc)
-                return self._fallback_plan(query)
+                return self._fallback_plan(query, user_profile=user_profile)
             return output
         except Exception as exc:
             logger.warning("Planner failed, fallback to rules: %s", exc)
-            return self._fallback_plan(query)
+            return self._fallback_plan(query, user_profile=user_profile)
 
-    def _fallback_plan(self, query: str) -> PlannerOutput | None:
+    def _fallback_plan(self, query: str, *, user_profile: Any = None) -> PlannerOutput | None:
         text = (query or "").strip()
         normalized = text.replace(" ", "")
 
@@ -202,10 +203,28 @@ class PlannerEngine:
                 confidence=0.9,
             )
 
+        structured_field_plan = self._build_structured_field_plan(text)
+        if structured_field_plan is not None:
+            return structured_field_plan
+
         # 组合查询：人员 + 法院 + 时间
-        has_person_pattern = bool(re.search(r"([^的\s]{2,6})的案件", text))
+        has_person_pattern = bool(re.search(r"([^的\s]{2,8})的(?:案件|案子|项目)", text))
         has_court = any(token in normalized for token in ["法院", "中院", "高院", "基层院"])
-        has_time = any(token in normalized for token in ["今天", "明天", "后天", "本周", "下周", "本月", "本年"])
+        has_time = any(token in normalized for token in [
+            "今天",
+            "明天",
+            "后天",
+            "过两天",
+            "两天后",
+            "本周",
+            "下周",
+            "本月",
+            "上个月",
+            "下个月",
+            "未来",
+            "后续",
+            "本年",
+        ])
         status_candidates = ["进行中", "审理中", "已结案", "已完结", "待开庭", "已开庭"]
         has_status = any(token in normalized for token in status_candidates)
         if has_person_pattern and has_court and has_time:
@@ -224,6 +243,30 @@ class PlannerEngine:
                 confidence=0.86,
             )
 
+        today = date.today()
+        if any(token in normalized for token in ["已经开过庭", "开过庭的", "已开庭的", "开过庭"]):
+            return PlannerOutput(
+                intent="query_date_range",
+                tool="search_date_range",
+                params={
+                    "field": "开庭日",
+                    "date_to": (today - timedelta(days=1)).isoformat(),
+                },
+                confidence=0.9,
+            )
+
+        if any(token in normalized for token in ["后续要开庭", "后续开庭", "待开庭", "未来开庭", "接下来开庭"]):
+            return PlannerOutput(
+                intent="query_date_range",
+                tool="search_date_range",
+                params={
+                    "field": "开庭日",
+                    "date_from": today.isoformat(),
+                    "date_to": (today + timedelta(days=3650)).isoformat(),
+                },
+                confidence=0.86,
+            )
+
         # 我的案件（优先于“xx的案件”文本模式）
         if any(token in normalized for token in ["我的案件", "我负责", "我的案子", "我经手", "我跟进"]):
             return PlannerOutput(
@@ -236,8 +279,9 @@ class PlannerEngine:
         # 日期范围查询（优先于“xx的案件”文本模式）
         has_date_keyword = any(token in normalized for token in [
             "今天", "明天", "后天", "本周", "下周", "本月", "上周", "上个月", "下个月", "这周", "这月", "期间", "到", "至", "最近", "近期",
+            "过两天", "两天后", "未来", "后续",
             "明早", "今早", "上午", "下午", "中午", "晚上", "今晚", "明晚", "凌晨", "傍晚",
-        ]) or bool(re.search(r"\d{1,2}月\d{1,2}", text)) or bool(re.search(r"\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}", text)) or bool(re.search(r"(?<!\d)\d{1,2}[-/\.]\d{1,2}(?!\d)", text)) or bool(re.search(r"\d{1,2}[:：]\d{1,2}|\d{1,2}点(?:\d{1,2}分?|半)?", text))
+        ]) or bool(re.search(r"\d{1,2}月\d{1,2}", text)) or bool(re.search(r"(?<!\d)\d{1,2}月(?!\d)", text)) or bool(re.search(r"\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}", text)) or bool(re.search(r"(?<!\d)\d{1,2}[-/\.]\d{1,2}(?!\d)", text)) or bool(re.search(r"(?:未来|接下来)\s*[一二两三四五六七八九十\d]{1,3}\s*天", normalized)) or bool(re.search(r"\d{1,2}[:：]\d{1,2}|\d{1,2}点(?:\d{1,2}分?|半)?", text))
         if has_date_keyword and any(token in normalized for token in ["开庭", "庭审"]):
             return PlannerOutput(
                 intent="query_date_range",
@@ -275,24 +319,37 @@ class PlannerEngine:
                 confidence=0.8,
             )
 
-        # 指定人员案件
-        person_match = re.search(r"([^的\s]{2,8})的案件", text)
-        if person_match:
-            person_name = person_match.group(1).strip()
-            person_name = re.sub(r"^(查询|查找|查|搜索|找|请查|请帮我查)", "", person_name).strip()
-            stopwords = {
-                "所有", "全部", "我的", "自己",
-                "今天", "明天", "后天", "本周", "下周", "本月",
-                "进行中", "审理中", "已结案", "已完结", "待开庭", "已开庭",
-                "开庭", "庭审", "中院", "高院", "法院", "视图", "按视图", "当前视图",
-            }
-            if person_name and person_name not in stopwords and "案号" not in person_name:
+        # 指定主体案件（X 的案子）消歧：当前用户 > 律师 > 当事人
+        subject = self._extract_subject_entity(text)
+        if subject:
+            if self._is_current_user_subject(subject, user_profile):
+                return PlannerOutput(
+                    intent="query_my_cases",
+                    tool="search_person",
+                    params={"field": "主办律师"},
+                    confidence=0.94,
+                )
+
+            if self._looks_like_lawyer_subject(subject, normalized):
                 return PlannerOutput(
                     intent="query_person",
                     tool="search_keyword",
-                    params={"keyword": person_name},
-                    confidence=0.88,
+                    params={
+                        "keyword": subject,
+                        "fields": ["主办律师", "协办律师"],
+                    },
+                    confidence=0.9,
                 )
+
+            return PlannerOutput(
+                intent="query_person",
+                tool="search_keyword",
+                params={
+                    "keyword": subject,
+                    "fields": ["委托人", "对方当事人", "联系人"],
+                },
+                confidence=0.86,
+            )
 
         if any(token in normalized for token in ["所有案件", "全部案件", "案件列表", "查全部", "所有项目", "全部项目"]):
             if any(token in normalized for token in ["按视图", "当前视图", "仅视图", "视图内", "只看视图"]):
@@ -364,6 +421,93 @@ class PlannerEngine:
             )
 
         return None
+
+    def _build_structured_field_plan(self, text: str) -> PlannerOutput | None:
+        rules: list[tuple[tuple[str, ...], list[str], float]] = [
+            (("对方当事人",), ["对方当事人"], 0.9),
+            (("联系人",), ["联系人"], 0.9),
+            (("法官", "承办法官"), ["承办法官"], 0.9),
+            (("法院", "审理法院"), ["审理法院"], 0.88),
+            (("案由",), ["案由"], 0.88),
+            (("当事人",), ["委托人", "对方当事人", "联系人"], 0.88),
+        ]
+
+        for labels, fields, confidence in rules:
+            value = self._extract_value_after_label(text, labels)
+            if not value:
+                continue
+            return PlannerOutput(
+                intent="query_person",
+                tool="search_keyword",
+                params={"keyword": value, "fields": fields},
+                confidence=confidence,
+            )
+        return None
+
+    def _extract_value_after_label(self, text: str, labels: tuple[str, ...]) -> str:
+        for label in labels:
+            pattern = rf"(?:{re.escape(label)})\s*(?:是|为|=|:|：)?\s*([^，。,.！？!\s][^，。,.！？!]{{0,40}})"
+            matched = re.search(pattern, text)
+            if not matched:
+                continue
+            raw = matched.group(1).strip()
+            value = re.sub(r"(?:的)?(?:案件|案子|项目)$", "", raw).strip()
+            value = re.sub(r"^(?:是|为)", "", value).strip()
+            if value:
+                return value
+        return ""
+
+    def _extract_subject_entity(self, text: str) -> str:
+        matched = re.search(r"([^的\s，。,.！？!]{1,32})的(?:案件|案子|项目)", text)
+        if not matched:
+            return ""
+        return self._clean_subject(matched.group(1))
+
+    def _clean_subject(self, value: str) -> str:
+        subject = str(value or "").strip()
+        subject = re.sub(r"^(?:查询|查找|搜索|查看|看看|帮我查|帮我|请帮我|请|麻烦)", "", subject).strip()
+        subject = re.sub(r"(?:负责的?|相关的?|有关的?)$", "", subject).strip()
+        return subject
+
+    def _is_current_user_subject(self, subject: str, user_profile: Any) -> bool:
+        normalized = str(subject or "").strip()
+        if normalized in {"我", "自己", "本人"}:
+            return True
+        if user_profile is None:
+            return False
+
+        names = {
+            str(getattr(user_profile, "name", "") or "").strip(),
+            str(getattr(user_profile, "lawyer_name", "") or "").strip(),
+        }
+        names = {name for name in names if name}
+        return normalized in names
+
+    def _looks_like_org_name(self, text: str) -> bool:
+        normalized = str(text or "").strip()
+        if len(normalized) < 4:
+            return False
+        tokens = ("公司", "集团", "有限", "股份", "事务所", "中心", "医院", "学校", "委员会")
+        return any(token in normalized for token in tokens)
+
+    def _looks_like_person_name(self, text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not (2 <= len(normalized) <= 6):
+            return False
+        if self._looks_like_org_name(normalized):
+            return False
+        if any(ch.isdigit() for ch in normalized):
+            return False
+        return bool(re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]+", normalized))
+
+    def _looks_like_lawyer_subject(self, subject: str, normalized_query: str) -> bool:
+        if self._looks_like_org_name(subject):
+            return False
+        if any(token in normalized_query for token in ["当事人", "委托人", "被告", "原告", "联系人", "客户"]):
+            return False
+        if any(token in normalized_query for token in ["律师", "主办", "协办", "经办", "承办"]):
+            return True
+        return self._looks_like_person_name(subject)
 
     def _warn_close_semantic_drift(self, raw: dict[str, Any]) -> None:
         intent = str(raw.get("intent") or "").strip()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import date
 from typing import Any
@@ -21,6 +22,7 @@ from src.core.skills.multi_table_linker import MultiTableLinker
 from src.core.skills.response_pool import pool
 from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
+from src.utils.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,26 @@ class UpdateSkill(BaseSkill):
             "金额": "金额",
             "费用": "金额",
         }
+        self._update_value_prefixes = (
+            "改成",
+            "改为",
+            "变成",
+            "变为",
+            "更新为",
+            "修改为",
+            "设为",
+            "设成",
+            "调整为",
+        )
+        self._date_field_names = {
+            "开庭日",
+            "截止日",
+            "上诉截止日",
+            "举证截止日",
+            "签约日期",
+            "到期日期",
+            "付款截止",
+        }
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -147,6 +169,12 @@ class UpdateSkill(BaseSkill):
                 pending_payload=pending_payload,
                 table_ctx=table_ctx,
             )
+        if pending_action == "update_collect_fields" and pending_payload:
+            return await self._execute_pending_collect_fields(
+                query=query,
+                pending_payload=pending_payload,
+                table_ctx=table_ctx,
+            )
         if pending_action in {"update_record", "close_record"} and pending_payload:
             return await self._execute_pending_update(
                 query=query,
@@ -160,24 +188,34 @@ class UpdateSkill(BaseSkill):
         if isinstance(planner_params, dict):
             rid = planner_params.get("record_id")
             planner_record_id = str(rid).strip() if rid else None
+        has_identifier_hint = self._has_record_identifier_hint(query)
 
         records = []
         if not planner_record_id:
             exact_records = await self._search_records_by_query(query, table_ctx.table_id)
+            if not exact_records and has_identifier_hint and table_ctx.table_id:
+                exact_records = await self._search_records_by_query(query, None)
             if exact_records:
                 records = exact_records
 
-        if not records and not planner_record_id:
+        if not records and not planner_record_id and not has_identifier_hint:
             active_record = extra.get("active_record")
             if isinstance(active_record, dict) and active_record.get("record_id"):
                 records = [active_record]
 
-        if not records and not planner_record_id:
+        if not records and not planner_record_id and not has_identifier_hint:
             last_records = last_result.get("records", [])
             if isinstance(last_records, list):
                 records = last_records
 
         if not records and not planner_record_id:
+            if has_identifier_hint:
+                return SkillResult(
+                    success=False,
+                    skill_name=self.name,
+                    message="未找到匹配记录",
+                    reply_text="未找到对应案件，请确认案号/项目ID是否正确，或先查询后再更新。",
+                )
             return SkillResult(
                 success=False,
                 skill_name=self.name,
@@ -207,8 +245,11 @@ class UpdateSkill(BaseSkill):
             record_id = record.get("record_id")
 
         record_table_id = self._table_adapter.extract_table_id_from_record(record)
-        if record_table_id and not table_ctx.table_id:
+        if record_table_id:
             table_ctx.table_id = record_table_id
+        record_table_name = str(record.get("table_name") or "").strip()
+        if record_table_name:
+            table_ctx.table_name = record_table_name
         if not record_id:
             return SkillResult(
                 success=False,
@@ -223,13 +264,7 @@ class UpdateSkill(BaseSkill):
             planner_plan=planner_plan,
             table_name=table_ctx.table_name,
         )
-        fields = self._extract_fields_from_planner(planner_plan)
-        parsed_fields = self._parse_update_fields(query)
-        kv_fields = self._parse_key_value_fields(query)
-        for k, v in parsed_fields.items():
-            fields[k] = v
-        for k, v in kv_fields.items():
-            fields[k] = v
+        fields = self._collect_update_fields(query=query, planner_plan=planner_plan)
 
         if pending_action_name == "close_record":
             close_profile_data = self._action_service.build_pending_close_action_data(
@@ -254,11 +289,13 @@ class UpdateSkill(BaseSkill):
                     fields[status_field] = target_status
 
         if not fields:
-            return SkillResult(
-                success=False,
-                skill_name=self.name,
-                message="无法解析更新字段",
-                reply_text="请明确要更新的字段和值，例如：把开庭日改成2024-12-01",
+            source_fields = self._extract_source_fields(record)
+            return self._build_update_collect_fields_result(
+                record_id=str(record_id),
+                source_fields=source_fields,
+                table_id=table_ctx.table_id,
+                table_name=table_ctx.table_name,
+                table_type=self._resolve_table_type(table_ctx.table_name),
             )
 
         validation_error = self._validate_fields(fields)
@@ -357,7 +394,18 @@ class UpdateSkill(BaseSkill):
         match = pattern1.search(query)
         if match:
             field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = match.group(2).strip()
+            field_value = self._normalize_field_value(field_name, match.group(2).strip())
+            fields[field_name] = field_value
+            return fields
+
+        # 模式1.1: X改成Y / X改为Y / X调整为Y
+        pattern1_1 = re.compile(
+            r"(案号|案件状态|状态|开庭日|开庭|审理法院|法院|主办律师|主办|协办律师|协办|进展|备注|案由|金额|费用)(?:内容)?\s*(?:改成|改为|变成|变为|更新为|修改为|设为|设成|调整为|为|:|：)(.+)"
+        )
+        match = pattern1_1.search(query)
+        if match:
+            field_name = self._normalize_field_segment(match.group(1).strip())
+            field_value = self._normalize_field_value(field_name, match.group(2).strip())
             fields[field_name] = field_value
             return fields
         
@@ -366,7 +414,7 @@ class UpdateSkill(BaseSkill):
         match = pattern2.search(query)
         if match:
             field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = match.group(2).strip()
+            field_value = self._normalize_field_value(field_name, match.group(2).strip())
             fields[field_name] = field_value
             return fields
         
@@ -375,7 +423,7 @@ class UpdateSkill(BaseSkill):
         match = pattern3.search(query)
         if match:
             field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = match.group(2).strip()
+            field_value = self._normalize_field_value(field_name, match.group(2).strip())
             fields[field_name] = field_value
             return fields
         
@@ -386,7 +434,7 @@ class UpdateSkill(BaseSkill):
         if not isinstance(pending, dict):
             return None, {}
         action = str(pending.get("action") or "").strip()
-        if action not in {"repair_child_update", "update_record", "close_record"}:
+        if action not in {"repair_child_update", "update_record", "close_record", "update_collect_fields"}:
             return None, {}
         payload = pending.get("payload")
         if not isinstance(payload, dict):
@@ -558,6 +606,19 @@ class UpdateSkill(BaseSkill):
                 close_semantic=close_semantic,
             )
             if not outcome.success:
+                if self._is_record_not_found_error(outcome.message, outcome.reply_text):
+                    return SkillResult(
+                        success=False,
+                        skill_name=self.name,
+                        data={
+                            "clear_pending_action": True,
+                            "record_id": record_id,
+                            "table_id": table_id,
+                            "table_name": table_name,
+                        },
+                        message="目标记录不存在",
+                        reply_text="目标记录不存在或已被删除，请重新查询定位后再更新。",
+                    )
                 return self._build_pending_update_result(
                     action_name=action_name,
                     record_id=record_id,
@@ -590,6 +651,251 @@ class UpdateSkill(BaseSkill):
                 message=str(exc),
                 reply_text=pool.pick("error", "更新失败，请稍后重试。"),
             )
+
+    def _is_record_not_found_error(self, message: str, reply_text: str) -> bool:
+        text = f"{message}\n{reply_text}".lower()
+        tokens = (
+            "recordidnotfound",
+            "record not found",
+            "notfound",
+            "未找到",
+            "不存在",
+        )
+        return any(token in text for token in tokens)
+
+    async def _execute_pending_collect_fields(
+        self,
+        *,
+        query: str,
+        pending_payload: dict[str, Any],
+        table_ctx: Any,
+    ) -> SkillResult:
+        if self._is_cancel(query):
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="已取消更新",
+                reply_text="好的，已取消更新操作。",
+            )
+
+        if self._is_pending_expired(pending_payload):
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="更新引导已超时",
+                reply_text="本次修改上下文已过期，请重新指定要修改的案件。",
+            )
+
+        record_id = str(pending_payload.get("record_id") or "").strip()
+        if not record_id:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"clear_pending_action": True},
+                message="更新上下文缺少 record_id",
+                reply_text="未找到待修改记录，请重新指定案件后再试。",
+            )
+
+        table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
+        table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        table_type = str(pending_payload.get("table_type") or self._resolve_table_type(table_name)).strip() or "case"
+        source_fields_raw = pending_payload.get("source_fields")
+        source_fields = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
+
+        fields = self._collect_update_fields(query=query, planner_plan=None)
+        if not fields:
+            return self._build_update_collect_fields_result(
+                record_id=record_id,
+                source_fields=source_fields,
+                table_id=table_id,
+                table_name=table_name,
+                table_type=table_type,
+            )
+
+        validation_error = self._validate_fields(fields)
+        if validation_error:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={"record_id": record_id, "invalid_fields": fields},
+                message="字段值校验失败",
+                reply_text=validation_error,
+            )
+
+        adapted_fields, unresolved, available = await self._table_adapter.adapt_fields_for_table(fields, table_id)
+        if unresolved:
+            return SkillResult(
+                success=False,
+                skill_name=self.name,
+                data={
+                    "record_id": record_id,
+                    "table_id": table_id,
+                    "table_name": table_name,
+                    "unresolved_fields": unresolved,
+                    "available_fields": available,
+                },
+                message="字段名与目标表不匹配",
+                reply_text=self._table_adapter.build_field_not_found_message(unresolved, available, table_name),
+            )
+
+        if adapted_fields:
+            fields = adapted_fields
+
+        effective_preview_fields, diff_items, append_date = self._action_service.build_update_preview(
+            table_name=table_name,
+            fields=fields,
+            source_fields=source_fields,
+            append_date=None,
+        )
+        if not diff_items:
+            return SkillResult(
+                success=True,
+                skill_name=self.name,
+                data={
+                    "clear_pending_action": True,
+                    "record_id": record_id,
+                    "table_id": table_id,
+                    "table_name": table_name,
+                },
+                message="无字段变更",
+                reply_text="该字段已是目标值，无需更新。",
+            )
+
+        idempotency_key = str(pending_payload.get("idempotency_key") or "").strip() or None
+        if not idempotency_key:
+            idempotency_key = self._build_update_idempotency_key(record_id=record_id, fields=fields)
+
+        return self._build_pending_update_result(
+            action_name="update_record",
+            record_id=record_id,
+            fields=fields,
+            preview_fields=effective_preview_fields,
+            source_fields=source_fields,
+            diff_items=diff_items,
+            table_id=table_id,
+            table_name=table_name,
+            idempotency_key=idempotency_key,
+            created_at=time.time(),
+            ttl_seconds=self._confirm_ttl_seconds,
+            append_date=append_date,
+        )
+
+    def _build_update_collect_fields_result(
+        self,
+        *,
+        record_id: str,
+        source_fields: dict[str, Any],
+        table_id: str | None,
+        table_name: str | None,
+        table_type: str,
+    ) -> SkillResult:
+        case_no = str(source_fields.get("项目ID") or source_fields.get("案号") or record_id or "").strip()
+        left = str(source_fields.get("委托人") or source_fields.get("委托人及联系方式") or "").strip()
+        right = str(source_fields.get("对方当事人") or "").strip()
+        identity = " vs ".join([item for item in [left, right] if item])
+        if not identity:
+            identity = str(source_fields.get("案由") or "").strip()
+
+        reply_text = (
+            "已定位到案件，请告诉我要修改什么。\n"
+            "例如：开庭日改成2024-12-01、案件状态改为已结案、追加进展：今天收到法院通知、主办律师改成张三。"
+        )
+
+        ttl_seconds = 120
+        payload = {
+            "record_id": record_id,
+            "table_id": table_id,
+            "table_name": table_name,
+            "table_type": table_type,
+            "source_fields": source_fields,
+            "created_at": time.time(),
+            "pending_ttl_seconds": ttl_seconds,
+            "awaiting_fields": True,
+        }
+
+        return SkillResult(
+            success=True,
+            skill_name=self.name,
+            data={
+                "record_id": record_id,
+                "table_id": table_id,
+                "table_name": table_name,
+                "table_type": table_type,
+                "record_case_no": case_no,
+                "record_identity": identity,
+                "pending_action": {
+                    "action": "update_collect_fields",
+                    "ttl_seconds": ttl_seconds,
+                    "payload": payload,
+                },
+            },
+            message="等待补充修改字段",
+            reply_text=reply_text,
+        )
+
+    def _resolve_table_type(self, table_name: str | None) -> str:
+        normalized = str(table_name or "").replace(" ", "")
+        if "合同" in normalized:
+            return "contracts"
+        if any(token in normalized for token in ("招投标", "投标", "台账")):
+            return "bidding"
+        if any(token in normalized for token in ("团队", "成员", "工作总览")):
+            return "team_overview"
+        return "case"
+
+    def _collect_update_fields(self, *, query: str, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+
+        planner_fields = self._extract_fields_from_planner(planner_plan)
+        for key, value in planner_fields.items():
+            merged[str(key)] = value
+
+        parsed_fields = self._parse_update_fields(query)
+        for key, value in parsed_fields.items():
+            merged[str(key)] = value
+
+        kv_fields = self._parse_key_value_fields(query)
+        for key, value in kv_fields.items():
+            merged[str(key)] = value
+
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_value in merged.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            mapped_key = self._field_aliases.get(key, key)
+            normalized_value = self._normalize_field_value(mapped_key, raw_value)
+            if normalized_value is None:
+                continue
+            if isinstance(normalized_value, str) and not normalized_value.strip():
+                continue
+            normalized[mapped_key] = normalized_value
+        return normalized
+
+    def _normalize_field_value(self, field_name: str, raw_value: Any) -> Any:
+        if raw_value is None:
+            return None
+        if not isinstance(raw_value, str):
+            return raw_value
+
+        value = str(raw_value).strip().strip("\"'")
+        for prefix in self._update_value_prefixes:
+            if value.startswith(prefix):
+                value = value[len(prefix):].strip()
+                break
+        value = re.sub(r"^(?:成|为)\s*", "", value).strip().strip("\"'")
+        value = re.sub(r"^[：:=\s]+", "", value).strip().strip("\"'")
+        if not value:
+            return ""
+
+        if field_name in self._date_field_names:
+            parsed = parse_time_range(value)
+            if parsed and parsed.date_from and parsed.date_to and parsed.date_from == parsed.date_to:
+                return parsed.date_from
+
+        return value
 
     def _is_pending_expired(self, pending_payload: dict[str, Any]) -> bool:
         created_at = pending_payload.get("created_at")
@@ -974,11 +1280,16 @@ class UpdateSkill(BaseSkill):
 
     def _normalize_field_segment(self, value: str) -> str:
         segment = str(value).strip()
+        segment = re.sub(r"^(?:请|帮我|麻烦|把|将)", "", segment).strip()
+        segment = re.sub(r"^(?:修改|更新|调整)", "", segment).strip()
         if " 的" in segment:
             segment = segment.split(" 的", 1)[1].strip()
         if "的" in segment and any(token in segment for token in ["案号", "项目", "记录"]):
             segment = segment.rsplit("的", 1)[-1].strip()
-        return segment
+        segment = re.sub(r"(?:案件|案子|记录|项目)的?内容$", "", segment).strip()
+        segment = segment.replace("内容", "").strip()
+        mapped = self._field_aliases.get(segment, segment)
+        return str(mapped).strip()
 
     def _validate_fields(self, fields: dict[str, Any]) -> str | None:
         for field_name, options in self._field_options.items():
@@ -1010,6 +1321,8 @@ class UpdateSkill(BaseSkill):
 
         exact_case = re.search(r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
         exact_project = re.search(r"(?:项目ID|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+        bare_project = re.search(r"(?<![A-Za-z0-9_-])([A-Za-z]{2,}-\d{4,}(?:-\d{2,})?)(?![A-Za-z0-9_-])", query)
+        bare_case = re.search(r"([（(]\d{4}[）)][^\s，。,.！？!]{4,64})", query)
 
         field_name = None
         field_value = None
@@ -1019,6 +1332,12 @@ class UpdateSkill(BaseSkill):
         elif exact_project:
             field_name = "项目ID"
             field_value = exact_project.group(1).strip()
+        elif bare_project:
+            field_name = "项目ID"
+            field_value = bare_project.group(1).strip()
+        elif bare_case:
+            field_name = "案号"
+            field_value = bare_case.group(1).strip()
 
         if not field_name or not field_value:
             return []
@@ -1032,6 +1351,16 @@ class UpdateSkill(BaseSkill):
         except Exception as exc:
             logger.warning("UpdateSkill pre-search failed: %s", exc)
             return []
+
+    def _has_record_identifier_hint(self, query: str) -> bool:
+        text = str(query or "")
+        if re.search(r"(?:案号|案件号|项目ID|项目编号|项目号)[是为:：\s]*[A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+", text):
+            return True
+        if re.search(r"(?<![A-Za-z0-9_-])[A-Za-z]{2,}-\d{4,}(?:-\d{2,})?(?![A-Za-z0-9_-])", text):
+            return True
+        if re.search(r"[（(]\d{4}[）)][^\s，。,.！？!]{4,64}", text):
+            return True
+        return False
 
     def _extract_fields_from_planner(self, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
         """从 planner 输出提取更新字段。"""
@@ -1108,8 +1437,11 @@ class UpdateSkill(BaseSkill):
         for alias, value in matches:
             name = self._normalize_field_segment(alias.strip())
             mapped = self._field_aliases.get(name, name)
-            if mapped and value.strip():
-                fields[mapped] = value.strip()
+            value_text = value.strip()
+            if mapped in {"案号", "项目ID"} and "的案件" in value_text:
+                continue
+            if mapped and value_text:
+                fields[mapped] = self._normalize_field_value(mapped, value_text)
 
         direct_patterns = {
             "案件状态": r"(?:案件状态|状态)\s*([^,，。；;\n]+)",
@@ -1124,6 +1456,6 @@ class UpdateSkill(BaseSkill):
                 continue
             value = match.group(1).strip()
             if value:
-                fields[field_name] = value
+                fields[field_name] = self._normalize_field_value(field_name, value)
         return fields
 # endregion

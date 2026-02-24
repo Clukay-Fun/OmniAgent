@@ -325,6 +325,7 @@ class L0RuleEngine:
         mapping = {
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
+            "update_collect_fields": "UpdateSkill",
             "delete_record": "DeleteSkill",
             "repair_child_write": "CreateSkill",
             "repair_child_create": "CreateSkill",
@@ -343,6 +344,20 @@ class L0RuleEngine:
             if normalized in self._cancel_phrases:
                 return True
             return normalized in self._confirm_phrases or normalized in {"确认删除"}
+        if action_key == "update_collect_fields":
+            if normalized in self._generic_confirm_tokens or normalized in self._cancel_phrases:
+                return True
+            update_hints = {
+                "案号", "项目ID", "项目id", "项目编号", "项目号",
+                "开庭日", "日期", "状态", "进展", "主办", "协办", "法院", "案由", "金额", "备注",
+            }
+            if any(token in text for token in update_hints):
+                return True
+            if any(token in text for token in ("改成", "改为", "变成", "变为", "更新为", "修改为", "设为", "设成", "调整为", "追加")):
+                return True
+            if ":" in text or "：" in text:
+                return True
+            return False
         if normalized in self._generic_confirm_tokens or normalized in self._cancel_phrases:
             return True
         if self._extract_ordinal_index(text) is not None:

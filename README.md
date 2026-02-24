@@ -1,154 +1,125 @@
 # OmniAgent
 
-多模块智能 Agent 项目，当前主线是：
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Status: Active](https://img.shields.io/badge/Project%20Status-Active-brightgreen)](https://github.com/)
 
-- `apps/agent-host`：单 Agent 主应用入口
-- `integrations/feishu-mcp-server`：飞书数据侧 MCP 服务
+**OmniAgent** 是一个多模块智能 Agent 框架，通过聚合底层系统能力（如飞书多维表格引擎、知识库检索等），为用户提供一体化的智能会话、数据联动与业务自动化服务。
 
-## 当前阶段
+当前主要包含以下核心子模块：
+* 🤖 **[apps/agent-host](apps/agent-host/)**: 飞书会话 Agent 主应用入口
+* 🔌 **[integrations/feishu-mcp-server](integrations/feishu-mcp-server/)**: 飞书数据侧 MCP (Model Context Protocol) 协议服务层
 
-- 云服务器与域名已准备，暂不上传生产部署（等待备案审核）
-- 本仓库已完成一次目录重整：部署文件、监控文件、工具脚本、场景文档已拆分归位
-- Feishu Agent 已完成上下文强化、单表 CRUD 闭环与多表联动第一版（当前默认链路：案件 -> 合同管理表）
-- 开发/备案/上线统一口径见：`docs/deploy/three-stage-guide.md`
+---
 
-## 目录结构（已调整）
+## 🌟 核心特性
+
+- **双模路由架构**：结合高优任务模型 (Task LLM) 与高质量对话模型 (Chat LLM)，在保障意图解析精准度的同时降低长期对话成本。
+- **上下文感知记忆**：自动提取用户偏好并存储于知识图谱中，实现千人千面的个性化响应。
+- **多表长程联动**：基于 MCP 协议，支持跨数据表的高阶联动（例如：从案件库流转至合同库）。
+- **自动化运行时保障**：内建子表失败节点补偿录入机制，提供可靠的长链条业务保障。
+
+---
+
+## 📌 项目定位与核心认知
+
+- **产品主线**：个人 AI Agent（当前先通过飞书接入）
+- **架构形态**：单 Agent 主应用 (`apps/agent-host`) + MCP 工具服务 (`integrations/feishu-mcp-server`)
+- **人格命名**：统一为“小敬”
+
+## ⚠️ 关键代码与日志规范
+
+- **隔离性**：Core 层不直接依赖渠道协议细节。
+- **回复结构**：回复链路必须采用通用结构，支持向文本平滑降级 (fallback)。
+- **单一来源**：文档结构采用单一权威来源（Single Source of Truth），绝不在多处重复罗列相同的配置、命令或设计，避免版本不同步。
+- **中文业务日志**：业务日志 `message` 请使用**中文**，便于开发时人工排障。
+- **稳定事件码**：日志的 `extra` 属性中统一携带 `event_code`（英文稳定枚举码，便于后续流转与告警）。
+- **结构化上下文**：关键上下文字段保持严格的结构化（如 `request_id`、`user_id`、`duration_ms`）不能丢失。
+
+---
+
+## 📂 项目结构
 
 ```text
 OmniAgent/
-├── apps/agent-host/                 # 单 Agent 主应用入口
-├── integrations/feishu-mcp-server/  # 飞书数据侧 MCP 服务主入口
-├── deploy/
-│   ├── docker/
-│   │   ├── compose.yml              # 主 compose
-│   │   └── compose.dev.yml          # 开发态 compose 覆盖
-│   └── monitoring/
-│       ├── prometheus.yml
-│       ├── run_monitoring.sh
-│       ├── run_monitoring.ps1
-│       └── grafana/
-├── tools/
-│   ├── dev/                         # 本地调试脚本
-│   └── ci/                          # 校验/覆盖率脚本
-└── docs/
-    ├── scenarios/
-    │   ├── scenarios.yaml
-    │   ├── scenarios.schema.yaml
-    │   └── README.md
-    ├── deploy/
-    │   ├── upload-manifest.md
-    │   ├── cloud-checklist-no-db.md
-    │   └── three-stage-guide.md
-    └── architecture/
-        └── repo-layout.md
+├── apps/agent-host/                 # 🤖 单 Agent 主应用入口 (包含意图/技能/对话逻辑)
+├── integrations/feishu-mcp-server/  # 🔌 飞书 MCP 服务主入口 (含多维表格操作/自动化规则引擎)
+├── deploy/                          
+│   ├── docker/                      # 🐳 Docker Compose 容器编排文件
+│   └── monitoring/                  # 📊 Prometheus 与 Grafana 监控配置
+├── tools/                           
+│   ├── dev/                         # 🛠️ 本地调试与对账脚本
+│   └── ci/                          # 🧪 验证与覆盖率检查脚本
+└── docs/                            
+    ├── scenarios/                   # 📝 自动化场景演练与人类评审用例
+    └── deploy/                      # 🚢 云服部署与上线相关文档
 ```
 
-## 本地开发（不依赖云）
+---
 
-命令以 `docs/deploy/three-stage-guide.md` 为准（本节仅保留高频快捷入口）。
+## 🚀 快速开始
 
-统一开发入口（推荐）：
+开发与运行统一建议使用 `run_dev.py` 脚本，屏蔽了复杂的环境依赖和 Docker 配置。
+> *详细的三阶段开发/部署/上线指南，请参阅：[`docs/deploy/three-stage-guide.md`](docs/deploy/three-stage-guide.md)*
 
+### 1. 前置环境要求
+- Python 3.10+
+- Docker & Docker Compose (用于启动完整多服务集)
+
+### 2. 准备配置及依赖
+建议在当前根目录下统一初始化环境变量配置：
 ```bash
+# 生成本地配置
+cp config.yaml.example config.yaml
+cp .env.example .env
+
+# 如果使用 run_dev.py，脚本会自动处理容器内依赖。
+# 若想在宿主机原生联调，请统一安装根目录的聚合依赖：
+pip install -r requirements.txt
+```
+> **依赖分层说明**：根目录 `requirements.txt` 统一聚合了所有子模块的依赖；各模块的独立依赖文件（如 `apps/agent-host/requirements.txt`）仅用于构建隔离的生产镜像或微服务化场景，日常开发操作根目录这一处即可。
+
+### 3. 一键启动 (推荐)
+```bash
+# 自动通过 Docker 启动 Agent 及 MCP Server
 python run_dev.py up
-```
 
-常用操作：
-
-```bash
-python run_dev.py logs --follow
-python run_dev.py ps
-python run_dev.py down
-python run_dev.py clean
-python run_dev.py refresh-schema
-python run_dev.py refresh-schema --table-id tbl_xxx --app-token app_xxx
-python run_dev.py auth-health
-python run_dev.py sync
-python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
-python run_dev.py agent-ws
-python run_dev.py agent-ws-watch
-
-# 一键拉起全部（MCP + Agent + Monitoring + DB）
+# 或拉起完整生态 (含 MCP, Agent 环境，Monitoring, DB)
 python run_dev.py up --all
 ```
 
-说明：`sync` 执行全量补偿（新增+修改+删除对账），`refresh-schema` 仅刷新字段结构。
-
-本地未备案阶段建议使用长连接：`python run_dev.py agent-ws`（MCP 侧用 `sync/scan` 手动补偿）。
-开发期可使用 `python run_dev.py agent-ws-watch`，修改 `apps/agent-host/src` 后自动重启长连接进程。
-
-容器名冲突或历史残留时，先执行 `python run_dev.py clean` 再 `up`。
-
-## 启动装配要求
-
-`AgentOrchestrator` 初始化时必须注入 `data_writer` 实例，否则启动会直接报错。
-
-```python
-from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
-
-
-writer = BitableWriter(mcp_client)
-orchestrator = AgentOrchestrator(data_writer=writer, ...)
-```
-
-如需在测试中使用 mock：
-
-```python
-from unittest.mock import AsyncMock
-
-from src.core.skills.data_writer import DataWriter
-
-
-mock_writer = AsyncMock(spec=DataWriter)
-orchestrator = AgentOrchestrator(data_writer=mock_writer, ...)
-```
-
-默认端口：
-
-- MCP：`8081`
-- Agent：`8080`（统一开发入口 / Docker）
-
-## Docker 编排命令（新路径）
-
+### 4. 常用命令集
 ```bash
-docker compose -f deploy/docker/compose.yml up -d
-docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.dev.yml up -d
-
-# 启用监控 profile
-docker compose -f deploy/docker/compose.yml --profile monitoring up -d
-
-# 启用数据库 profile（可选）
-docker compose -f deploy/docker/compose.yml --profile db up -d
+python run_dev.py logs --follow      # 追踪所有容器实时日志
+python run_dev.py ps                 # 查看关联容器的运行状态
+python run_dev.py down               # 停止所有服务
+python run_dev.py clean              # 彻底清理遗留的容器、网络及残留状态
+python run_dev.py sync               # 执行全量的业务表结构与记录同步（处理新增、修改及删除对账）
+python run_dev.py agent-ws           # 启动支持热更新的本地长连接开发模式 (推荐未备案阶段使用)
 ```
 
-监控（可选）：
+---
 
-```bash
-./deploy/monitoring/run_monitoring.sh
-# 或 PowerShell
-./deploy/monitoring/run_monitoring.ps1
-```
+## 📋 模块文档导航
 
-## 常用检查
+若要深入了解各个核心模块的架构或 API 详情，请查阅下方独立文档：
 
-```bash
-curl http://localhost:8081/health
-curl http://localhost:8080/health
-curl http://localhost:8081/mcp/tools
-```
+* 📘 **[Agent 主应用文档](apps/agent-host/README.md)**: 意图解析、多模型路由与用户偏好说明
+* 📒 **[MCP 服务文档](integrations/feishu-mcp-server/README.md)**: 飞书数据操作工具注册、自动化规则引擎与字段同步
+* 📗 **[自动化监控服务说明](deploy/monitoring/README.md)**: Prometheus / Grafana 的启用与查看方法
+* 📔 **[系统测试与场景评审说明](docs/scenarios/README.md)**: 场景用例构成与回归验证规范
 
-## 文档入口
+---
 
-- 主应用文档：`apps/agent-host/README.md`
-- MCP 详细文档：`integrations/feishu-mcp-server/README.md`
-- 项目快速上下文（人/AI）：`docs/project-context.md`
-- 三阶段统一文档：`docs/deploy/three-stage-guide.md`
-- 统一变量参考（合并版）：`.env.example`
-- 上传清单（备案后用）：`docs/deploy/upload-manifest.md`
-- 云部署检查清单（无 DB 版）：`docs/deploy/cloud-checklist-no-db.md`
-- 仓库结构说明：`docs/architecture/repo-layout.md`
-- 测试说明：`docs/scenarios/README.md`
+## 启动装配提示 (仅面向原生代码调试者)
 
-## 许可证
+若不使用 `run_dev.py` 而是通过源码挂载运行时：
+`AgentOrchestrator` 初始化**必须**注入合法的 `data_writer` 实例以承接 MCP 能力，否则会在初始化阶段抛出异常。
+相关测试/Mock手段，请参考 [apps/agent-host/README.md](apps/agent-host/README.md) 获取具体代码实现。
 
-MIT
+---
+
+## 🪪 开源协议
+
+MIT License
+

@@ -40,3 +40,15 @@ def test_chitchat_guard_allows_llm_when_switch_on() -> None:
     assert result.success is True
     assert result.data.get("type") == "llm_chat"
     assert llm.called is True
+
+
+def test_chitchat_help_trigger_for_who_are_you() -> None:
+    llm = _FakeLLM()
+    skill = ChitchatSkill(skills_config={"chitchat": {"allow_llm": False}}, llm_client=llm)
+
+    result = asyncio.run(skill.execute(SkillContext(query="你是谁", user_id="u3")))
+
+    assert result.success is True
+    assert result.data.get("type") == "help"
+    assert "帮助" in result.reply_text
+    assert llm.called is False

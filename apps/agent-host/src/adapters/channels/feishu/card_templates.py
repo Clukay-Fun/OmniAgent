@@ -1049,12 +1049,7 @@ def _render_case_t2_cardkit_layout(
                     "tag": "plain_text",
                     "content": next_text,
                 },
-                "behaviors": [
-                    {
-                        "type": "callback",
-                        "value": next_page_value,
-                    }
-                ],
+                "value": next_page_value,
             }
         )
 
@@ -1201,12 +1196,7 @@ def _render_contract_t2_cardkit_layout(
                     "tag": "plain_text",
                     "content": next_text,
                 },
-                "behaviors": [
-                    {
-                        "type": "callback",
-                        "value": next_page_value,
-                    }
-                ],
+                "value": next_page_value,
             }
         )
 
@@ -1349,12 +1339,7 @@ def _render_bidding_t2_cardkit_layout(
                     "tag": "plain_text",
                     "content": next_text,
                 },
-                "behaviors": [
-                    {
-                        "type": "callback",
-                        "value": next_page_value,
-                    }
-                ],
+                "value": next_page_value,
             }
         )
 
@@ -2331,12 +2316,7 @@ def _build_callback_button(*, text: str, button_type: str, value: Mapping[str, A
         "type": button_type,
         "width": "default",
         "margin": "4px 0px 4px 0px",
-        "behaviors": [
-            {
-                "type": "callback",
-                "value": dict(value),
-            }
-        ],
+        "value": dict(value),
     }
 
 
@@ -2453,7 +2433,7 @@ def _normalize_error_class(value: Any, message: str) -> str:
     normalized = message.lower()
     if any(token in normalized for token in ["权限", "无权", "forbidden", "permission denied", "access denied"]):
         return "permission_denied"
-    if any(token in normalized for token in ["未找到", "不存在", "没有找到", "not found"]):
+    if any(token in normalized for token in ["未找到", "不存在", "没有找到", "not found", "recordidnotfound", "notfound"]):
         return "record_not_found"
     if any(token in normalized for token in ["缺少", "必填", "参数", "未提供", "无法解析更新字段"]):
         return "missing_params"
@@ -3442,6 +3422,68 @@ def render_update_success_v1(params: dict[str, Any]) -> Any:
             "wrapper": wrapper,
         }
     return elements
+
+
+def render_update_guide_v1(params: dict[str, Any]) -> Any:
+    title = _safe_text(params.get("title")) or "修改案件"
+    record_id = _safe_text(params.get("record_id"))
+    table_type = _safe_text(params.get("table_type")) or "case"
+    case_no = _safe_text(params.get("record_case_no")) or record_id or "（未识别案号）"
+    identity = _safe_text(params.get("record_identity"))
+
+    located_lines = ["✏️ **已定位到案件：**", "", f"🔖 {case_no}"]
+    if identity:
+        located_lines.append(f"🏢 {identity}")
+    located_markdown = "\n".join(located_lines)
+
+    examples = [
+        '• "开庭日改成2024-12-01"',
+        '• "案件状态改为已结案"',
+        '• "追加进展：今天收到法院通知"',
+        '• "主办律师改成张三"',
+    ]
+    prompt_markdown = "请告诉我要修改什么，例如：\n" + "\n".join(examples)
+
+    cancel_action_raw = params.get("cancel_action")
+    cancel_action = cancel_action_raw if isinstance(cancel_action_raw, Mapping) else None
+    cancel_value = _normalize_callback_value(
+        cancel_action,
+        callback_action="update_collect_fields_cancel",
+        table_type=table_type,
+        record_id=record_id,
+        extra_data={},
+    )
+    cancel_text = _safe_text(params.get("cancel_text")) or "取消"
+    cancel_button = _build_callback_button(
+        text=_decorate_button_text(cancel_text, prefix="❌", fallback="取消"),
+        button_type="primary_filled",
+        value=cancel_value,
+    )
+
+    elements: list[dict[str, Any]] = [
+        _markdown(located_markdown),
+        {"tag": "hr", "margin": "0px"},
+        _markdown(prompt_markdown),
+    ]
+    button_row = _build_button_row([cancel_button])
+    if button_row is not None:
+        elements.append(button_row)
+
+    wrapper = {
+        "schema": "2.0",
+        "config": {"update_multi": True},
+        "body": {"direction": "vertical"},
+        "header": {
+            "template": "orange",
+            "title": {"tag": "plain_text", "content": title},
+            "icon": {"tag": "standard_icon", "token": "edit_outlined"},
+            "padding": "12px 8px 12px 8px",
+        },
+    }
+    return {
+        "elements": elements,
+        "wrapper": wrapper,
+    }
 
 
 def render_delete_confirm_v1(params: dict[str, Any]) -> Any:

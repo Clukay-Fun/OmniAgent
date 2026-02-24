@@ -35,6 +35,18 @@ def _month_range(target: date) -> TimeRange:
     return TimeRange(_format_day(start), _format_day(end))
 
 
+def _month_range_by_year_month(year: int, month: int) -> Optional[TimeRange]:
+    start = _safe_date(year, month, 1)
+    if start is None:
+        return None
+    if month == 12:
+        next_month_start = date(year + 1, 1, 1)
+    else:
+        next_month_start = date(year, month + 1, 1)
+    end = next_month_start - timedelta(days=1)
+    return TimeRange(_format_day(start), _format_day(end))
+
+
 def _format_hm(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
@@ -77,6 +89,93 @@ def _extract_relative_day(text: str, today: date) -> date | None:
     if any(token in text for token in ["今天", "今早", "今晚"]):
         return today
     return None
+
+
+def _parse_day_count(token: str) -> int | None:
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+
+    mapping = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    if raw == "十":
+        return 10
+    if len(raw) == 2 and raw.startswith("十") and raw[1] in mapping:
+        return 10 + mapping[raw[1]]
+    if len(raw) == 2 and raw.endswith("十") and raw[0] in mapping:
+        return mapping[raw[0]] * 10
+    return None
+
+
+def _extract_future_days_range(text: str, today: date) -> TimeRange | None:
+    matched = re.search(r"(?:未来|接下来)\s*([一二两三四五六七八九十\d]{1,3})\s*天", text)
+    if not matched:
+        return None
+    days = _parse_day_count(matched.group(1))
+    if days is None or days <= 0:
+        return None
+    return TimeRange(_format_day(today), _format_day(today + timedelta(days=days)))
+
+
+def _extract_after_days(text: str, today: date) -> date | None:
+    patterns = (
+        r"(?:过|再过|还有)\s*([一二两三四五六七八九十\d]{1,3})\s*天",
+        r"([一二两三四五六七八九十\d]{1,3})\s*天后",
+    )
+    for pattern in patterns:
+        matched = re.search(pattern, text)
+        if not matched:
+            continue
+        days = _parse_day_count(matched.group(1))
+        if days is None or days <= 0:
+            continue
+        return today + timedelta(days=days)
+    return None
+
+
+def _extract_month_range(text: str, today: date) -> TimeRange | None:
+    if "上个月" in text:
+        prev_month_end = today.replace(day=1) - timedelta(days=1)
+        return _month_range(prev_month_end)
+    if "下个月" in text:
+        next_month_anchor = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return _month_range(next_month_anchor)
+    if "这个月" in text or "本月" in text or "这月" in text:
+        return _month_range(today)
+
+    year_month = re.search(r"(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月(?:份)?(?!\d)", text)
+    if year_month:
+        year = int(year_month.group(1))
+        month = int(year_month.group(2))
+        if 1 <= month <= 12:
+            return _month_range_by_year_month(year, month)
+
+    month_only = re.search(r"(?<!\d)(\d{1,2})\s*月(?:份)?(?!\d)", text)
+    if not month_only:
+        return None
+    month = int(month_only.group(1))
+    if not 1 <= month <= 12:
+        return None
+    year = today.year
+    if "明年" in text:
+        year += 1
+    elif "去年" in text:
+        year -= 1
+    return _month_range_by_year_month(year, month)
 
 
 def _extract_time_window(text: str) -> tuple[str | None, str | None]:
@@ -180,6 +279,12 @@ def parse_time_range(text: str) -> Optional[TimeRange]:
     normalized = _normalize_text(text)
     time_from, time_to = _extract_time_window(normalized)
 
+    future_days_range = _extract_future_days_range(normalized, today)
+    if future_days_range is not None:
+        future_days_range.time_from = time_from
+        future_days_range.time_to = time_to
+        return future_days_range
+
     explicit_dates = _extract_explicit_dates(normalized, today)
     if explicit_dates:
         has_range_hint = bool(re.search(r"(到|至|~|之间|起?至)", normalized))
@@ -190,6 +295,16 @@ def parse_time_range(text: str) -> Optional[TimeRange]:
             return TimeRange(_format_day(start), _format_day(end), time_from=time_from, time_to=time_to)
         target = explicit_dates[0]
         return TimeRange(_format_day(target), _format_day(target), time_from=time_from, time_to=time_to)
+
+    month_range = _extract_month_range(normalized, today)
+    if month_range is not None:
+        month_range.time_from = time_from
+        month_range.time_to = time_to
+        return month_range
+
+    after_days = _extract_after_days(normalized, today)
+    if after_days is not None:
+        return TimeRange(_format_day(after_days), _format_day(after_days), time_from=time_from, time_to=time_to)
 
     relative_day = _extract_relative_day(normalized, today)
     if relative_day is not None:
@@ -223,17 +338,6 @@ def parse_time_range(text: str) -> Optional[TimeRange]:
     if "下周" in normalized:
         target = today + timedelta(days=7)
         base = _week_range(target)
-        base.time_from = time_from
-        base.time_to = time_to
-        return base
-    if "这个月" in normalized or "本月" in normalized:
-        base = _month_range(today)
-        base.time_from = time_from
-        base.time_to = time_to
-        return base
-    if "下个月" in normalized:
-        next_month_anchor = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
-        base = _month_range(next_month_anchor)
         base.time_from = time_from
         base.time_to = time_to
         return base

@@ -369,9 +369,10 @@ def test_webhook_card_callback_returns_processed(monkeypatch) -> None:
             }
 
     class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action):
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
             assert "ou_1" in user_id
             assert callback_action == "delete_record_confirm"
+            assert isinstance(callback_value, dict)
             return {"status": "processed", "text": "已处理"}
 
     settings = SimpleNamespace(
@@ -403,9 +404,10 @@ def test_webhook_card_callback_group_user_isolation_session_key(monkeypatch) -> 
             }
 
     class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action):
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
             assert user_id == "feishu:group:oc_group_1:user:ou_group_u1"
             assert callback_action == "delete_record_confirm"
+            assert isinstance(callback_value, dict)
             return {"status": "processed", "text": "已处理"}
 
     settings = SimpleNamespace(
@@ -434,9 +436,10 @@ def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
             }
 
     class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action):
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
             assert "ou_2" in user_id
             assert callback_action == "update_record_confirm"
+            assert isinstance(callback_value, dict)
             return {"status": "expired", "text": "已过期"}
 
     settings = SimpleNamespace(
@@ -466,8 +469,8 @@ def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
             }
 
     class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action):
-            _ = user_id, callback_action
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
+            _ = user_id, callback_action, callback_value
             raise RuntimeError("boom")
 
     settings = SimpleNamespace(

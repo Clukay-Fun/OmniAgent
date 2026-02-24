@@ -639,6 +639,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             result = await _get_agent_core().handle_card_action_callback(
                 user_id=user_id,
                 callback_action=str(callback_payload.get("callback_action") or ""),
+                callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
             )
         except Exception:
             logger.exception(
