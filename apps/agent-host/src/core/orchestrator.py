@@ -1152,6 +1152,11 @@ class AgentOrchestrator:
             },
         )
         result = await skill.execute(context)
+        if result.success:
+            if is_confirm and hasattr(self._state_manager, "confirm_pending_action"):
+                self._state_manager.confirm_pending_action(user_id)
+            if is_cancel and hasattr(self._state_manager, "cancel_pending_action"):
+                self._state_manager.cancel_pending_action(user_id)
         self._sync_state_after_result(user_id, query, result)
         rendered = self._response_renderer.render(result)
         rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)

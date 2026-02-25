@@ -49,6 +49,7 @@ from src.api.callback_deduper import CallbackDeduper
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+CALLBACK_DEDUP_WINDOW_SECONDS = 600
 
 
 # ============================================
@@ -134,7 +135,7 @@ def _get_callback_deduper() -> CallbackDeduper:
     """延迟初始化 callback 语义去重器"""
     global _callback_deduper
     if _callback_deduper is None:
-        _callback_deduper = CallbackDeduper(window_seconds=10)
+        _callback_deduper = CallbackDeduper(window_seconds=CALLBACK_DEDUP_WINDOW_SECONDS)
     return _callback_deduper
 
 
@@ -637,7 +638,11 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             return {"status": "ok", "reason": "已处理"}
         # S4: 语义级 callback 去重（user_id + action + payload hash）
         open_id = str(callback_payload.get("open_id") or "").strip()
+        if not open_id:
+            return {"status": "ok", "reason": "已过期"}
         cb_action = str(callback_payload.get("callback_action") or "").strip()
+        if not cb_action:
+            return {"status": "ok", "reason": "已过期"}
         cb_deduper = _get_callback_deduper()
         cb_dedup_key = cb_deduper.build_key(
             user_id=open_id,
@@ -655,8 +660,6 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             )
             return {"status": "ok", "reason": "已处理"}
         chat_id = str(callback_payload.get("chat_id") or "").strip()
-        if not open_id:
-            return {"status": "ok", "reason": "已过期"}
         user_id = build_session_key(
             user_id=open_id,
             chat_id=chat_id,

@@ -91,6 +91,14 @@ class PendingActionState:
     created_at: float = 0.0
     expires_at: float = 0.0
 
+    def __post_init__(self) -> None:
+        if isinstance(self.status, PendingActionStatus):
+            return
+        try:
+            self.status = PendingActionStatus(str(self.status))
+        except ValueError:
+            self.status = PendingActionStatus.PENDING
+
     def is_expired(self, now: float) -> bool:
         return now >= self.expires_at
 

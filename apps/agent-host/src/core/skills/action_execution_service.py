@@ -159,7 +159,7 @@ class ActionExecutionService:
             effective_fields.setdefault(key, value)
 
         write_result = await self._data_writer.create(
-            table_id,
+            _table_id,
             effective_fields,
             idempotency_key=idempotency_key,
         )
@@ -179,7 +179,7 @@ class ActionExecutionService:
         reply_text = "\n".join(lines).strip()
 
         link_sync = await self._linker.sync_after_create(
-            parent_table_id=table_id,
+            parent_table_id=_table_id,
             parent_table_name=table_name,
             parent_fields=effective_fields,
         )
@@ -212,7 +212,7 @@ class ActionExecutionService:
             "record_id": record_id,
             "fields": effective_fields,
             "record_url": record_url,
-            "table_id": table_id,
+            "table_id": _table_id,
             "table_name": table_name,
             "link_sync": link_sync,
             "auto_reminders": pending_action.get("payload", {}).get("reminders", []) if pending_action else [],
@@ -262,8 +262,8 @@ class ActionExecutionService:
             append_date=append_date,
         )
         write_result = await self._data_writer.update(
-            table_id,
-            record_id,
+            _table_id,
+            _record_id,
             effective_fields,
             idempotency_key=idempotency_key,
         )
@@ -283,7 +283,7 @@ class ActionExecutionService:
         reply_text = f"{opener}\n\n已更新字段：\n{field_list}\n\n查看详情：{record_url}"
 
         link_sync = await self._linker.sync_after_update(
-            parent_table_id=table_id,
+            parent_table_id=_table_id,
             parent_table_name=table_name,
             updated_fields=effective_fields,
             source_fields=source_fields,
@@ -313,7 +313,7 @@ class ActionExecutionService:
                     "payload": {
                         "source_action": "update_record",
                         "table_name": str(table_name or ""),
-                        "record_id": record_id,
+                        "record_id": _record_id,
                         "reminders": reminder_items,
                     },
                 }
@@ -324,10 +324,10 @@ class ActionExecutionService:
         data = {
             "clear_pending_action": False if next_pending_action else True,
             "pending_action": next_pending_action,
-            "record_id": record_id,
+            "record_id": _record_id,
             "updated_fields": effective_fields,
             "record_url": record_url,
-            "table_id": table_id,
+            "table_id": _table_id,
             "table_name": table_name,
             "source_fields": source_fields,
             "link_sync": link_sync,
@@ -371,8 +371,8 @@ class ActionExecutionService:
             return ActionExecutionOutcome(False, "写入受限", denied_text, {})
 
         write_result = await self._data_writer.delete(
-            table_id,
-            str(record_id),
+            _table_id,
+            _record_id,
             idempotency_key=idempotency_key,
         )
         if not write_result.success:
@@ -380,7 +380,7 @@ class ActionExecutionService:
             return ActionExecutionOutcome(False, f"删除失败: {error}", f"删除失败：{error}", {})
 
         link_sync = await self._linker.sync_after_delete(
-            parent_table_id=table_id,
+            parent_table_id=_table_id,
             parent_table_name=table_name,
             parent_fields={"案号": case_no},
         )
@@ -389,9 +389,9 @@ class ActionExecutionService:
         if link_summary:
             reply_text += f"\n\n{link_summary}"
         data = {
-            "record_id": record_id,
+            "record_id": _record_id,
             "case_no": case_no,
-            "table_id": table_id,
+            "table_id": _table_id,
             "record_url": write_result.record_url or "",
             "link_sync": link_sync,
             "clear_pending_action": True,

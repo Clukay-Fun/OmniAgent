@@ -143,3 +143,7 @@ def test_pending_action_expired_is_terminal() -> None:
     with pytest.raises(ValueError, match="invalid pending_action transition"):
         state.transition_to(PendingActionStatus.CANCELLED, now=now)
 
+
+def test_pending_action_status_string_is_normalized() -> None:
+    state = PendingActionState(action="create_record", status="confirmed", created_at=0, expires_at=300)  # type: ignore[arg-type]
+    assert state.status == PendingActionStatus.CONFIRMED

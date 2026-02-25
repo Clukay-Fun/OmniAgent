@@ -242,3 +242,41 @@ def test_callback_skill_failure_still_returns_processed_with_error_outbound() ->
 
     assert result["status"] == "processed"
     assert "不存在" in result["text"]
+
+
+def test_callback_confirm_triggers_pending_action_transition_on_success() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+
+    class _FakeStateManager:
+        def __init__(self) -> None:
+            self.confirmed = 0
+            self.cancelled = 0
+
+        def get_pending_action(self, _user_id: str):
+            return SimpleNamespace(action="create_reminder", payload={"reminders": []})
+
+        def confirm_pending_action(self, _user_id: str):
+            self.confirmed += 1
+
+        def cancel_pending_action(self, _user_id: str):
+            self.cancelled += 1
+
+    state_manager = _FakeStateManager()
+    orchestrator._state_manager = state_manager
+
+    class _FakeReminderSkill:
+        async def execute(self, _context):
+            return SimpleNamespace(success=True, skill_name="ReminderSkill", data={}, reply_text="ok", message="")
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeReminderSkill() if name == "ReminderSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda _result: SimpleNamespace(text_fallback="ok", to_dict=lambda: {"text_fallback": "ok"})
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "create_reminder_confirm"))
+
+    assert result["status"] == "processed"
+    assert state_manager.confirmed == 1
+    assert state_manager.cancelled == 0

@@ -80,6 +80,17 @@ class ConversationStateManager:
                     state.pending_action.transition_to(PendingActionStatus.EXPIRED, now=now)
                 except ValueError:
                     pass
+            pending_history = state.extras.get("pending_action_history")
+            if not isinstance(pending_history, list):
+                pending_history = []
+            pending_history.append(
+                {
+                    "action": state.pending_action.action,
+                    "status": str(getattr(state.pending_action.status, "value", state.pending_action.status)),
+                    "at": now,
+                }
+            )
+            state.extras["pending_action_history"] = pending_history[-20:]
             state.pending_action = None
 
         state.updated_at = now

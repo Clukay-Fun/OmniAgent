@@ -1,10 +1,11 @@
 import asyncio
 import json
-import pytest
 from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -598,6 +599,9 @@ def test_s2_manager_expired_pending_action_cleared() -> None:
     # get_state 会触发过期清理
     refreshed = mgr.get_state("u1")
     assert refreshed.pending_action is None
+    history = refreshed.extras.get("pending_action_history")
+    assert isinstance(history, list)
+    assert history[-1]["status"] == "expired"
 
 
 # ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
@@ -610,3 +614,71 @@ def test_s4_callback_deduper_is_imported_in_webhook() -> None:
     assert hasattr(webhook_mod, "_get_callback_deduper")
 
 
+def test_s4_callback_deduper_window_uses_600s(monkeypatch) -> None:
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+    deduper = webhook_module._get_callback_deduper()
+    assert deduper._window == 600
+
+
+def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
+    class _FakeRequest:
+        def __init__(self, payload: dict[str, object]):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    calls = {"count": 0}
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
+            _ = user_id, callback_action, callback_value
+            calls["count"] += 1
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
+    )
+
+    payload_1 = {
+        "header": {"event_id": "evt_cb_sem_1"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_sem_u1"}},
+            "open_chat_id": "oc_sem_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+    payload_2 = {
+        "header": {"event_id": "evt_cb_sem_2"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_sem_u1"}},
+            "open_chat_id": "oc_sem_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+    monkeypatch.setattr(webhook_module, "_deduplicator", None)
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+
+    with caplog.at_level("INFO"):
+        first = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_1)))
+        second = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_2)))
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    assert "已处理" in second["reason"]
+    assert calls["count"] == 1
+    assert any(getattr(record, "event_code", "") == "callback.duplicated" for record in caplog.records)
