@@ -138,9 +138,13 @@ class ActionExecutionService:
         idempotency_key: str | None,
         app_token: str | None = None,
     ) -> ActionExecutionOutcome:
-        if app_token and table_id:
+        # S1: triplet 校验 — table_id 为必经路径
+        _table_id = str(table_id or "").strip()
+        if not _table_id:
+            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+        if app_token:
             try:
-                validate_locator_triplet(app_token=app_token, table_id=table_id)
+                validate_locator_triplet(app_token=app_token, table_id=_table_id)
             except ValueError as exc:
                 return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
 
@@ -230,11 +234,18 @@ class ActionExecutionService:
         close_semantic: str = "default",
         app_token: str | None = None,
     ) -> ActionExecutionOutcome:
-        if app_token and table_id:
+        # S1: triplet 校验 — table_id + record_id 为必经路径
+        _table_id = str(table_id or "").strip()
+        _record_id = str(record_id or "").strip()
+        if not _table_id:
+            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+        if not _record_id:
+            return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
+        if app_token:
             try:
                 validate_locator_triplet(
-                    app_token=app_token, table_id=table_id,
-                    record_id=record_id, require_record_id=True,
+                    app_token=app_token, table_id=_table_id,
+                    record_id=_record_id, require_record_id=True,
                 )
             except ValueError as exc:
                 return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
@@ -338,11 +349,18 @@ class ActionExecutionService:
         idempotency_key: str | None,
         app_token: str | None = None,
     ) -> ActionExecutionOutcome:
-        if app_token and table_id:
+        # S1: triplet 校验 — table_id + record_id 为必经路径
+        _table_id = str(table_id or "").strip()
+        _record_id = str(record_id or "").strip()
+        if not _table_id:
+            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+        if not _record_id:
+            return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
+        if app_token:
             try:
                 validate_locator_triplet(
-                    app_token=app_token, table_id=table_id,
-                    record_id=record_id, require_record_id=True,
+                    app_token=app_token, table_id=_table_id,
+                    record_id=_record_id, require_record_id=True,
                 )
             except ValueError as exc:
                 return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})

@@ -44,6 +44,7 @@ from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
 from src.utils.feishu_api import send_message, update_message
 from src.utils.metrics import record_inbound_message
+from src.api.callback_deduper import CallbackDeduper
 
 
 router = APIRouter()
@@ -66,6 +67,7 @@ _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
 _schema_sync_bridge: Any = None
 _reminder_refresh_bridge: Any = None
+_callback_deduper: CallbackDeduper | None = None
 
 
 class _SchemaSyncBridge:
@@ -126,6 +128,14 @@ def _get_deduplicator() -> "EventDeduplicator":
             settings.webhook.dedup.max_size,
         )
     return _deduplicator
+
+
+def _get_callback_deduper() -> CallbackDeduper:
+    """延迟初始化 callback 语义去重器"""
+    global _callback_deduper
+    if _callback_deduper is None:
+        _callback_deduper = CallbackDeduper(window_seconds=10)
+    return _callback_deduper
 
 
 def _get_event_router() -> FeishuEventRouter:
@@ -625,7 +635,25 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         event_id = str(callback_payload.get("event_id") or "")
         if event_id and settings.webhook.dedup.enabled and _get_deduplicator().is_duplicate(event_id):
             return {"status": "ok", "reason": "已处理"}
+        # S4: 语义级 callback 去重（user_id + action + payload hash）
         open_id = str(callback_payload.get("open_id") or "").strip()
+        cb_action = str(callback_payload.get("callback_action") or "").strip()
+        cb_deduper = _get_callback_deduper()
+        cb_dedup_key = cb_deduper.build_key(
+            user_id=open_id,
+            action=cb_action,
+            payload=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
+        )
+        if cb_deduper.is_duplicate(cb_dedup_key):
+            logger.info(
+                "重复 callback 已短路",
+                extra={
+                    "event_code": "callback.duplicated",
+                    "open_id": open_id,
+                    "callback_action": cb_action,
+                },
+            )
+            return {"status": "ok", "reason": "已处理"}
         chat_id = str(callback_payload.get("chat_id") or "").strip()
         if not open_id:
             return {"status": "ok", "reason": "已过期"}
@@ -638,7 +666,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         try:
             result = await _get_agent_core().handle_card_action_callback(
                 user_id=user_id,
-                callback_action=str(callback_payload.get("callback_action") or ""),
+                callback_action=cb_action,
                 callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
             )
         except Exception:
@@ -647,14 +675,16 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
                 extra={
                     "event_code": "webhook.callback.handle_failed",
                     "event_id": event_id,
-                    "callback_action": str(callback_payload.get("callback_action") or ""),
+                    "callback_action": cb_action,
                 },
             )
             if event_id and settings.webhook.dedup.enabled:
                 _get_deduplicator().mark(event_id)
+            cb_deduper.mark(cb_dedup_key)
             return {"status": "ok", "reason": "已过期"}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
+        cb_deduper.mark(cb_dedup_key)
 
         if str(result.get("status") or "") == "processed":
             asyncio.create_task(_emit_callback_result_message(callback_payload, result))

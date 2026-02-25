@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pytest
 from pathlib import Path
 import sys
 import types
@@ -516,4 +517,96 @@ def test_callback_deduper_key_is_deterministic() -> None:
     k1 = deduper.build_key(user_id="u1", action="a", payload={"x": 1, "y": 2})
     k2 = deduper.build_key(user_id="u1", action="a", payload={"y": 2, "x": 1})
     assert k1 == k2
+
+
+# ── S1 修复验证：triplet 校验为必经路径 ──────────────────────────────
+
+from src.core.skills.action_execution_service import ActionExecutionService
+
+
+def _make_action_service() -> ActionExecutionService:
+    """构造一个最小 ActionExecutionService（使用 mock data_writer）。"""
+    from unittest.mock import AsyncMock, MagicMock
+    dw = MagicMock()
+    dw.create = AsyncMock()
+    dw.update = AsyncMock()
+    dw.delete = AsyncMock()
+    return ActionExecutionService(data_writer=dw, linker=MagicMock())
+
+
+def test_s1_execute_create_rejects_missing_table_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(svc.execute_create(table_id=None, table_name="案件", fields={"案号": "A-1"}, idempotency_key=None))
+    assert outcome.success is False
+    assert "table_id" in outcome.message
+
+
+def test_s1_execute_update_rejects_missing_table_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(svc.execute_update(
+        action_name="update_record", table_id="", table_name="案件",
+        record_id="rec_001", fields={"案件状态": "已结案"},
+        source_fields={}, idempotency_key=None,
+    ))
+    assert outcome.success is False
+    assert "table_id" in outcome.message
+
+
+def test_s1_execute_delete_rejects_missing_record_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(svc.execute_delete(
+        table_id="tbl_001", table_name="案件",
+        record_id="", case_no="A-1", idempotency_key=None,
+    ))
+    assert outcome.success is False
+    assert "record_id" in outcome.message
+
+
+# ── S2 修复验证：manager 集成状态机 ──────────────────────────────────
+
+from src.core.state.manager import ConversationStateManager
+from src.core.state.memory_store import MemoryStateStore
+from src.core.state.models import PendingActionStatus
+
+
+def test_s2_manager_confirm_pending_action() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    mgr.set_pending_action("u1", action="create_record")
+    pa = mgr.confirm_pending_action("u1")
+    assert pa is not None
+    assert pa.status == PendingActionStatus.CONFIRMED
+
+
+def test_s2_manager_cancel_pending_action() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    mgr.set_pending_action("u1", action="delete_record")
+    pa = mgr.cancel_pending_action("u1")
+    assert pa is not None
+    assert pa.status == PendingActionStatus.CANCELLED
+
+
+def test_s2_manager_expired_pending_action_cleared() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store, pending_action_ttl_seconds=1)
+    mgr.set_pending_action("u1", action="update_record")
+    # 手动设置过期
+    state = store.get("u1")
+    state.pending_action.expires_at = _time.time() - 5
+    store.set("u1", state)
+    # get_state 会触发过期清理
+    refreshed = mgr.get_state("u1")
+    assert refreshed.pending_action is None
+
+
+# ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
+
+def test_s4_callback_deduper_is_imported_in_webhook() -> None:
+    """验证 CallbackDeduper 已在 webhook.py 中被导入和使用。"""
+    import importlib
+    webhook_mod = importlib.import_module("src.api.webhook")
+    assert hasattr(webhook_mod, "CallbackDeduper")
+    assert hasattr(webhook_mod, "_get_callback_deduper")
+
 

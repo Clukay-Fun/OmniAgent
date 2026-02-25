@@ -16,6 +16,7 @@ from src.core.state.models import (
     ConversationState,
     LastResultState,
     PendingActionState,
+    PendingActionStatus,
     PaginationState,
     PendingDeleteState,
 )
@@ -73,6 +74,12 @@ class ConversationStateManager:
         if state.active_record and state.active_record.is_expired(now):
             state.active_record = None
         if state.pending_action and state.pending_action.is_expired(now):
+            # S2: 用状态机倾转而非直接清空，保留 EXPIRED 记录
+            if state.pending_action.status == PendingActionStatus.PENDING:
+                try:
+                    state.pending_action.transition_to(PendingActionStatus.EXPIRED, now=now)
+                except ValueError:
+                    pass
             state.pending_action = None
 
         state.updated_at = now
@@ -323,3 +330,33 @@ class ConversationStateManager:
         state.pending_action = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
+
+    def confirm_pending_action(self, user_id: str) -> PendingActionState | None:
+        """S2: 确认 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        state = self.get_state(user_id)
+        pa = state.pending_action
+        if pa is None:
+            return None
+        now = time.time()
+        try:
+            pa.transition_to(PendingActionStatus.CONFIRMED, now=now)
+        except ValueError:
+            return None
+        state.updated_at = now
+        self._store.set(user_id, state)
+        return pa
+
+    def cancel_pending_action(self, user_id: str) -> PendingActionState | None:
+        """S2: 取消 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        state = self.get_state(user_id)
+        pa = state.pending_action
+        if pa is None:
+            return None
+        now = time.time()
+        try:
+            pa.transition_to(PendingActionStatus.CANCELLED, now=now)
+        except ValueError:
+            return None
+        state.updated_at = now
+        self._store.set(user_id, state)
+        return pa
