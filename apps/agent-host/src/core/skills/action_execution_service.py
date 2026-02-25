@@ -11,6 +11,7 @@ import yaml
 from src.core.skills.action_smart_engine import ActionSmartEngine
 from src.core.skills.auto_reminders import build_auto_reminder_items
 from src.core.skills.data_writer import DataWriter
+from src.core.skills.locator_triplet import validate_locator_triplet
 
 
 @dataclass
@@ -135,7 +136,14 @@ class ActionExecutionService:
         table_name: str | None,
         fields: dict[str, Any],
         idempotency_key: str | None,
+        app_token: str | None = None,
     ) -> ActionExecutionOutcome:
+        if app_token and table_id:
+            try:
+                validate_locator_triplet(app_token=app_token, table_id=table_id)
+            except ValueError as exc:
+                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
@@ -220,7 +228,17 @@ class ActionExecutionService:
         idempotency_key: str | None,
         append_date: str | None = None,
         close_semantic: str = "default",
+        app_token: str | None = None,
     ) -> ActionExecutionOutcome:
+        if app_token and table_id:
+            try:
+                validate_locator_triplet(
+                    app_token=app_token, table_id=table_id,
+                    record_id=record_id, require_record_id=True,
+                )
+            except ValueError as exc:
+                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
@@ -318,7 +336,17 @@ class ActionExecutionService:
         record_id: str,
         case_no: str,
         idempotency_key: str | None,
+        app_token: str | None = None,
     ) -> ActionExecutionOutcome:
+        if app_token and table_id:
+            try:
+                validate_locator_triplet(
+                    app_token=app_token, table_id=table_id,
+                    record_id=record_id, require_record_id=True,
+                )
+            except ValueError as exc:
+                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
