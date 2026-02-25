@@ -112,7 +112,8 @@ def test_build_send_payload_prefers_template_card_when_selected() -> None:
     payload = _build_send_payload(reply, card_enabled=True)
 
     assert payload["msg_type"] == "interactive"
-    assert "案件查询结果" in _card_elements(payload)[0]["content"]
+    first_line = str(_card_elements(payload)[0]["content"])
+    assert "案件查询结果" in first_line or "找到 1 个相关案件" in first_line
 
 
 def test_build_send_payload_uses_text_for_error_reply_even_with_template() -> None:

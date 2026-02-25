@@ -120,3 +120,23 @@ def test_chunk_assembler_flushes_orphan_chunks_on_session_expire() -> None:
     session_manager.cleanup_expired()
 
     assert flushed_texts == ["帮我查"]
+
+
+def test_chunk_assembler_debounce_flush_clears_message_chunk_state() -> None:
+    assembler, state_manager = _build_assembler(enabled=True, window_seconds=3, stale_window_seconds=10)
+    scope_key = "feishu:group:oc_g1:user:ou_u1"
+
+    first = asyncio.run(assembler.ingest(scope_key=scope_key, text="A", now=0.0))
+    second = asyncio.run(assembler.ingest(scope_key=scope_key, text="B", now=1.0))
+    third = asyncio.run(assembler.ingest(scope_key=scope_key, text="C", now=2.0))
+
+    assert first.should_process is False
+    assert second.should_process is False
+    assert third.should_process is False
+
+    # 模拟再等待 4 秒后触发窗口冲刷。
+    flushed = asyncio.run(assembler.drain(scope_key))
+
+    assert flushed.should_process is True
+    assert flushed.text == "A\nB\nC"
+    assert state_manager.get_message_chunk(scope_key, now=6.0) is None

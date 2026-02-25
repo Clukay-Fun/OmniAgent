@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
@@ -12,6 +14,13 @@ from src.adapters.channels.feishu.card_template_config import (
     resolve_template_version,
     reset_template_config_cache,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_template_config_cache_per_test():
+    reset_template_config_cache()
+    yield
+    reset_template_config_cache()
 
 
 def test_template_config_loads_from_yaml(monkeypatch, tmp_path) -> None:
