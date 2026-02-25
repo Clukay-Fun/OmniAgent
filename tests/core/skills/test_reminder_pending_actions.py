@@ -88,3 +88,120 @@ def test_reminder_skill_executes_pending_create_reminder_cancel() -> None:
     assert result.success is True
     assert result.data.get("clear_pending_action") is True
     assert "取消" in result.reply_text
+
+
+# ── S2: pending_action lifecycle and TTL ────────────────────────────
+
+import time
+
+import pytest
+
+from src.core.state.models import (  # noqa: E402
+    OperationEntry,
+    OperationExecutionStatus,
+    PendingActionState,
+    PendingActionStatus,
+)
+
+
+def test_pending_action_lifecycle_pending_to_confirmed() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now, expires_at=now + 300)
+    assert state.status == PendingActionStatus.CONFIRMABLE
+
+    state.transition_to(PendingActionStatus.EXECUTED, now=now)
+    assert state.status == PendingActionStatus.EXECUTED
+
+
+def test_pending_action_lifecycle_pending_to_cancelled() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now, expires_at=now + 300)
+    state.transition_to(PendingActionStatus.INVALIDATED, now=now)
+    assert state.status == PendingActionStatus.INVALIDATED
+
+
+def test_pending_action_expires_after_ttl() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now - 600, expires_at=now - 1)
+    # Attempt execute on expired action — should auto-transition to INVALIDATED first
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.EXECUTED, now=now)
+    assert state.status == PendingActionStatus.INVALIDATED
+
+
+def test_pending_action_confirmed_cannot_reconfirm() -> None:
+    now = time.time()
+    state = PendingActionState(
+        action="create_record", status=PendingActionStatus.EXECUTED,
+        created_at=now, expires_at=now + 300,
+    )
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.EXECUTED, now=now)
+
+
+def test_pending_action_expired_is_terminal() -> None:
+    now = time.time()
+    state = PendingActionState(
+        action="create_record", status=PendingActionStatus.INVALIDATED,
+        created_at=now - 600, expires_at=now - 1,
+    )
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.EXECUTED, now=now)
+
+
+def test_pending_action_status_string_is_normalized() -> None:
+    state = PendingActionState(action="create_record", status="confirmed", created_at=0, expires_at=300)  # type: ignore[arg-type]
+    assert state.status == PendingActionStatus.EXECUTED
+
+
+def test_pending_action_operations_are_normalized() -> None:
+    state = PendingActionState(
+        action="batch_update_records",
+        operations=[{"record_id": "rec_1"}, "invalid", {"record_id": "rec_2"}],  # type: ignore[list-item]
+        created_at=0,
+        expires_at=300,
+    )
+
+    assert len(state.operations) == 2
+    assert state.operations[0].payload == {"record_id": "rec_1"}
+    assert state.operations[1].payload == {"record_id": "rec_2"}
+    assert state.operations[0].status == OperationExecutionStatus.PENDING
+    assert state.iter_operation_payloads() == [{"record_id": "rec_1"}, {"record_id": "rec_2"}]
+
+
+def test_pending_action_iter_payloads_fallbacks_to_payload_and_payload_operations() -> None:
+    state_from_payload_operations = PendingActionState(
+        action="batch_delete_records",
+        payload={"operations": [{"record_id": "rec_1"}, {"record_id": "rec_2"}]},
+        created_at=0,
+        expires_at=300,
+    )
+    assert state_from_payload_operations.iter_operation_payloads() == [
+        {"record_id": "rec_1"},
+        {"record_id": "rec_2"},
+    ]
+
+    state_single = PendingActionState(
+        action="update_record",
+        payload={"record_id": "rec_single", "fields": {"状态": "已结案"}},
+        created_at=0,
+        expires_at=300,
+    )
+    assert state_single.iter_operation_payloads() == [
+        {"record_id": "rec_single", "fields": {"状态": "已结案"}}
+    ]
+
+
+def test_pending_action_iter_payloads_only_returns_pending_entries() -> None:
+    state = PendingActionState(
+        action="batch_update_records",
+        operations=[
+            OperationEntry(index=0, payload={"record_id": "rec_1"}, status=OperationExecutionStatus.SUCCEEDED),
+            OperationEntry(index=1, payload={"record_id": "rec_2"}, status=OperationExecutionStatus.PENDING),
+            OperationEntry(index=2, payload={"record_id": "rec_3"}, status=OperationExecutionStatus.FAILED),
+        ],
+        created_at=0,
+        expires_at=300,
+    )
+
+    assert state.iter_operation_payloads() == [{"record_id": "rec_2"}]

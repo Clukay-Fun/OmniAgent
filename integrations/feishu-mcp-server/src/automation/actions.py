@@ -16,9 +16,11 @@ from pathlib import Path
 import time
 from typing import Any
 from urllib.parse import urlparse
+import uuid
 
 import httpx
 
+from src.automation.delay_store import DelayStore, DelayedTask
 from src.config import Settings
 from src.feishu.client import FeishuAPIError
 
@@ -242,7 +244,7 @@ def _normalize_bitable_fields_payload(fields: dict[str, Any]) -> dict[str, Any]:
 class ActionExecutor:
     """动作执行器：支持 log/update/upsert/calendar/http（含重试）。"""
 
-    def __init__(self, settings: Settings, client: Any) -> None:
+    def __init__(self, settings: Settings, client: Any, delay_store: DelayStore | None = None) -> None:
         self._settings = settings
         self._client = client
         self._max_retries = max(0, int(settings.automation.action_max_retries or 0))
@@ -254,6 +256,14 @@ class ActionExecutor:
         if not runtime_state_file.is_absolute():
             runtime_state_file = Path.cwd() / runtime_state_file
         self._runtime_state_file = runtime_state_file
+
+        if delay_store is None:
+            delay_file = Path(str(settings.automation.delay_queue_file or "").strip() or "delay_queue.jsonl")
+            if not delay_file.is_absolute():
+                delay_file = Path.cwd() / delay_file
+            self._delay_store = DelayStore(delay_file)
+        else:
+            self._delay_store = delay_store
 
     def _load_table_schema(self, app_token: str, table_id: str) -> dict[str, Any] | None:
         if not self._runtime_state_file.exists():
@@ -380,6 +390,13 @@ class ActionExecutor:
                 continue
             filtered[key] = value
         return filtered, skipped
+
+    @staticmethod
+    def _to_json_safe(value: Any) -> Any:
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:
+            return str(value)
 
     @staticmethod
     def _host_matches_allowed_domain(host: str, allowed_domain: str) -> bool:
@@ -654,6 +671,57 @@ class ActionExecutor:
             "start_at": start_dt.strftime("%Y-%m-%d %H:%M"),
             "end_at": end_dt.strftime("%Y-%m-%d %H:%M"),
             "timezone": timezone,
+        }
+
+    async def _action_delay(
+        self,
+        action: dict[str, Any],
+        context: dict[str, Any],
+        app_token: str,
+        table_id: str,
+        record_id: str,
+    ) -> dict[str, Any]:
+        rendered_action = _render_value(action, self._compose_context(context))
+        if not isinstance(rendered_action, dict):
+            raise ValueError("delay action payload is invalid")
+
+        then_action = rendered_action.get("then")
+        if not isinstance(then_action, dict):
+            raise ValueError("delay action requires then object")
+
+        try:
+            delay_seconds = float(rendered_action.get("delay_seconds", 60.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("delay action delay_seconds must be a number") from exc
+        if delay_seconds < 0:
+            raise ValueError("delay action delay_seconds must be >= 0")
+        max_delay_seconds = max(0.0, float(self._settings.automation.delay_max_seconds or 0.0))
+        if max_delay_seconds > 0 and delay_seconds > max_delay_seconds:
+            raise ValueError(f"delay action delay_seconds exceeds max ({int(max_delay_seconds)}s)")
+
+        rule_id = str(context.get("rule_id") or rendered_action.get("rule_id") or "").strip()
+        payload = {
+            "action": self._to_json_safe(then_action),
+            "context": self._to_json_safe(context),
+            "app_token": str(app_token or context.get("app_token") or ""),
+            "table_id": str(table_id or context.get("table_id") or ""),
+            "record_id": str(record_id or context.get("record_id") or ""),
+        }
+        task = DelayedTask(
+            task_id=str(uuid.uuid4()),
+            rule_id=rule_id,
+            trigger_at=time.time() + delay_seconds,
+            payload=payload,
+        )
+        self._delay_store.schedule(task)
+        return {
+            "type": "delay",
+            "task_id": task.task_id,
+            "rule_id": rule_id,
+            "delay_seconds": delay_seconds,
+            "trigger_at": task.trigger_at,
+            "scheduled": True,
+            "then_type": str(then_action.get("type") or ""),
         }
 
     async def _action_bitable_upsert(
@@ -983,6 +1051,17 @@ class ActionExecutor:
                 result = await self._run_with_retry(
                     action_type,
                     lambda: self._action_http_request(action, context),
+                )
+                result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
+                results.append(result)
+                context["last_action_type"] = action_type
+                context["last_action_result"] = result
+                continue
+            if action_type == "delay":
+                started_at = time.perf_counter()
+                result = await self._run_with_retry(
+                    action_type,
+                    lambda: self._action_delay(action, context, app_token, table_id, record_id),
                 )
                 result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
                 results.append(result)

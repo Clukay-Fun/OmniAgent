@@ -36,6 +36,11 @@ from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_
 from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
+from src.core.errors import (
+    CallbackDuplicatedError,
+    PendingActionExpiredError,
+    get_user_message as get_core_user_message,
+)
 from src.core.response.models import RenderedResponse
 from src.core.skills.schema_cache import get_global_schema_cache
 from src.core.session import SessionManager
@@ -44,10 +49,12 @@ from src.llm.provider import create_llm_client
 from src.mcp.client import MCPClient
 from src.utils.feishu_api import send_message, update_message
 from src.utils.metrics import record_inbound_message
+from src.api.callback_deduper import CallbackDeduper
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+CALLBACK_DEDUP_WINDOW_SECONDS = 600
 
 
 # ============================================
@@ -66,6 +73,7 @@ _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
 _schema_sync_bridge: Any = None
 _reminder_refresh_bridge: Any = None
+_callback_deduper: CallbackDeduper | None = None
 
 
 class _SchemaSyncBridge:
@@ -128,6 +136,14 @@ def _get_deduplicator() -> "EventDeduplicator":
     return _deduplicator
 
 
+def _get_callback_deduper() -> CallbackDeduper:
+    """延迟初始化 callback 语义去重器"""
+    global _callback_deduper
+    if _callback_deduper is None:
+        _callback_deduper = CallbackDeduper(window_seconds=CALLBACK_DEDUP_WINDOW_SECONDS)
+    return _callback_deduper
+
+
 def _get_event_router() -> FeishuEventRouter:
     """延迟初始化事件路由器。"""
     global _event_router
@@ -169,8 +185,10 @@ def _get_chunk_assembler() -> ChunkAssembler:
     if _chunk_assembler is None:
         settings = _get_settings()
         cfg = settings.webhook.chunk_assembler
+        core = _get_agent_core()
         _chunk_assembler = ChunkAssembler(
             enabled=cfg.enabled,
+            state_manager=core._state_manager,
             window_seconds=cfg.window_seconds,
             stale_window_seconds=cfg.stale_window_seconds,
             max_segments=cfg.max_segments,
@@ -189,8 +207,8 @@ def _bind_chunk_expire_hook() -> None:
         return
     assembler = _chunk_assembler
 
-    def _on_session_expired(session_key: str) -> None:
-        decision = assembler.drain(session_key)
+    async def _drain_expired_chunk(session_key: str) -> None:
+        decision = await assembler.drain(session_key)
         if decision.should_process:
             logger.warning(
                 "检测到会话过期残留分片，已执行兜底冲刷",
@@ -200,6 +218,13 @@ def _bind_chunk_expire_hook() -> None:
                     "text_len": len(decision.text),
                 },
             )
+
+    def _on_session_expired(session_key: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_drain_expired_chunk(session_key))
+        except RuntimeError:
+            asyncio.run(_drain_expired_chunk(session_key))
 
     _session_manager.register_expire_listener(_on_session_expired)
     _chunk_expire_hook_bound = True
@@ -622,13 +647,35 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
     callback_payload = _extract_card_action_payload(payload)
     if callback_payload is not None:
+        expired_text = get_core_user_message(PendingActionExpiredError())
+        duplicated_text = get_core_user_message(CallbackDuplicatedError())
         event_id = str(callback_payload.get("event_id") or "")
         if event_id and settings.webhook.dedup.enabled and _get_deduplicator().is_duplicate(event_id):
-            return {"status": "ok", "reason": "已处理"}
+            return {"status": "ok", "reason": duplicated_text}
+        # S4: 语义级 callback 去重（user_id + action + payload hash）
         open_id = str(callback_payload.get("open_id") or "").strip()
-        chat_id = str(callback_payload.get("chat_id") or "").strip()
         if not open_id:
-            return {"status": "ok", "reason": "已过期"}
+            return {"status": "ok", "reason": expired_text}
+        cb_action = str(callback_payload.get("callback_action") or "").strip()
+        if not cb_action:
+            return {"status": "ok", "reason": expired_text}
+        cb_deduper = _get_callback_deduper()
+        cb_dedup_key = cb_deduper.build_key(
+            user_id=open_id,
+            action=cb_action,
+            payload=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
+        )
+        if not cb_deduper.try_acquire(cb_dedup_key):
+            logger.info(
+                "重复 callback 已短路",
+                extra={
+                    "event_code": "callback.duplicated",
+                    "open_id": open_id,
+                    "callback_action": cb_action,
+                },
+            )
+            return {"status": "ok", "reason": duplicated_text}
+        chat_id = str(callback_payload.get("chat_id") or "").strip()
         user_id = build_session_key(
             user_id=open_id,
             chat_id=chat_id,
@@ -638,7 +685,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         try:
             result = await _get_agent_core().handle_card_action_callback(
                 user_id=user_id,
-                callback_action=str(callback_payload.get("callback_action") or ""),
+                callback_action=cb_action,
                 callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
             )
         except Exception:
@@ -647,12 +694,12 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
                 extra={
                     "event_code": "webhook.callback.handle_failed",
                     "event_id": event_id,
-                    "callback_action": str(callback_payload.get("callback_action") or ""),
+                    "callback_action": cb_action,
                 },
             )
             if event_id and settings.webhook.dedup.enabled:
                 _get_deduplicator().mark(event_id)
-            return {"status": "ok", "reason": "已过期"}
+            return {"status": "ok", "reason": expired_text}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
 
@@ -661,8 +708,8 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
         text = str(result.get("text") or "")
         if str(result.get("status") or "") == "expired":
-            return {"status": "ok", "reason": text or "已过期"}
-        return {"status": "ok", "reason": text or "已处理"}
+            return {"status": "ok", "reason": text or expired_text}
+        return {"status": "ok", "reason": text or duplicated_text}
 
     header = payload.get("header") or {}
     if settings.feishu.verification_token:
@@ -876,7 +923,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         },
     )
 
-    chunk_decision = _get_chunk_assembler().ingest(
+    chunk_decision = await _get_chunk_assembler().ingest(
         scope_key=scoped_user_id,
         text=text,
     )

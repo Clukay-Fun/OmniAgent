@@ -31,8 +31,8 @@ def test_format_select_person_bool_attachment() -> None:
 
     assert single.text == "进行中"
     assert person.text == "@张三、ou_xxx"
-    assert check_true.text == "✅"
-    assert attachment.text == "📎 合同.pdf"
+    assert check_true.text == "OK 是"
+    assert attachment.text == "OK 合同.pdf"
 
 
 def test_format_multi_value_fields() -> None:
@@ -52,7 +52,7 @@ def test_format_multi_value_fields() -> None:
     assert multi_select.field_type == "multi_select"
     assert multi_select.text == "待处理、高优先级"
     assert person.text == "@张三、ou_001"
-    assert attachment.text == "📎 证据A.pdf、📎 清单.xlsx"
+    assert attachment.text == "OK 证据A.pdf、OK 清单.xlsx"
 
 
 def test_format_unknown_and_malformed_fallback() -> None:

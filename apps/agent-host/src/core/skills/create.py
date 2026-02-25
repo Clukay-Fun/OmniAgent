@@ -9,14 +9,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.skills.base import BaseSkill
 from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.response_pool import pool
 from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
 
@@ -123,6 +124,12 @@ class CreateSkill(BaseSkill):
             table_ctx.table_id = str(pending_payload.get("table_id"))
         if pending_payload.get("table_name") and not table_ctx.table_name:
             table_ctx.table_name = str(pending_payload.get("table_name"))
+        app_token = self._resolve_app_token(
+            extra=extra,
+            planner_plan=planner_plan,
+            pending_payload=pending_payload,
+            table_ctx=table_ctx,
+        )
 
         if self._is_cancel(query):
             return SkillResult(
@@ -173,6 +180,7 @@ class CreateSkill(BaseSkill):
                 required_fields=required_fields,
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
+                app_token=app_token,
                 message="案号重复待确认",
                 reply_text=(
                     f"字段“{duplicate_field}”值“{duplicate_value}”已存在（命中 {duplicate_count} 条记录）。\n"
@@ -198,6 +206,7 @@ class CreateSkill(BaseSkill):
                         required_fields=required_fields,
                         table_id=table_ctx.table_id,
                         table_name=table_ctx.table_name,
+                        app_token=app_token,
                         message="案号重复待确认",
                         reply_text=(
                             f"字段“{duplicate_field}”值“{duplicate_value}”已存在（命中 {duplicate_count} 条记录）。\n"
@@ -219,6 +228,7 @@ class CreateSkill(BaseSkill):
                 required_fields=required_fields,
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
+                app_token=app_token,
                 message="缺少必填字段",
                 reply_text=self._build_missing_fields_reply(missing_fields),
                 duplicate_checked=duplicate_checked,
@@ -232,6 +242,7 @@ class CreateSkill(BaseSkill):
                 required_fields=required_fields,
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
+                app_token=app_token,
                 message="等待补录字段",
                 reply_text="请按“字段是值”的格式继续补录子表数据。",
                 duplicate_checked=duplicate_checked,
@@ -246,6 +257,7 @@ class CreateSkill(BaseSkill):
                 required_fields=required_fields,
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
+                app_token=app_token,
                 message="等待确认创建",
                 reply_text=self._build_confirm_reply(fields),
                 awaiting_confirm=True,
@@ -260,6 +272,7 @@ class CreateSkill(BaseSkill):
                 required_fields=required_fields,
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
+                app_token=app_token,
                 message="等待确认创建",
                 reply_text=self._build_confirm_reply(fields),
                 awaiting_confirm=True,
@@ -298,13 +311,17 @@ class CreateSkill(BaseSkill):
                 table_name=table_ctx.table_name,
                 fields=fields,
                 idempotency_key=idempotency_key,
+                app_token=app_token,
             )
             if not outcome.success:
+                failure_data = dict(outcome.data) if isinstance(outcome.data, dict) else {}
+                failure_data.setdefault("error_code", "create_record_failed")
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
+                    data=failure_data,
                     message=outcome.message,
-                    reply_text=outcome.reply_text or pool.pick("error", "创建记录失败，请稍后重试。"),
+                    reply_text=outcome.reply_text or get_user_message_by_code("create_record_failed"),
                 )
 
             return SkillResult(
@@ -320,8 +337,9 @@ class CreateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "create_record_failed"},
                 message=str(e),
-                reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
+                reply_text=get_user_message_by_code("create_record_failed"),
             )
 
     def _parse_fields(self, query: str) -> dict[str, Any]:
@@ -434,6 +452,7 @@ class CreateSkill(BaseSkill):
         required_fields: list[str],
         table_id: str | None,
         table_name: str | None,
+        app_token: str | None,
         message: str,
         reply_text: str,
         awaiting_confirm: bool = False,
@@ -457,6 +476,7 @@ class CreateSkill(BaseSkill):
             "skip_duplicate_check": skip_duplicate_check,
             "table_id": table_id,
             "table_name": table_name,
+            "app_token": app_token,
         }
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
@@ -474,6 +494,35 @@ class CreateSkill(BaseSkill):
             message=message,
             reply_text=reply_text,
         )
+
+    def _resolve_app_token(
+        self,
+        *,
+        extra: dict[str, Any],
+        planner_plan: dict[str, Any] | None,
+        pending_payload: dict[str, Any],
+        table_ctx: Any,
+    ) -> str | None:
+        candidates: list[Any] = [
+            pending_payload.get("app_token"),
+            getattr(table_ctx, "app_token", None),
+            extra.get("app_token"),
+        ]
+        active_record = extra.get("active_record")
+        if isinstance(active_record, dict):
+            candidates.append(active_record.get("app_token"))
+        if isinstance(planner_plan, dict):
+            params = planner_plan.get("params")
+            if isinstance(params, dict):
+                candidates.append(params.get("app_token"))
+        for key in ("BITABLE_APP_TOKEN", "FEISHU_BITABLE_APP_TOKEN", "APP_TOKEN"):
+            candidates.append(os.getenv(key))
+
+        for raw in candidates:
+            token = str(raw or "").strip()
+            if token:
+                return token
+        return None
 
     async def _count_duplicates(self, field_name: str, value: str, table_id: str | None) -> int:
         if not field_name or not value:

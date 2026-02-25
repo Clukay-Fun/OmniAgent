@@ -5,6 +5,8 @@ import sys
 import types
 from types import SimpleNamespace
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
@@ -69,7 +71,7 @@ def test_process_message_sends_formatter_payload(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="请帮我看一下案件进展", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -133,7 +135,7 @@ def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="删除第一个。", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -190,7 +192,7 @@ def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatc
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到文件消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -259,7 +261,7 @@ def test_process_image_message_sends_status_and_ocr_summary(monkeypatch) -> None
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到图片消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -328,7 +330,7 @@ def test_process_audio_message_transcript_flows_as_text(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到语音消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -485,3 +487,298 @@ def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
 
     assert result["status"] == "ok"
     assert "过期" in result["reason"]
+
+
+# ── S4: callback dedup ──────────────────────────────────────────────
+
+import time as _time
+
+from src.api.callback_deduper import CallbackDeduper  # noqa: E402
+
+
+def test_callback_deduper_detects_duplicate() -> None:
+    deduper = CallbackDeduper(window_seconds=60)
+    key = deduper.build_key(user_id="u1", action="create_record_confirm", payload={"a": 1})
+    assert deduper.try_acquire(key) is True
+    assert deduper.try_acquire(key) is False
+    assert deduper.is_duplicate(key) is True
+
+
+def test_callback_deduper_expires_after_window() -> None:
+    deduper = CallbackDeduper(window_seconds=1)
+    key = deduper.build_key(user_id="u1", action="x")
+    deduper.mark(key)
+    # Artificially expire
+    deduper._cache[key] = _time.time() - 2
+    assert deduper.is_duplicate(key) is False
+
+
+def test_callback_deduper_key_is_deterministic() -> None:
+    deduper = CallbackDeduper()
+    k1 = deduper.build_key(user_id="u1", action="a", payload={"x": 1, "y": 2})
+    k2 = deduper.build_key(user_id="u1", action="a", payload={"y": 2, "x": 1})
+    assert k1 == k2
+
+
+# ── S1 修复验证：triplet 校验为必经路径 ──────────────────────────────
+
+from src.core.skills.action_execution_service import ActionExecutionService
+
+
+def _make_action_service() -> ActionExecutionService:
+    """构造一个最小 ActionExecutionService（使用 mock data_writer）。"""
+    from unittest.mock import AsyncMock, MagicMock
+    dw = MagicMock()
+    dw.create = AsyncMock()
+    dw.update = AsyncMock()
+    dw.delete = AsyncMock()
+    return ActionExecutionService(data_writer=dw, linker=MagicMock())
+
+
+def test_s1_execute_create_rejects_missing_table_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(
+        svc.execute_create(
+            table_id=None,
+            table_name="案件",
+            fields={"案号": "A-1"},
+            idempotency_key=None,
+            app_token="app_test",
+        )
+    )
+    assert outcome.success is False
+    assert "table_id" in outcome.message
+
+
+def test_s1_execute_update_rejects_missing_table_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(svc.execute_update(
+        action_name="update_record", table_id="", table_name="案件",
+        record_id="rec_001", fields={"案件状态": "已结案"},
+        source_fields={}, idempotency_key=None,
+        app_token="app_test",
+    ))
+    assert outcome.success is False
+    assert "table_id" in outcome.message
+
+
+def test_s1_execute_delete_rejects_missing_record_id() -> None:
+    svc = _make_action_service()
+    outcome = asyncio.run(svc.execute_delete(
+        table_id="tbl_001", table_name="案件",
+        record_id="", case_no="A-1", idempotency_key=None,
+        app_token="app_test",
+    ))
+    assert outcome.success is False
+    assert "record_id" in outcome.message
+
+
+# ── S2 修复验证：manager 集成状态机 ──────────────────────────────────
+
+from src.core.state.manager import ConversationStateManager
+from src.core.state.memory_store import MemoryStateStore
+from src.core.state.models import OperationExecutionStatus, PendingActionStatus
+
+
+def test_s2_manager_confirm_pending_action() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    mgr.set_pending_action("u1", action="create_record")
+    pa = mgr.confirm_pending_action("u1")
+    assert pa is not None
+    assert pa.status == PendingActionStatus.EXECUTED
+
+
+def test_s2_manager_cancel_pending_action() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    mgr.set_pending_action("u1", action="delete_record")
+    pa = mgr.cancel_pending_action("u1")
+    assert pa is not None
+    assert pa.status == PendingActionStatus.INVALIDATED
+
+
+def test_s2_manager_expired_pending_action_cleared() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store, pending_action_ttl_seconds=1)
+    mgr.set_pending_action("u1", action="update_record")
+    # 手动设置过期
+    state = store.get("u1")
+    state.pending_action.expires_at = _time.time() - 5
+    store.set("u1", state)
+    # get_state 会触发过期清理
+    refreshed = mgr.get_state("u1")
+    assert refreshed.pending_action is None
+    history = refreshed.extras.get("pending_action_history")
+    assert isinstance(history, list)
+    assert history[-1]["status"] == "invalidated"
+
+
+def test_s2_manager_pending_action_supports_batch_operations() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    operations = [
+        {"record_id": "rec_1", "fields": {"案件状态": "进行中"}},
+        {"record_id": "rec_2", "fields": {"案件状态": "已结案"}},
+    ]
+
+    mgr.set_pending_action(
+        "u_batch",
+        action="batch_update_records",
+        payload={"table_id": "tbl_main"},
+        operations=operations,
+    )
+
+    pending = mgr.get_pending_action("u_batch")
+
+    assert pending is not None
+    assert pending.action == "batch_update_records"
+    assert [item.payload for item in pending.operations] == operations
+    assert all(item.status == OperationExecutionStatus.PENDING for item in pending.operations)
+
+
+# ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
+
+def test_s4_callback_deduper_is_imported_in_webhook() -> None:
+    """验证 CallbackDeduper 已在 webhook.py 中被导入和使用。"""
+    import importlib
+    webhook_mod = importlib.import_module("src.api.webhook")
+    assert hasattr(webhook_mod, "CallbackDeduper")
+    assert hasattr(webhook_mod, "_get_callback_deduper")
+
+
+def test_s4_callback_deduper_window_uses_600s(monkeypatch) -> None:
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+    deduper = webhook_module._get_callback_deduper()
+    assert deduper._window == 600
+
+
+def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
+    class _FakeRequest:
+        def __init__(self, payload: dict[str, object]):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    calls = {"count": 0}
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
+            _ = user_id, callback_action, callback_value
+            calls["count"] += 1
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
+    )
+
+    payload_1 = {
+        "header": {"event_id": "evt_cb_sem_1"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_sem_u1"}},
+            "open_chat_id": "oc_sem_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+    payload_2 = {
+        "header": {"event_id": "evt_cb_sem_2"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_sem_u1"}},
+            "open_chat_id": "oc_sem_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+    monkeypatch.setattr(webhook_module, "_deduplicator", None)
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+
+    with caplog.at_level("INFO"):
+        first = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_1)))
+        second = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_2)))
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    assert "已处理" in second["reason"]
+    assert calls["count"] == 1
+    assert any(getattr(record, "event_code", "") == "callback.duplicated" for record in caplog.records)
+
+
+def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> None:
+    class _FakeRequest:
+        def __init__(self, payload: dict[str, object]):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    calls = {"count": 0}
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
+            _ = user_id, callback_action, callback_value
+            calls["count"] += 1
+            await asyncio.sleep(0.02)
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
+    )
+
+    payload_1 = {
+        "header": {"event_id": "evt_cb_concurrent_1"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_concurrent_u1"}},
+            "open_chat_id": "oc_concurrent_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+    payload_2 = {
+        "header": {"event_id": "evt_cb_concurrent_2"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_concurrent_u1"}},
+            "open_chat_id": "oc_concurrent_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+    monkeypatch.setattr(webhook_module, "_deduplicator", None)
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+
+    async def _invoke_both() -> tuple[dict[str, object], dict[str, object]]:
+        return await asyncio.gather(
+            webhook_module.feishu_webhook(_FakeRequest(payload_1)),
+            webhook_module.feishu_webhook(_FakeRequest(payload_2)),
+        )
+
+    first, second = asyncio.run(_invoke_both())
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    assert calls["count"] == 1

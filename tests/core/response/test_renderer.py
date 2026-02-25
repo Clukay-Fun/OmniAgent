@@ -354,6 +354,37 @@ def test_render_pending_close_action_uses_close_record_callbacks() -> None:
     assert actions["cancel"]["callback_action"] == "close_record_cancel"
 
 
+def test_render_pending_batch_action_includes_retry_callback() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "请确认批量更新",
+            "data": {
+                "table_name": "案件项目总库",
+                "pending_action": {
+                    "action": "batch_update_records",
+                    "payload": {
+                        "operations": [
+                            {"record_id": "rec_1", "fields": {"进展": "已联系"}},
+                            {"record_id": "rec_2", "fields": {"进展": "已补证"}},
+                        ]
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "action.confirm"
+    actions = response.card_template.params["actions"]
+    assert actions["confirm"]["callback_action"] == "batch_update_records_confirm"
+    assert actions["cancel"]["callback_action"] == "batch_update_records_cancel"
+    assert actions["retry"]["callback_action"] == "batch_update_records_retry"
+
+
 def test_render_pending_update_collect_fields_uses_update_guide_template() -> None:
     renderer = build_renderer()
 
@@ -432,3 +463,66 @@ def test_load_templates_falls_back_to_defaults_when_yaml_invalid(tmp_path: Path)
     response = renderer.render({"success": False, "skill_name": "executor"})
 
     assert response.text_fallback == "处理失败：executor"
+
+
+# ── S3: typed error → error catalog → user message ──────────────────
+
+from src.core.errors import (  # noqa: E402
+    CoreError,
+    PendingActionExpiredError,
+    PendingActionNotFoundError,
+    LocatorTripletMissingError,
+    CallbackDuplicatedError,
+    get_user_message_by_code,
+    get_user_message,
+)
+
+
+def test_typed_error_has_correct_code() -> None:
+    assert PendingActionExpiredError().code == "pending_action_expired"
+    assert PendingActionNotFoundError().code == "pending_action_not_found"
+    assert LocatorTripletMissingError().code == "locator_triplet_missing"
+    assert CallbackDuplicatedError().code == "callback_duplicated"
+
+
+def test_error_catalog_returns_user_message() -> None:
+    msg = get_user_message(PendingActionExpiredError())
+    assert "过期" in msg or "expired" in msg.lower()
+
+
+def test_error_catalog_returns_fallback_for_unknown_code() -> None:
+    err = CoreError("some error", code="totally_unknown_code_xyz")
+    msg = get_user_message(err)
+    assert msg  # should return something, not empty
+
+
+def test_error_catalog_lookup_by_code_falls_back_to_unknown_message() -> None:
+    msg = get_user_message_by_code("totally_unknown_code_xyz")
+    assert msg == "操作失败，请稍后重试"
+
+
+def test_renderer_failure_uses_catalog_message_when_error_code_exists() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": False,
+            "skill_name": "UpdateSkill",
+            "message": "inline message should not leak",
+            "data": {"error_code": "pending_action_expired"},
+        }
+    )
+
+    assert response.text_fallback == "操作已过期，请重试"
+    assert response.card_template is not None
+    assert response.card_template.params["error_code"] == "pending_action_expired"
+
+
+def test_error_catalog_lookup_by_code_supports_template_kwargs() -> None:
+    msg = get_user_message_by_code("delete_record_failed", detail="RecordIdNotFound")
+    assert msg == "删除失败：RecordIdNotFound"
+
+
+def test_error_catalog_lookup_by_code_ignores_missing_template_kwargs() -> None:
+    msg = get_user_message_by_code("delete_record_failed")
+    assert msg == "删除失败：{detail}"

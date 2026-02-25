@@ -12,6 +12,8 @@ from src.automation.schema import SchemaStateStore, SchemaWatcher, WebhookNotifi
 from src.automation.schema_poller import SchemaPoller
 from src.automation.deadletter import DeadLetterStore
 from src.automation.runlog import RunLogStore
+from src.automation.delay_store import DelayedTask, DelayStore
+from src.automation.delay_scheduler import DelayScheduler
 
 __all__ = [
     "AutomationService",
@@ -31,4 +33,7 @@ __all__ = [
     "WebhookNotifier",
     "DeadLetterStore",
     "RunLogStore",
+    "DelayedTask",
+    "DelayStore",
+    "DelayScheduler",
 ]

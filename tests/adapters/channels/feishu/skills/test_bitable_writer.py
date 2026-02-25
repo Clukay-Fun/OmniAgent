@@ -202,3 +202,19 @@ def test_create_response_missing_expected_keys_returns_failure_without_crash() -
     result = asyncio.run(writer.create("tbl_cases", {"案号": "A-008"}))
 
     assert result.success is False
+
+
+# ── S1: locator triplet adapter validation ──────────────────────────
+
+
+from src.core.skills.locator_triplet import validate_locator_triplet  # noqa: E402
+
+
+def test_bitable_writer_uses_validated_triplet() -> None:
+    """Adapter layer: validate_locator_triplet rejects missing fields."""
+    import pytest
+
+    with pytest.raises(ValueError) as exc:
+        validate_locator_triplet(app_token=None, table_id="tbl_1")
+    assert "missing locator triplet" in str(exc.value)
+

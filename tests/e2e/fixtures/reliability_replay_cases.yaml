@@ -1,0 +1,99 @@
+# 8 条可靠性回放用例
+# 每条 case 描述 given → when → then 三段式
+
+- id: triplet_missing_create
+  title: "创建时 table_id 缺失 → 拒绝"
+  given:
+    action: create_record
+    context:
+      table_id: null
+      app_token: "app_abc"
+      fields: { "案号": "A-001", "委托人": "张三", "案由": "合同纠纷" }
+  expect:
+    success: false
+    error_contains: "missing locator triplet"
+
+- id: triplet_missing_update
+  title: "更新时 record_id 缺失 → 拒绝"
+  given:
+    action: update_record
+    context:
+      table_id: "tbl_001"
+      app_token: "app_abc"
+      record_id: null
+      fields: { "案件状态": "已结案" }
+      require_record_id: true
+  expect:
+    success: false
+    error_contains: "record_id"
+
+- id: pending_action_confirm
+  title: "正常确认 → CONFIRMABLE → EXECUTED"
+  given:
+    action: pending_lifecycle
+    context:
+      initial_status: confirmable
+      transition: executed
+      ttl_seconds: 300
+  expect:
+    success: true
+    final_status: executed
+
+- id: pending_action_expired
+  title: "过期后执行 → 自动转 INVALIDATED → 拒绝执行"
+  given:
+    action: pending_lifecycle
+    context:
+      initial_status: confirmable
+      transition: executed
+      ttl_seconds: -1
+  expect:
+    success: false
+    final_status: invalidated
+
+- id: pending_action_cancel
+  title: "取消 → CONFIRMABLE → INVALIDATED"
+  given:
+    action: pending_lifecycle
+    context:
+      initial_status: confirmable
+      transition: invalidated
+      ttl_seconds: 300
+  expect:
+    success: true
+    final_status: invalidated
+
+- id: typed_error_catalog_lookup
+  title: "typed error 通过 catalog 解析用户文案"
+  given:
+    action: error_catalog
+    context:
+      error_code: pending_action_expired
+  expect:
+    success: true
+    message_contains: "过期"
+
+- id: callback_dedup_short_circuit
+  title: "重复 callback 被去重短路"
+  given:
+    action: callback_dedup
+    context:
+      user_id: "u1"
+      callback_action: "create_record_confirm"
+      payload: { "record_id": "rec_001" }
+      repeat_count: 2
+  expect:
+    first_is_duplicate: false
+    second_is_duplicate: true
+
+- id: happy_path_create_confirm
+  title: "正常创建 + 确认全链路"
+  given:
+    action: happy_path
+    context:
+      triplet: { "app_token": "app_abc", "table_id": "tbl_001" }
+      fields: { "案号": "A-100", "委托人": "李四", "案由": "知产纠纷" }
+  expect:
+    triplet_valid: true
+    pending_status: confirmable
+    callback_dedup: false

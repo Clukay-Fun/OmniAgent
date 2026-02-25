@@ -79,6 +79,38 @@ python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 - Agent：`http://localhost:8080/health`（容器开发态）
 - 工具列表：`http://localhost:8081/mcp/tools`
 
+### 4) Delay 队列运维（MCP）
+
+当自动化规则使用 `delay` action 时，可用以下接口查看/取消任务。
+
+前置条件：在 `integrations/feishu-mcp-server/.env` 配置至少一个鉴权项（推荐 API Key）：
+
+```env
+AUTOMATION_WEBHOOK_API_KEY=your_key
+# 或签名模式
+# AUTOMATION_WEBHOOK_SIGNATURE_SECRET=your_secret
+```
+
+查询任务：
+
+```bash
+curl -X GET "http://localhost:8081/automation/delay/tasks?status=scheduled&limit=50" \
+  -H "x-automation-key: ${AUTOMATION_WEBHOOK_API_KEY}"
+```
+
+取消任务：
+
+```bash
+curl -X POST "http://localhost:8081/automation/delay/<task_id>/cancel" \
+  -H "x-automation-key: ${AUTOMATION_WEBHOOK_API_KEY}"
+```
+
+常见返回：
+
+- `401`：鉴权失败或未配置鉴权
+- `404`：`task_id` 不存在
+- `400`：查询参数非法（如 `status` 不在允许列表）
+
 ## 阶段二：备案中（冻结公网上线）
 
 目标：保持本地可迭代，暂停公网正式发布。

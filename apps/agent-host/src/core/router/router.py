@@ -9,13 +9,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.intent import IntentResult, SkillMatch
-from src.core.types import SkillContext, SkillResult
+from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
 
 if TYPE_CHECKING:
     from src.core.skills.base import BaseSkill
@@ -139,6 +141,7 @@ class SkillRouter:
         from src.utils.exceptions import (
             LLMTimeoutError,
             MCPTimeoutError,
+            SkillTimeoutError,
             get_user_message,
         )
 
@@ -164,8 +167,22 @@ class SkillRouter:
             record_skill_execution(normalized_name, "not_found", 0)
             return self._fallback_result(f"技能 {normalized_name} 未注册")
 
+        global_default = float(self._config.get("defaults", {}).get("timeout_seconds", 10.0))
+        skills_cfg = self._config.get("skills")
+        skill_cfg: dict[str, Any] = {}
+        if isinstance(skills_cfg, dict):
+            resolved_cfg = skills_cfg.get(normalized_name)
+            if isinstance(resolved_cfg, dict):
+                skill_cfg = resolved_cfg
+            else:
+                alias_key = normalized_name.replace("Skill", "").lower()
+                alias_cfg = skills_cfg.get(alias_key)
+                if isinstance(alias_cfg, dict):
+                    skill_cfg = alias_cfg
+        timeout = float(skill_cfg.get("timeout_seconds", global_default))
+
         start_time = time.perf_counter()
-        status = "success"
+        status = SkillExecutionStatus.SUCCESS
 
         try:
             logger.info(
@@ -175,12 +192,13 @@ class SkillRouter:
                     "skill": normalized_name,
                     "query": context.query,
                     "hop": context.hop_count,
+                    "timeout_seconds": timeout,
                 },
             )
-            result = await skill.execute(context)
+            result = await asyncio.wait_for(skill.execute(context), timeout=timeout)
 
             if not result.success:
-                status = "failure"
+                status = SkillExecutionStatus.FAILED
 
             logger.info(
                 "技能执行完成",
@@ -194,8 +212,24 @@ class SkillRouter:
                 },
             )
             return result
+        except asyncio.TimeoutError:
+            status = SkillExecutionStatus.TIMEOUT
+            logger.warning(
+                "技能执行超时: %s (>%ss)",
+                normalized_name,
+                timeout,
+                extra={"event_code": "router.skill.timeout", "skill": normalized_name},
+            )
+            error = SkillTimeoutError(skill_name=normalized_name, timeout_seconds=timeout)
+            reply_text = get_user_message(error) or "抱歉，操作响应超时，请稍后重试。"
+            return SkillResult(
+                success=False,
+                skill_name=normalized_name,
+                message=str(error),
+                reply_text=reply_text,
+            )
         except (LLMTimeoutError, MCPTimeoutError) as e:
-            status = "timeout"
+            status = SkillExecutionStatus.TIMEOUT
             logger.warning(
                 "技能执行超时: %s - %s",
                 normalized_name,
@@ -209,7 +243,7 @@ class SkillRouter:
                 reply_text=get_user_message(e),
             )
         except Exception as e:
-            status = "error"
+            status = SkillExecutionStatus.ERROR
             logger.error(
                 "技能执行异常: %s - %s",
                 normalized_name,
@@ -220,12 +254,13 @@ class SkillRouter:
             return SkillResult(
                 success=False,
                 skill_name=normalized_name,
+                data={"error_code": "router_processing_failed"},
                 message=f"技能执行出错：{str(e)}",
-                reply_text="抱歉，处理请求时遇到问题，请稍后重试。",
+                reply_text=get_user_message_by_code("router_processing_failed"),
             )
         finally:
             duration = time.perf_counter() - start_time
-            record_skill_execution(normalized_name, status, duration)
+            record_skill_execution(normalized_name, status.value, duration)
 
     async def _execute_chain(
         self,
@@ -296,8 +331,9 @@ class SkillRouter:
         return SkillResult(
             success=False,
             skill_name="fallback",
+            data={"error_code": "router_fallback_unavailable"},
             message=message,
-            reply_text='抱歉，我暂时无法处理您的请求。试试问我"本周有什么庭"吧！',
+            reply_text=get_user_message_by_code("router_fallback_unavailable"),
         )
 
 

@@ -163,7 +163,7 @@ def test_build_params_company_query_downgrades_person_exact_to_keyword() -> None
 def test_empty_result_prefer_message_uses_message_text() -> None:
     skill = _build_skill()
     result = skill._empty_result("该时间范围内没有开庭安排", prefer_message=True)
-    assert result.reply_text == "该时间范围内没有开庭安排"
+    assert "该时间范围内没有开庭安排" in result.reply_text
 
 
 def test_format_case_result_adds_query_navigation_pending_action_when_enabled() -> None:

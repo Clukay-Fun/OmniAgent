@@ -9,13 +9,16 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from src.core.state.models import (
     ActiveRecordState,
     ConversationState,
     LastResultState,
+    MessageChunkState,
+    OperationEntry,
     PendingActionState,
+    PendingActionStatus,
     PaginationState,
     PendingDeleteState,
 )
@@ -24,6 +27,40 @@ from src.core.state.store import StateStore
 
 class ConversationStateManager:
     """会话状态管理器（基于 StateStore）。"""
+
+    CHUNK_STALE_SECONDS = 9.0
+
+    @staticmethod
+    def _resolve_pending_action_status(action: str, payload: dict[str, Any]) -> PendingActionStatus:
+        explicit = str(payload.get("status") or "").strip().lower()
+        if explicit:
+            try:
+                return PendingActionStatus(explicit)
+            except ValueError:
+                pass
+
+        if action == "update_collect_fields":
+            return PendingActionStatus.COLLECTING
+
+        awaiting_confirm = bool(payload.get("awaiting_confirm"))
+        missing_fields = payload.get("missing_fields")
+        if isinstance(missing_fields, list) and missing_fields and not awaiting_confirm:
+            return PendingActionStatus.COLLECTING
+
+        if awaiting_confirm:
+            return PendingActionStatus.CONFIRMABLE
+
+        if action.startswith("batch_") or action in {
+            "create_record",
+            "update_record",
+            "close_record",
+            "delete_record",
+            "create_reminder",
+            "query_list_navigation",
+        }:
+            return PendingActionStatus.CONFIRMABLE
+
+        return PendingActionStatus.COLLECTING
 
     def __init__(
         self,
@@ -73,6 +110,26 @@ class ConversationStateManager:
         if state.active_record and state.active_record.is_expired(now):
             state.active_record = None
         if state.pending_action and state.pending_action.is_expired(now):
+            # S2: 用状态机迁移而非直接清空，保留 INVALIDATED 记录
+            if state.pending_action.status in {
+                PendingActionStatus.COLLECTING,
+                PendingActionStatus.CONFIRMABLE,
+            }:
+                try:
+                    state.pending_action.transition_to(PendingActionStatus.INVALIDATED, now=now)
+                except ValueError:
+                    pass
+            pending_history = state.extras.get("pending_action_history")
+            if not isinstance(pending_history, list):
+                pending_history = []
+            pending_history.append(
+                {
+                    "action": state.pending_action.action,
+                    "status": str(getattr(state.pending_action.status, "value", state.pending_action.status)),
+                    "at": now,
+                }
+            )
+            state.extras["pending_action_history"] = pending_history[-20:]
             state.pending_action = None
 
         state.updated_at = now
@@ -296,23 +353,74 @@ class ConversationStateManager:
         state = self.get_state(user_id)
         return state.active_record
 
+    def get_message_chunk(
+        self,
+        user_id: str,
+        now: float | None = None,
+        enforce_stale: bool = True,
+    ) -> MessageChunkState | None:
+        state = self.get_state(user_id)
+        chunk = state.message_chunk
+        if not enforce_stale:
+            return chunk
+        current = float(now) if now is not None else time.time()
+        if chunk and (current - chunk.last_at > self.CHUNK_STALE_SECONDS):
+            state.message_chunk = None
+            state.updated_at = current
+            self._store.set(user_id, state)
+            return None
+        return chunk
+
+    def set_message_chunk(self, user_id: str, chunk: MessageChunkState | None) -> None:
+        state = self.get_state(user_id)
+        state.message_chunk = chunk
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+
     def set_pending_action(
         self,
         user_id: str,
         action: str,
         payload: dict[str, Any] | None = None,
+        operations: list[dict[str, Any] | OperationEntry] | None = None,
         ttl_seconds: int | None = None,
     ) -> None:
         now = time.time()
         state = self.get_state(user_id)
+        normalized_operations: list[OperationEntry] = []
+        if isinstance(operations, list):
+            for index, item in enumerate(operations):
+                if isinstance(item, OperationEntry):
+                    normalized_operations.append(item)
+                elif isinstance(item, dict):
+                    normalized_operations.append(OperationEntry(index=index, payload=dict(item)))
         state.pending_action = PendingActionState(
             action=str(action).strip(),
             payload=payload or {},
+            operations=cast(list[OperationEntry], normalized_operations),
+            status=self._resolve_pending_action_status(str(action).strip(), payload or {}),
             created_at=now,
             expires_at=now + (ttl_seconds if ttl_seconds is not None else self._pending_action_ttl),
         )
         state.updated_at = now
         self._store.set(user_id, state)
+
+    def update_pending_action_operations(self, user_id: str, pending: PendingActionState) -> PendingActionState | None:
+        """Persist per-operation status updates for the current pending action."""
+        state = self.get_state(user_id)
+        current = state.pending_action
+        if current is None:
+            return None
+
+        if str(current.action or "").strip() != str(pending.action or "").strip():
+            return None
+
+        current.operations = list(pending.operations)
+        current.payload = dict(pending.payload) if isinstance(pending.payload, dict) else {}
+        current.status = pending.status
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+        return current
 
     def get_pending_action(self, user_id: str) -> PendingActionState | None:
         state = self.get_state(user_id)
@@ -323,3 +431,33 @@ class ConversationStateManager:
         state.pending_action = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
+
+    def confirm_pending_action(self, user_id: str) -> PendingActionState | None:
+        """S2: 确认 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        state = self.get_state(user_id)
+        pa = state.pending_action
+        if pa is None:
+            return None
+        now = time.time()
+        try:
+            pa.transition_to(PendingActionStatus.EXECUTED, now=now)
+        except ValueError:
+            return None
+        state.updated_at = now
+        self._store.set(user_id, state)
+        return pa
+
+    def cancel_pending_action(self, user_id: str) -> PendingActionState | None:
+        """S2: 取消 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        state = self.get_state(user_id)
+        pa = state.pending_action
+        if pa is None:
+            return None
+        now = time.time()
+        try:
+            pa.transition_to(PendingActionStatus.INVALIDATED, now=now)
+        except ValueError:
+            return None
+        state.updated_at = now
+        self._store.set(user_id, state)
+        return pa

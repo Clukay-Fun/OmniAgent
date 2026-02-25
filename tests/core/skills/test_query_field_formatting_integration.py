@@ -89,9 +89,9 @@ def test_query_skill_formats_fields_with_schema_cache() -> None:
     assert result.success is True
     assert "@张三" in result.reply_text
     assert "¥1，234.56" in result.reply_text
-    assert "✅" in result.reply_text
+    assert "OK 是" in result.reply_text
 
     records = result.data.get("records") or []
     assert records[0]["fields_text"]["金额"] == "¥1,234.56"
     assert records[0]["fields_text"]["标签"] == "重点、本周"
-    assert records[0]["fields_text"]["附件"] == "📎 证据A.pdf"
+    assert records[0]["fields_text"]["附件"] == "OK 证据A.pdf"

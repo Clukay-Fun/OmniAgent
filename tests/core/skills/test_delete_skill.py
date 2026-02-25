@@ -39,7 +39,7 @@ class _FakeLinker:
 
 class _ReadOnlyTableAdapter:
     async def resolve_table_context(self, _query: str, _extra: dict[str, Any] | None, _last_result: dict[str, Any] | None):
-        return type("Ctx", (), {"table_id": "tbl_ro", "table_name": "团队成员工作总览（只读）"})()
+        return type("Ctx", (), {"table_id": "tbl_ro", "table_name": "团队成员工作总览（只读）", "app_token": "app_test"})()
 
     def extract_table_id_from_record(self, _record: dict[str, Any] | None) -> str | None:
         return "tbl_ro"
@@ -91,7 +91,7 @@ def test_delete_skill_callback_confirm_executes_delete(monkeypatch) -> None:
                     "callback_intent": "confirm",
                     "pending_action": {
                         "action": "delete_record",
-                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1"},
+                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1", "app_token": "app_test"},
                     },
                 },
             )
@@ -115,7 +115,7 @@ def test_delete_skill_requires_full_confirm_phrase(monkeypatch) -> None:
                 extra={
                     "pending_action": {
                         "action": "delete_record",
-                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1"},
+                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1", "app_token": "app_test"},
                     }
                 },
             )
@@ -138,7 +138,7 @@ def test_delete_skill_passes_idempotency_key(monkeypatch) -> None:
                 extra={
                     "pending_action": {
                         "action": "delete_record",
-                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1"},
+                        "payload": {"record_id": "rec_2", "case_no": "A-2", "table_id": "tbl_1", "app_token": "app_test"},
                     }
                 },
             )

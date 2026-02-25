@@ -1,0 +1,102 @@
+# 中央错误文案映射
+# 格式: error_code -> { user_message: "用户可见文案" }
+# renderer 通过 get_user_message() 使用
+
+pending_action_expired:
+  user_message: "操作已过期，请重试"
+
+pending_action_not_found:
+  user_message: "未找到对应的待确认操作"
+
+locator_triplet_missing:
+  user_message: "写入参数缺失，请重试"
+
+callback_duplicated:
+  user_message: "该操作已处理，无需重复点击"
+
+write_permission_denied:
+  user_message: "暂无写入权限，请联系管理员"
+
+write_read_only_table:
+  user_message: "该表为只读视图，禁止执行新增、修改、关闭或删除操作。"
+
+create_record_failed:
+  user_message: "创建记录失败，请稍后重试。"
+
+update_record_failed:
+  user_message: "更新失败，请稍后重试。"
+
+update_record_retryable_failed:
+  user_message: "更新失败：{detail}\n请回复“确认”重试，或回复“取消”终止。"
+
+delete_record_failed:
+  user_message: "删除失败：{detail}"
+
+delete_disabled:
+  user_message: "当前环境未开启删除能力，请联系管理员开启 CRUD_DELETE_ENABLED。"
+
+delete_target_required:
+  user_message: "请先查询要删除的案件，例如：查询案号XXX的案件"
+
+delete_record_id_missing:
+  user_message: "无法获取记录 ID，删除失败。"
+
+delete_pending_not_found:
+  user_message: "没有找到待删除的记录，请重新操作。"
+
+update_record_not_found_hint:
+  user_message: "未找到对应案件，请确认案号/项目ID是否正确，或先查询后再更新。"
+
+update_target_required:
+  user_message: "请先提供案号/项目ID，或先查询后再更新。"
+
+update_record_id_missing:
+  user_message: "无法获取记录 ID，更新失败。"
+
+update_pending_expired:
+  user_message: "本次更新确认已超时，请重新发起更新。"
+
+update_pending_record_missing:
+  user_message: "更新失败：缺少目标记录，请重新发起。"
+
+update_record_deleted:
+  user_message: "目标记录不存在或已被删除，请重新查询定位后再更新。"
+
+update_collect_context_expired:
+  user_message: "本次修改上下文已过期，请重新指定要修改的案件。"
+
+update_collect_record_missing:
+  user_message: "未找到待修改记录，请重新指定案件后再试。"
+
+update_repair_subtable_missing:
+  user_message: "补录失败：未找到目标子表，请重新发起操作。"
+
+update_repair_record_missing:
+  user_message: "未找到可补录的子表记录，请重新发起操作。"
+
+update_repair_failed:
+  user_message: "子表补录失败：{detail}\n请修正后继续。"
+
+router_processing_failed:
+  user_message: "抱歉，处理请求时遇到问题，请稍后重试。"
+
+router_fallback_unavailable:
+  user_message: "抱歉，我暂时无法处理您的请求。试试问我\"本周有什么庭\"吧！"
+
+batch_all_succeeded:
+  user_message: "批量操作已完成，共执行 {total} 条。"
+
+batch_partial_success:
+  user_message: "共 {total} 条操作，{succeeded} 条成功，{failed} 条失败。失败操作：{failure_summary}"
+
+batch_all_failed:
+  user_message: "全部 {total} 条操作均失败。首条失败原因：{first_error}"
+
+batch_retry_available:
+  user_message: "您可以点击「重试」继续执行未完成的 {remaining} 条操作。"
+
+batch_cancelled:
+  user_message: "好的，已取消批量操作。"
+
+unknown_error:
+  user_message: "操作失败，请稍后重试"

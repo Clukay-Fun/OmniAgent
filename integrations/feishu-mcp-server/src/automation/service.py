@@ -17,6 +17,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from src.automation.checkpoint import CheckpointStore
+from src.automation.delay_store import (
+    CANCELLED,
+    COMPLETED,
+    EXECUTING,
+    FAILED,
+    SCHEDULED,
+    DelayStore,
+)
 from src.automation.engine import AutomationEngine
 from src.automation.runlog import RunLogStore
 from src.automation.schema import SchemaStateStore, SchemaWatcher, WebhookNotifier
@@ -32,6 +40,7 @@ LOGGER = logging.getLogger(__name__)
 EVENT_TYPE_RECORD_CHANGED = "drive.file.bitable_record_changed_v1"
 EVENT_TYPE_FIELD_CHANGED = "drive.file.bitable_field_changed_v1"
 SUPPORTED_EVENT_TYPES = {EVENT_TYPE_RECORD_CHANGED, EVENT_TYPE_FIELD_CHANGED}
+VALID_DELAY_STATUSES = {SCHEDULED, EXECUTING, COMPLETED, FAILED, CANCELLED}
 
 
 class AutomationValidationError(ValueError):
@@ -105,7 +114,18 @@ class AutomationService:
             max_keys=settings.automation.max_dedupe_keys,
         )
         self._checkpoint = CheckpointStore(storage_root / "checkpoint.json")
-        self._engine = AutomationEngine(settings, client, rules_file, runtime_state_file=runtime_state_file)
+
+        delay_queue_file = Path(str(settings.automation.delay_queue_file or "").strip() or "delay_queue.jsonl")
+        if not delay_queue_file.is_absolute():
+            delay_queue_file = Path.cwd() / delay_queue_file
+        self._delay_store = DelayStore(delay_queue_file)
+        self._engine = AutomationEngine(
+            settings,
+            client,
+            rules_file,
+            runtime_state_file=runtime_state_file,
+            delay_store=self._delay_store,
+        )
         self._schema_watcher: SchemaWatcher | None = None
         if bool(settings.automation.schema_sync_enabled):
             self._schema_watcher = SchemaWatcher(
@@ -136,6 +156,72 @@ class AutomationService:
             )
         self._poller_skip_targets: set[tuple[str, str]] = set()
 
+    @property
+    def delay_store(self) -> DelayStore:
+        return self._delay_store
+
+    async def execute_delayed_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        return await self._engine.execute_delayed_payload(payload)
+
+    def list_delay_tasks(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status and normalized_status not in VALID_DELAY_STATUSES:
+            allowed = ", ".join(sorted(VALID_DELAY_STATUSES))
+            raise AutomationValidationError(f"invalid delay status: {normalized_status}. allowed: {allowed}")
+
+        max_items = max(1, min(int(limit), 500))
+        tasks = self._delay_store.list_tasks()
+        tasks.sort(key=lambda item: (float(item.trigger_at), float(item.created_at), item.task_id))
+
+        rows: list[dict[str, Any]] = []
+        for task in tasks:
+            if normalized_status and task.status != normalized_status:
+                continue
+            action_type = ""
+            payload_action = task.payload.get("action") if isinstance(task.payload, dict) else None
+            if isinstance(payload_action, dict):
+                action_type = str(payload_action.get("type") or "").strip()
+            rows.append(
+                {
+                    "task_id": task.task_id,
+                    "rule_id": task.rule_id,
+                    "status": task.status,
+                    "trigger_at": float(task.trigger_at),
+                    "created_at": float(task.created_at),
+                    "executed_at": task.executed_at,
+                    "error_detail": task.error_detail,
+                    "action_type": action_type,
+                }
+            )
+            if len(rows) >= max_items:
+                break
+        return rows
+
+    def cancel_delay_task(self, task_id: str) -> dict[str, Any]:
+        normalized_task_id = str(task_id or "").strip()
+        if not normalized_task_id:
+            raise AutomationValidationError("task_id is required")
+
+        tasks = self._delay_store.list_tasks()
+        matched = None
+        for task in tasks:
+            if task.task_id == normalized_task_id:
+                matched = task
+                break
+
+        if matched is None:
+            return {"status": "not_found", "task_id": normalized_task_id}
+
+        cancelled = self._delay_store.cancel(normalized_task_id)
+        if not cancelled:
+            return {
+                "status": "not_cancellable",
+                "task_id": normalized_task_id,
+                "current_status": matched.status,
+            }
+
+        return {"status": "cancelled", "task_id": normalized_task_id}
+
     def _ensure_enabled(self) -> None:
         if not self._settings.automation.enabled:
             raise AutomationValidationError("automation is disabled, set automation.enabled=true")
@@ -165,8 +251,8 @@ class AutomationService:
                 return rule
         return None
 
-    def _verify_webhook_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
-        if not bool(self._settings.automation.webhook_enabled):
+    def _verify_shared_auth(self, headers: dict[str, str], raw_body: bytes, *, require_webhook_enabled: bool) -> None:
+        if require_webhook_enabled and not bool(self._settings.automation.webhook_enabled):
             raise AutomationValidationError("automation webhook is disabled")
 
         configured_key = str(self._settings.automation.webhook_api_key or "").strip()
@@ -215,6 +301,12 @@ class AutomationService:
 
             if not hmac.compare_digest(normalized_signature, expected_signature):
                 raise AutomationValidationError("invalid webhook signature")
+
+    def _verify_webhook_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
+        self._verify_shared_auth(headers, raw_body, require_webhook_enabled=True)
+
+    def verify_management_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
+        self._verify_shared_auth(headers, raw_body, require_webhook_enabled=False)
 
     @staticmethod
     def _extract_webhook_fields(payload: dict[str, Any]) -> dict[str, Any]:

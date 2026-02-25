@@ -181,12 +181,7 @@ class QuerySkill(BaseSkill):
                 return self._format_doc_result(documents)
             except Exception as e:
                 logger.error("QuerySkill execution error: %s", e)
-                return SkillResult(
-                    success=False,
-                    skill_name=self.name,
-                    message=str(e),
-                    reply_text="查询失败，请稍后重试。",
-                )
+                return self._error_result(str(e))
 
         pending = self._get_pending_table(context)
         if pending:
@@ -330,12 +325,7 @@ class QuerySkill(BaseSkill):
                 except Exception:
                     pass
             logger.error("QuerySkill execution error: %s", e)
-            return SkillResult(
-                success=False,
-                skill_name=self.name,
-                message=str(e),
-                reply_text="查询失败，请稍后重试。",
-            )
+            return self._error_result(str(e))
 
     def _select_target(self, query: str) -> str:
         """判断查询类型（表格/文档）"""
@@ -384,11 +374,13 @@ class QuerySkill(BaseSkill):
             )
         except Exception as exc:
             logger.error("Refresh tables error: %s", exc)
+            pool = self._response_pool.get("error")
+            base_reply = random.choice(pool) if pool else "刷新表结构失败，请稍后重试。"
             return SkillResult(
                 success=False,
                 skill_name=self.name,
                 message=str(exc),
-                reply_text="刷新表结构失败，请稍后重试。",
+                reply_text=base_reply,
             )
 
     def _get_pending_table(self, context: SkillContext) -> dict[str, Any] | None:
@@ -1257,7 +1249,9 @@ class QuerySkill(BaseSkill):
         """从 config/responses.yaml 加载业务回复模板"""
         defaults = {
             "result_opener": ["查到啦~ "],
-            "empty_result": ["未找到相关记录，请尝试调整查询条件。"],
+            "empty_result": ["咦，好像没能查到任何相关记录 🤔 要不您换个关键词再试试？"],
+            "error": ["抱歉，处理时遇到了点问题 😅 稍后再试试？"],
+            "timeout": ["处理超时了，稍后再来？"],
         }
         responses_path = Path("config/responses.yaml")
         if not responses_path.exists():
@@ -1278,16 +1272,30 @@ class QuerySkill(BaseSkill):
     def _empty_result(self, message: str, prefer_message: bool = False) -> SkillResult:
         """构造空结果响应（随机化）"""
         pool = self._response_pool.get("empty_result")
+        base_reply = random.choice(pool) if pool else "咦，没查到相关记录呢 🤔"
+        
         if prefer_message and message:
-            reply = message
+            reply = f"{base_reply}\n💡 提示：{message}"
         else:
-            reply = random.choice(pool) if pool else f"{message}，请尝试调整查询条件。"
+            reply = base_reply
+            
         return SkillResult(
             success=True,
             skill_name=self.name,
             data={"records": [], "total": 0},
             message=message,
             reply_text=reply,
+        )
+
+    def _error_result(self, message: str) -> SkillResult:
+        """构造错误响应（随机化）"""
+        pool = self._response_pool.get("error")
+        base_reply = random.choice(pool) if pool else "抱歉，处理时遇到了点问题 😅 稍后再试试？"
+        return SkillResult(
+            success=False,
+            skill_name=self.name,
+            message=message,
+            reply_text=base_reply,
         )
 
     def _format_case_result(
