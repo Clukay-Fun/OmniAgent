@@ -151,6 +151,11 @@ class AutomationSettings(BaseModel):
     action_retry_delay_seconds: float = 0.5
     dead_letter_file: str = "automation_data/dead_letters.jsonl"
     run_log_file: str = "automation_data/run_logs.jsonl"
+    delay_queue_file: str = "automation_data/delay_queue.jsonl"
+    delay_scheduler_enabled: bool = True
+    delay_scheduler_interval_seconds: float = 5.0
+    delay_task_retention_seconds: float = 86400.0
+    delay_max_seconds: float = 2592000.0
     schema_sync_enabled: bool = True
     schema_poller_enabled: bool = False
     schema_sync_interval_seconds: float = 300.0
@@ -282,6 +287,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
         "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
         "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
+        "AUTOMATION_DELAY_QUEUE_FILE": ["automation", "delay_queue_file"],
+        "AUTOMATION_DELAY_SCHEDULER_ENABLED": ["automation", "delay_scheduler_enabled"],
+        "AUTOMATION_DELAY_SCHEDULER_INTERVAL_SECONDS": ["automation", "delay_scheduler_interval_seconds"],
+        "AUTOMATION_DELAY_TASK_RETENTION_SECONDS": ["automation", "delay_task_retention_seconds"],
+        "AUTOMATION_DELAY_MAX_SECONDS": ["automation", "delay_max_seconds"],
         "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
         "AUTOMATION_SCHEMA_POLLER_ENABLED": ["automation", "schema_poller_enabled"],
         "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],

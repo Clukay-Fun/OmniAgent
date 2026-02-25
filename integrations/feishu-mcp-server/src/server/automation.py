@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.automation import (
+    DelayScheduler,
     AutomationPoller,
     AutomationService,
     AutomationValidationError,
@@ -28,6 +29,7 @@ _feishu_client: FeishuClient | None = None
 _automation_service: AutomationService | None = None
 _automation_poller: AutomationPoller | None = None
 _schema_poller: SchemaPoller | None = None
+_delay_scheduler: DelayScheduler | None = None
 
 
 def get_feishu_client(settings: Settings) -> FeishuClient:
@@ -66,6 +68,18 @@ def get_schema_poller(settings: Settings) -> SchemaPoller:
     return _schema_poller
 
 
+def get_delay_scheduler(settings: Settings) -> DelayScheduler:
+    global _delay_scheduler
+    if _delay_scheduler is None:
+        _delay_scheduler = DelayScheduler(
+            service=get_automation_service(settings),
+            enabled=bool(settings.automation.enabled and settings.automation.delay_scheduler_enabled),
+            interval_seconds=float(settings.automation.delay_scheduler_interval_seconds),
+            cleanup_retention_seconds=float(settings.automation.delay_task_retention_seconds),
+        )
+    return _delay_scheduler
+
+
 async def start_automation_poller() -> None:
     settings = get_settings()
     if not settings.automation.enabled:
@@ -74,11 +88,14 @@ async def start_automation_poller() -> None:
     await poller.start()
     schema_poller = get_schema_poller(settings)
     await schema_poller.start()
+    delay_scheduler = get_delay_scheduler(settings)
+    await delay_scheduler.start()
 
 
 async def stop_automation_poller() -> None:
     global _automation_poller
     global _schema_poller
+    global _delay_scheduler
     if _automation_poller is None:
         pass
     else:
@@ -86,9 +103,15 @@ async def stop_automation_poller() -> None:
         _automation_poller = None
 
     if _schema_poller is None:
+        pass
+    else:
+        await _schema_poller.stop()
+        _schema_poller = None
+
+    if _delay_scheduler is None:
         return
-    await _schema_poller.stop()
-    _schema_poller = None
+    await _delay_scheduler.stop()
+    _delay_scheduler = None
 
 
 @router.post("/feishu/events")
@@ -218,6 +241,57 @@ async def automation_auth_health() -> dict[str, Any]:
         "result": result,
         "automation_enabled": bool(settings.automation.enabled),
         "api_base": str(settings.feishu.api_base or ""),
+    }
+
+
+@router.get("/automation/delay/tasks")
+async def automation_delay_tasks(
+    request: Request,
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    raw_body = await request.body()
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+    try:
+        service.verify_management_auth(headers, raw_body)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    try:
+        items = service.list_delay_tasks(status=status, limit=limit)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "ok",
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.post("/automation/delay/{task_id}/cancel")
+async def automation_delay_cancel(task_id: str, request: Request) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    raw_body = await request.body()
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+
+    try:
+        service.verify_management_auth(headers, raw_body)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    try:
+        result = service.cancel_delay_task(task_id)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=f"delay task not found: {task_id}")
+    return {
+        "status": "ok",
+        "result": result,
     }
 
 

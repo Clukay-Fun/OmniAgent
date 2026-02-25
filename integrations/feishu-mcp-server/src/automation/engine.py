@@ -15,6 +15,7 @@ from typing import Any
 
 from src.automation.actions import ActionExecutionError, ActionExecutor
 from src.automation.deadletter import DeadLetterStore
+from src.automation.delay_store import DelayStore
 from src.automation.rules import RuleMatcher, RuleStore
 from src.automation.runlog import RunLogStore
 from src.config import Settings
@@ -39,11 +40,12 @@ class AutomationEngine:
         client: Any,
         rules_file: Path,
         runtime_state_file: Path | None = None,
+        delay_store: DelayStore | None = None,
     ) -> None:
         self._settings = settings
         self._store = RuleStore(rules_file, runtime_state_file=runtime_state_file)
         self._matcher = RuleMatcher()
-        self._executor = ActionExecutor(settings, client)
+        self._executor = ActionExecutor(settings, client, delay_store=delay_store)
 
         dead_letter_path = Path(settings.automation.dead_letter_file)
         if not dead_letter_path.is_absolute():
@@ -58,6 +60,18 @@ class AutomationEngine:
     @property
     def rule_store(self) -> RuleStore:
         return self._store
+
+    async def execute_delayed_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        action = payload.get("action")
+        if not isinstance(action, dict):
+            raise ValueError("delay payload missing action")
+
+        context_raw = payload.get("context")
+        context = copy.deepcopy(context_raw) if isinstance(context_raw, dict) else {}
+        app_token = str(payload.get("app_token") or context.get("app_token") or "")
+        table_id = str(payload.get("table_id") or context.get("table_id") or "")
+        record_id = str(payload.get("record_id") or context.get("record_id") or "")
+        return await self._executor.run_actions([action], context, app_token, table_id, record_id)
 
     def list_poll_targets(self, default_table_id: str, default_app_token: str) -> list[dict[str, str]]:
         targets: list[dict[str, str]] = []
@@ -408,6 +422,7 @@ class AutomationEngine:
                 "table_id": table_id,
                 "record_id": record_id,
                 "app_token": app_token,
+                "rule_id": str(rule.get("rule_id") or ""),
                 "fields": copy.deepcopy(current_fields),
                 "old_fields": copy.deepcopy(old_fields),
                 "diff": copy.deepcopy(diff),
