@@ -59,7 +59,7 @@ class _FakeWriter:
 
 class _FakeTableAdapter:
     async def resolve_table_context(self, query: str, extra: dict[str, Any] | None, last_result: dict[str, Any] | None) -> Any:
-        return SimpleNamespace(table_id="tbl_main", table_name="案件台账")
+        return SimpleNamespace(table_id="tbl_main", table_name="案件台账", app_token="app_test")
 
     async def adapt_fields_for_table(self, fields: dict[str, Any], table_id: str | None) -> tuple[dict[str, Any], list[str], list[str]]:
         return fields, [], []

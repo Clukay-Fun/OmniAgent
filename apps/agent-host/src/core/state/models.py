@@ -72,21 +72,32 @@ from enum import Enum
 
 
 class PendingActionStatus(str, Enum):
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    CANCELLED = "cancelled"
-    EXPIRED = "expired"
+    COLLECTING = "collecting"
+    CONFIRMABLE = "confirmable"
+    EXECUTED = "executed"
+    INVALIDATED = "invalidated"
+
+
+_LEGACY_PENDING_STATUS_MAP: dict[str, PendingActionStatus] = {
+    "pending": PendingActionStatus.CONFIRMABLE,
+    "confirmed": PendingActionStatus.EXECUTED,
+    "cancelled": PendingActionStatus.INVALIDATED,
+    "expired": PendingActionStatus.INVALIDATED,
+}
 
 
 _VALID_TRANSITIONS: dict[PendingActionStatus, set[PendingActionStatus]] = {
-    PendingActionStatus.PENDING: {
-        PendingActionStatus.CONFIRMED,
-        PendingActionStatus.CANCELLED,
-        PendingActionStatus.EXPIRED,
+    PendingActionStatus.COLLECTING: {
+        PendingActionStatus.COLLECTING,
+        PendingActionStatus.CONFIRMABLE,
+        PendingActionStatus.INVALIDATED,
     },
-    PendingActionStatus.CONFIRMED: set(),
-    PendingActionStatus.CANCELLED: set(),
-    PendingActionStatus.EXPIRED: set(),
+    PendingActionStatus.CONFIRMABLE: {
+        PendingActionStatus.EXECUTED,
+        PendingActionStatus.INVALIDATED,
+    },
+    PendingActionStatus.EXECUTED: set(),
+    PendingActionStatus.INVALIDATED: set(),
 }
 
 
@@ -95,7 +106,7 @@ class PendingActionState:
     action: str
     payload: dict[str, Any] = field(default_factory=dict)
     operations: list[dict[str, Any]] = field(default_factory=list)
-    status: PendingActionStatus = PendingActionStatus.PENDING
+    status: PendingActionStatus = PendingActionStatus.CONFIRMABLE
     created_at: float = 0.0
     expires_at: float = 0.0
 
@@ -121,10 +132,14 @@ class PendingActionState:
 
         if isinstance(self.status, PendingActionStatus):
             return
+        status_text = str(self.status)
+        if status_text in _LEGACY_PENDING_STATUS_MAP:
+            self.status = _LEGACY_PENDING_STATUS_MAP[status_text]
+            return
         try:
-            self.status = PendingActionStatus(str(self.status))
+            self.status = PendingActionStatus(status_text)
         except ValueError:
-            self.status = PendingActionStatus.PENDING
+            self.status = PendingActionStatus.CONFIRMABLE
 
     def iter_operation_payloads(self) -> list[dict[str, Any]]:
         if self.operations:
@@ -140,8 +155,11 @@ class PendingActionState:
         """Transition status. Raises ValueError on invalid transition."""
         import time as _time
         _now = now if now is not None else _time.time()
-        if self.is_expired(_now) and self.status == PendingActionStatus.PENDING:
-            self.status = PendingActionStatus.EXPIRED
+        if self.is_expired(_now) and self.status in {
+            PendingActionStatus.COLLECTING,
+            PendingActionStatus.CONFIRMABLE,
+        }:
+            self.status = PendingActionStatus.INVALIDATED
         if target not in _VALID_TRANSITIONS.get(self.status, set()):
             raise ValueError(
                 f"invalid pending_action transition: {self.status.value} -> {target.value}"

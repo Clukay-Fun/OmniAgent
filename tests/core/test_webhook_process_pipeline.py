@@ -537,7 +537,15 @@ def _make_action_service() -> ActionExecutionService:
 
 def test_s1_execute_create_rejects_missing_table_id() -> None:
     svc = _make_action_service()
-    outcome = asyncio.run(svc.execute_create(table_id=None, table_name="案件", fields={"案号": "A-1"}, idempotency_key=None))
+    outcome = asyncio.run(
+        svc.execute_create(
+            table_id=None,
+            table_name="案件",
+            fields={"案号": "A-1"},
+            idempotency_key=None,
+            app_token="app_test",
+        )
+    )
     assert outcome.success is False
     assert "table_id" in outcome.message
 
@@ -548,6 +556,7 @@ def test_s1_execute_update_rejects_missing_table_id() -> None:
         action_name="update_record", table_id="", table_name="案件",
         record_id="rec_001", fields={"案件状态": "已结案"},
         source_fields={}, idempotency_key=None,
+        app_token="app_test",
     ))
     assert outcome.success is False
     assert "table_id" in outcome.message
@@ -558,6 +567,7 @@ def test_s1_execute_delete_rejects_missing_record_id() -> None:
     outcome = asyncio.run(svc.execute_delete(
         table_id="tbl_001", table_name="案件",
         record_id="", case_no="A-1", idempotency_key=None,
+        app_token="app_test",
     ))
     assert outcome.success is False
     assert "record_id" in outcome.message
@@ -576,7 +586,7 @@ def test_s2_manager_confirm_pending_action() -> None:
     mgr.set_pending_action("u1", action="create_record")
     pa = mgr.confirm_pending_action("u1")
     assert pa is not None
-    assert pa.status == PendingActionStatus.CONFIRMED
+    assert pa.status == PendingActionStatus.EXECUTED
 
 
 def test_s2_manager_cancel_pending_action() -> None:
@@ -585,7 +595,7 @@ def test_s2_manager_cancel_pending_action() -> None:
     mgr.set_pending_action("u1", action="delete_record")
     pa = mgr.cancel_pending_action("u1")
     assert pa is not None
-    assert pa.status == PendingActionStatus.CANCELLED
+    assert pa.status == PendingActionStatus.INVALIDATED
 
 
 def test_s2_manager_expired_pending_action_cleared() -> None:
@@ -601,7 +611,7 @@ def test_s2_manager_expired_pending_action_cleared() -> None:
     assert refreshed.pending_action is None
     history = refreshed.extras.get("pending_action_history")
     assert isinstance(history, list)
-    assert history[-1]["status"] == "expired"
+    assert history[-1]["status"] == "invalidated"
 
 
 def test_s2_manager_pending_action_supports_batch_operations() -> None:

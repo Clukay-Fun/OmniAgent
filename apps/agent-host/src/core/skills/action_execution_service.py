@@ -136,17 +136,16 @@ class ActionExecutionService:
         table_name: str | None,
         fields: dict[str, Any],
         idempotency_key: str | None,
-        app_token: str | None = None,
+        app_token: str | None,
     ) -> ActionExecutionOutcome:
         # S1: triplet 校验 — table_id 为必经路径
         _table_id = str(table_id or "").strip()
         if not _table_id:
             return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
-        if app_token:
-            try:
-                validate_locator_triplet(app_token=app_token, table_id=_table_id)
-            except ValueError as exc:
-                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+        try:
+            validate_locator_triplet(app_token=app_token, table_id=_table_id)
+        except ValueError as exc:
+            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
@@ -232,7 +231,7 @@ class ActionExecutionService:
         idempotency_key: str | None,
         append_date: str | None = None,
         close_semantic: str = "default",
-        app_token: str | None = None,
+        app_token: str | None,
     ) -> ActionExecutionOutcome:
         # S1: triplet 校验 — table_id + record_id 为必经路径
         _table_id = str(table_id or "").strip()
@@ -241,14 +240,15 @@ class ActionExecutionService:
             return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
         if not _record_id:
             return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
-        if app_token:
-            try:
-                validate_locator_triplet(
-                    app_token=app_token, table_id=_table_id,
-                    record_id=_record_id, require_record_id=True,
-                )
-            except ValueError as exc:
-                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+        try:
+            validate_locator_triplet(
+                app_token=app_token,
+                table_id=_table_id,
+                record_id=_record_id,
+                require_record_id=True,
+            )
+        except ValueError as exc:
+            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
@@ -347,7 +347,7 @@ class ActionExecutionService:
         record_id: str,
         case_no: str,
         idempotency_key: str | None,
-        app_token: str | None = None,
+        app_token: str | None,
     ) -> ActionExecutionOutcome:
         # S1: triplet 校验 — table_id + record_id 为必经路径
         _table_id = str(table_id or "").strip()
@@ -356,14 +356,15 @@ class ActionExecutionService:
             return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
         if not _record_id:
             return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
-        if app_token:
-            try:
-                validate_locator_triplet(
-                    app_token=app_token, table_id=_table_id,
-                    record_id=_record_id, require_record_id=True,
-                )
-            except ValueError as exc:
-                return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+        try:
+            validate_locator_triplet(
+                app_token=app_token,
+                table_id=_table_id,
+                record_id=_record_id,
+                require_record_id=True,
+            )
+        except ValueError as exc:
+            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
@@ -487,6 +488,7 @@ class ActionExecutionService:
         table_id: str | None,
         table_name: str | None,
         idempotency_key: str | None,
+        app_token: str | None,
         created_at: float,
         ttl_seconds: int,
         append_date: str,
@@ -499,6 +501,7 @@ class ActionExecutionService:
             "diff": diff_items,
             "table_id": table_id,
             "table_name": table_name,
+            "app_token": app_token,
             "created_at": created_at,
             "pending_ttl_seconds": ttl_seconds,
             "append_date": append_date,
@@ -528,6 +531,7 @@ class ActionExecutionService:
         table_id: str | None,
         table_name: str | None,
         idempotency_key: str | None,
+        app_token: str | None,
         created_at: float,
         ttl_seconds: int,
         append_date: str,
@@ -545,6 +549,7 @@ class ActionExecutionService:
             table_id=table_id,
             table_name=table_name,
             idempotency_key=idempotency_key,
+            app_token=app_token,
             created_at=created_at,
             ttl_seconds=ttl_seconds,
             append_date=append_date,
@@ -586,6 +591,7 @@ class ActionExecutionService:
         table_id: str | None,
         table_name: str | None,
         idempotency_key: str | None,
+        app_token: str | None,
         ttl_seconds: int,
     ) -> dict[str, Any]:
         profile = self._resolve_delete_profile(table_name)
@@ -594,6 +600,7 @@ class ActionExecutionService:
             "case_no": case_no,
             "table_id": table_id,
             "table_name": table_name,
+            "app_token": app_token,
             "delete_title": str(profile.get("title") or "删除确认").strip(),
             "delete_subtitle": str(profile.get("subtitle") or "该操作不可撤销，请再次确认。").strip(),
             "confirm_text": str(profile.get("confirm_text") or "确认删除").strip(),

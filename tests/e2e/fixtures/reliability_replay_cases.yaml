@@ -28,40 +28,40 @@
     error_contains: "record_id"
 
 - id: pending_action_confirm
-  title: "正常确认 → PENDING → CONFIRMED"
+  title: "正常确认 → CONFIRMABLE → EXECUTED"
   given:
     action: pending_lifecycle
     context:
-      initial_status: pending
-      transition: confirmed
+      initial_status: confirmable
+      transition: executed
       ttl_seconds: 300
   expect:
     success: true
-    final_status: confirmed
+    final_status: executed
 
 - id: pending_action_expired
-  title: "过期后确认 → 自动转 EXPIRED → 拒绝确认"
+  title: "过期后执行 → 自动转 INVALIDATED → 拒绝执行"
   given:
     action: pending_lifecycle
     context:
-      initial_status: pending
-      transition: confirmed
+      initial_status: confirmable
+      transition: executed
       ttl_seconds: -1
   expect:
     success: false
-    final_status: expired
+    final_status: invalidated
 
 - id: pending_action_cancel
-  title: "取消 → PENDING → CANCELLED"
+  title: "取消 → CONFIRMABLE → INVALIDATED"
   given:
     action: pending_lifecycle
     context:
-      initial_status: pending
-      transition: cancelled
+      initial_status: confirmable
+      transition: invalidated
       ttl_seconds: 300
   expect:
     success: true
-    final_status: cancelled
+    final_status: invalidated
 
 - id: typed_error_catalog_lookup
   title: "typed error 通过 catalog 解析用户文案"
@@ -95,5 +95,5 @@
       fields: { "案号": "A-100", "委托人": "李四", "案由": "知产纠纷" }
   expect:
     triplet_valid: true
-    pending_status: pending
+    pending_status: confirmable
     callback_dedup: false

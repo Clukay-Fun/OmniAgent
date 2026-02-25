@@ -110,7 +110,7 @@ def _run_happy_path(case: dict) -> None:
 
     now = time.time()
     state = PendingActionState(action="create_record", created_at=now, expires_at=now + 300)
-    assert state.status == PendingActionStatus.PENDING
+    assert state.status == PendingActionStatus.CONFIRMABLE
 
     deduper = CallbackDeduper(window_seconds=60)
     key = deduper.build_key(user_id="u1", action="create_record_confirm")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -27,6 +28,7 @@ def _normalize_text(value: str) -> str:
 class TableContext:
     table_id: str | None = None
     table_name: str | None = None
+    app_token: str | None = None
     source: str = "unknown"
 
 
@@ -70,6 +72,7 @@ class BitableAdapter:
     def __init__(self, mcp_client: Any, skills_config: dict[str, Any] | None = None) -> None:
         self._mcp = mcp_client
         self._skills_config = skills_config or {}
+        self._default_app_token = self._resolve_default_app_token()
 
         self._table_alias_lookup = self._build_alias_lookup(self._skills_config.get("table_aliases") or {})
         self._field_candidates_by_norm = {
@@ -82,6 +85,20 @@ class BitableAdapter:
 
         self._schema_cache: dict[str, tuple[float, list[str]]] = {}
         self._schema_ttl_seconds = 300
+
+    def _resolve_default_app_token(self) -> str | None:
+        for key in ("BITABLE_APP_TOKEN", "FEISHU_BITABLE_APP_TOKEN", "APP_TOKEN"):
+            value = str(os.getenv(key) or "").strip()
+            if value:
+                return value
+        return None
+
+    def _apply_default_app_token(self, context: TableContext) -> TableContext:
+        if context.app_token:
+            return context
+        if self._default_app_token:
+            context.app_token = self._default_app_token
+        return context
 
     def _build_alias_lookup(self, table_aliases: dict[str, Any]) -> dict[str, str]:
         lookup: dict[str, str] = {}
@@ -105,19 +122,21 @@ class BitableAdapter:
 
         explicit = self._extract_from_extra(extra)
         if explicit.table_id or explicit.table_name:
-            return await self._fill_table_name(explicit)
+            resolved = await self._fill_table_name(explicit)
+            return self._apply_default_app_token(resolved)
 
         from_last = self._extract_from_last_result(last_result)
         if from_last.table_id or from_last.table_name:
-            return await self._fill_table_name(from_last)
+            resolved = await self._fill_table_name(from_last)
+            return self._apply_default_app_token(resolved)
 
         tables = await self._list_tables()
         if tables:
             matched = self._match_table_by_query(query, tables)
             if matched:
-                return matched
+                return self._apply_default_app_token(matched)
 
-        return TableContext()
+        return self._apply_default_app_token(TableContext())
 
     async def adapt_fields_for_table(
         self,
@@ -255,6 +274,7 @@ class BitableAdapter:
     def _extract_from_extra(self, extra: dict[str, Any]) -> TableContext:
         table_id = str(extra.get("table_id") or extra.get("active_table_id") or "").strip() or None
         table_name = str(extra.get("table_name") or extra.get("active_table_name") or "").strip() or None
+        app_token = str(extra.get("app_token") or extra.get("active_app_token") or "").strip() or None
 
         active_record = extra.get("active_record")
         if isinstance(active_record, dict):
@@ -262,6 +282,8 @@ class BitableAdapter:
                 table_id = str(active_record.get("table_id") or "").strip() or None
             if not table_name:
                 table_name = str(active_record.get("table_name") or "").strip() or None
+            if not app_token:
+                app_token = str(active_record.get("app_token") or "").strip() or None
 
         pending = extra.get("pending_action")
         if isinstance(pending, dict):
@@ -271,6 +293,8 @@ class BitableAdapter:
                     table_id = str(payload.get("table_id") or "").strip() or None
                 if not table_name:
                     table_name = str(payload.get("table_name") or "").strip() or None
+                if not app_token:
+                    app_token = str(payload.get("app_token") or "").strip() or None
 
         planner = extra.get("planner_plan")
         if isinstance(planner, dict):
@@ -280,8 +304,10 @@ class BitableAdapter:
                     table_id = str(params.get("table_id") or "").strip() or None
                 if not table_name:
                     table_name = str(params.get("table_name") or "").strip() or None
+                if not app_token:
+                    app_token = str(params.get("app_token") or "").strip() or None
 
-        return TableContext(table_id=table_id, table_name=table_name, source="extra")
+        return TableContext(table_id=table_id, table_name=table_name, app_token=app_token, source="extra")
 
     def _extract_from_last_result(self, last_result: dict[str, Any] | None) -> TableContext:
         if not isinstance(last_result, dict):
@@ -289,6 +315,7 @@ class BitableAdapter:
 
         table_id = str(last_result.get("table_id") or "").strip() or None
         table_name = str(last_result.get("table_name") or "").strip() or None
+        app_token = str(last_result.get("app_token") or "").strip() or None
 
         pending = last_result.get("pending_delete")
         if isinstance(pending, dict):
@@ -296,6 +323,8 @@ class BitableAdapter:
                 table_id = str(pending.get("table_id") or "").strip() or None
             if not table_name:
                 table_name = str(pending.get("table_name") or "").strip() or None
+            if not app_token:
+                app_token = str(pending.get("app_token") or "").strip() or None
 
         query_meta = last_result.get("query_meta")
         if isinstance(query_meta, dict):
@@ -303,13 +332,17 @@ class BitableAdapter:
             if isinstance(params, dict):
                 if not table_id:
                     table_id = str(params.get("table_id") or "").strip() or None
+                if not app_token:
+                    app_token = str(params.get("app_token") or "").strip() or None
 
         if not table_id:
             records = last_result.get("records")
             if isinstance(records, list) and records:
                 table_id = self.extract_table_id_from_record(records[0])
+                if not app_token and isinstance(records[0], dict):
+                    app_token = str(records[0].get("app_token") or "").strip() or None
 
-        return TableContext(table_id=table_id, table_name=table_name, source="last_result")
+        return TableContext(table_id=table_id, table_name=table_name, app_token=app_token, source="last_result")
 
     async def _fill_table_name(self, context: TableContext) -> TableContext:
         if not context.table_id and not context.table_name:

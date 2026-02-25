@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import date
@@ -152,6 +153,12 @@ class UpdateSkill(BaseSkill):
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+        app_token = self._resolve_app_token(
+            table_ctx=table_ctx,
+            pending_payload=None,
+            extra=extra,
+            planner_plan=planner_plan,
+        )
         denied_text = self._action_service.validate_write_allowed(table_ctx.table_name)
         if denied_text:
             return SkillResult(
@@ -275,6 +282,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
                 idempotency_key=idempotency_key,
+                app_token=app_token,
                 created_at=time.time(),
                 ttl_seconds=self._confirm_ttl_seconds,
                 append_date=date.today().isoformat(),
@@ -296,6 +304,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
                 table_type=self._resolve_table_type(table_ctx.table_name),
+                app_token=app_token,
             )
 
         validation_error = self._validate_fields(fields)
@@ -368,6 +377,7 @@ class UpdateSkill(BaseSkill):
             table_id=table_ctx.table_id,
             table_name=table_ctx.table_name,
             idempotency_key=idempotency_key,
+            app_token=app_token,
             created_at=time.time(),
             ttl_seconds=self._confirm_ttl_seconds,
             append_date=append_date,
@@ -467,6 +477,8 @@ class UpdateSkill(BaseSkill):
                 reply_text="本次更新确认已超时，请重新发起更新。",
             )
 
+        app_token = self._resolve_app_token(table_ctx=table_ctx, pending_payload=pending_payload)
+
         if not self._is_confirm(query):
             created_at_raw = pending_payload.get("created_at")
             try:
@@ -513,6 +525,7 @@ class UpdateSkill(BaseSkill):
                 table_id=str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None,
                 table_name=str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None,
                 idempotency_key=str(pending_payload.get("idempotency_key") or "").strip() or None,
+                app_token=app_token,
                 created_at=created_at,
                 ttl_seconds=self._resolve_pending_ttl(pending_payload.get("pending_ttl_seconds")),
                 append_date=append_date,
@@ -531,6 +544,7 @@ class UpdateSkill(BaseSkill):
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
         table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        app_token = self._resolve_app_token(table_ctx=table_ctx, pending_payload=pending_payload)
         denied_text = self._action_service.validate_write_allowed(table_name)
         if denied_text:
             return SkillResult(
@@ -561,6 +575,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_id,
                 table_name=table_name,
                 idempotency_key=idempotency_key,
+                app_token=app_token,
                 created_at=time.time(),
                 ttl_seconds=self._confirm_ttl_seconds,
                 append_date=str(pending_payload.get("append_date") or date.today().isoformat()),
@@ -604,6 +619,7 @@ class UpdateSkill(BaseSkill):
                 idempotency_key=idempotency_key,
                 append_date=normalized_append_date,
                 close_semantic=close_semantic,
+                app_token=app_token,
             )
             if not outcome.success:
                 if self._is_record_not_found_error(outcome.message, outcome.reply_text):
@@ -629,6 +645,7 @@ class UpdateSkill(BaseSkill):
                     table_id=table_id,
                     table_name=table_name,
                     idempotency_key=idempotency_key,
+                    app_token=app_token,
                     created_at=time.time(),
                     ttl_seconds=self._confirm_ttl_seconds,
                     reply_text=outcome.reply_text,
@@ -700,6 +717,7 @@ class UpdateSkill(BaseSkill):
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
         table_name = str(pending_payload.get("table_name") or table_ctx.table_name or "").strip() or None
+        app_token = self._resolve_app_token(table_ctx=table_ctx, pending_payload=pending_payload)
         table_type = str(pending_payload.get("table_type") or self._resolve_table_type(table_name)).strip() or "case"
         source_fields_raw = pending_payload.get("source_fields")
         source_fields = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
@@ -712,6 +730,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_id,
                 table_name=table_name,
                 table_type=table_type,
+                app_token=app_token,
             )
 
         validation_error = self._validate_fields(fields)
@@ -777,6 +796,7 @@ class UpdateSkill(BaseSkill):
             table_id=table_id,
             table_name=table_name,
             idempotency_key=idempotency_key,
+            app_token=app_token,
             created_at=time.time(),
             ttl_seconds=self._confirm_ttl_seconds,
             append_date=append_date,
@@ -790,6 +810,7 @@ class UpdateSkill(BaseSkill):
         table_id: str | None,
         table_name: str | None,
         table_type: str,
+        app_token: str | None,
     ) -> SkillResult:
         case_no = str(source_fields.get("项目ID") or source_fields.get("案号") or record_id or "").strip()
         left = str(source_fields.get("委托人") or source_fields.get("委托人及联系方式") or "").strip()
@@ -809,6 +830,7 @@ class UpdateSkill(BaseSkill):
             "table_id": table_id,
             "table_name": table_name,
             "table_type": table_type,
+            "app_token": app_token,
             "source_fields": source_fields,
             "created_at": time.time(),
             "pending_ttl_seconds": ttl_seconds,
@@ -844,6 +866,37 @@ class UpdateSkill(BaseSkill):
         if any(token in normalized for token in ("团队", "成员", "工作总览")):
             return "team_overview"
         return "case"
+
+    def _resolve_app_token(
+        self,
+        *,
+        table_ctx: Any,
+        pending_payload: dict[str, Any] | None,
+        extra: dict[str, Any] | None = None,
+        planner_plan: dict[str, Any] | None = None,
+    ) -> str | None:
+        payload = pending_payload if isinstance(pending_payload, dict) else {}
+        context_extra = extra if isinstance(extra, dict) else {}
+        candidates: list[Any] = [
+            payload.get("app_token"),
+            getattr(table_ctx, "app_token", None),
+            context_extra.get("app_token"),
+        ]
+        active_record = context_extra.get("active_record")
+        if isinstance(active_record, dict):
+            candidates.append(active_record.get("app_token"))
+        if isinstance(planner_plan, dict):
+            params = planner_plan.get("params")
+            if isinstance(params, dict):
+                candidates.append(params.get("app_token"))
+        for key in ("BITABLE_APP_TOKEN", "FEISHU_BITABLE_APP_TOKEN", "APP_TOKEN"):
+            candidates.append(os.getenv(key))
+
+        for raw in candidates:
+            token = str(raw or "").strip()
+            if token:
+                return token
+        return None
 
     def _collect_update_fields(self, *, query: str, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
         merged: dict[str, Any] = {}
@@ -925,6 +978,7 @@ class UpdateSkill(BaseSkill):
         table_id: str | None,
         table_name: str | None,
         idempotency_key: str | None,
+        app_token: str | None,
         created_at: float,
         ttl_seconds: int,
         append_date: str,
@@ -940,6 +994,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_id,
                 table_name=table_name,
                 idempotency_key=idempotency_key,
+                app_token=app_token,
                 created_at=created_at,
                 ttl_seconds=ttl_seconds,
                 append_date=append_date,
@@ -956,6 +1011,7 @@ class UpdateSkill(BaseSkill):
                 table_id=table_id,
                 table_name=table_name,
                 idempotency_key=idempotency_key,
+                app_token=app_token,
                 created_at=created_at,
                 ttl_seconds=ttl_seconds,
                 append_date=append_date,

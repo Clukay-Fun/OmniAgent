@@ -95,6 +95,13 @@ class DeleteSkill(BaseSkill):
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         last_result = context.last_result or {}
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, last_result)
+        app_token = self._resolve_app_token(
+            table_ctx=table_ctx,
+            pending_payload={},
+            extra=extra,
+            planner_plan=planner_plan,
+            last_result=last_result,
+        )
         denied_text = self._action_service.validate_write_allowed(table_ctx.table_name)
         if denied_text:
             return SkillResult(
@@ -166,6 +173,8 @@ class DeleteSkill(BaseSkill):
                 planner_pending["table_id"] = table_ctx.table_id
             if table_ctx.table_name and not planner_pending.get("table_name"):
                 planner_pending["table_name"] = table_ctx.table_name
+            if app_token and not planner_pending.get("app_token"):
+                planner_pending["app_token"] = app_token
             idempotency_key = self._build_delete_idempotency_key(
                 record_id=str(planner_pending.get("record_id") or ""),
                 table_id=str(planner_pending.get("table_id") or ""),
@@ -176,6 +185,7 @@ class DeleteSkill(BaseSkill):
                 table_id=planner_pending.get("table_id"),
                 table_name=planner_pending.get("table_name"),
                 idempotency_key=idempotency_key,
+                app_token=str(planner_pending.get("app_token") or "").strip() or app_token,
                 ttl_seconds=self._confirm_ttl_seconds,
             )
             return SkillResult(
@@ -246,6 +256,7 @@ class DeleteSkill(BaseSkill):
             table_id=table_ctx.table_id,
             table_name=table_ctx.table_name,
             idempotency_key=idempotency_key,
+            app_token=app_token,
             ttl_seconds=self._confirm_ttl_seconds,
         )
         
@@ -292,14 +303,25 @@ class DeleteSkill(BaseSkill):
         record_id = pending.get("record_id")
         case_no = pending.get("case_no", "未知案号")
         table_id = pending.get("table_id")
+        app_token = str(pending.get("app_token") or "").strip() or None
         idempotency_key = str(pending.get("idempotency_key") or "").strip() or None
-        if not table_id:
+        if not table_id or not app_token:
             table_ctx = await self._table_adapter.resolve_table_context(
                 context.query,
                 context.extra or {},
                 last_result,
             )
-            table_id = table_ctx.table_id
+            if not table_id:
+                table_id = table_ctx.table_id
+            if not app_token:
+                app_token = str(getattr(table_ctx, "app_token", "") or "").strip() or None
+        app_token = app_token or self._resolve_app_token(
+            table_ctx=type("Ctx", (), {"app_token": app_token})(),
+            pending_payload=pending if isinstance(pending, dict) else {},
+            extra=context.extra if isinstance(context.extra, dict) else {},
+            planner_plan=(context.extra or {}).get("planner_plan") if isinstance(context.extra, dict) else None,
+            last_result=last_result,
+        )
         if not idempotency_key:
             idempotency_key = self._build_delete_idempotency_key(
                 record_id=str(record_id or ""),
@@ -313,6 +335,7 @@ class DeleteSkill(BaseSkill):
                 record_id=str(record_id),
                 case_no=str(case_no),
                 idempotency_key=idempotency_key,
+                app_token=app_token,
             )
             if not outcome.success:
                 return SkillResult(
@@ -374,6 +397,7 @@ class DeleteSkill(BaseSkill):
         case_no = str(params.get("case_no") or params.get("value") or "未知案号").strip()
         table_id = str(params.get("table_id") or "").strip() or None
         table_name = str(params.get("table_name") or "").strip() or None
+        app_token = str(params.get("app_token") or "").strip() or None
         if not record_id:
             return None
         return {
@@ -381,7 +405,41 @@ class DeleteSkill(BaseSkill):
             "case_no": case_no,
             "table_id": table_id,
             "table_name": table_name,
+            "app_token": app_token,
         }
+
+    def _resolve_app_token(
+        self,
+        *,
+        table_ctx: Any,
+        pending_payload: dict[str, Any],
+        extra: dict[str, Any],
+        planner_plan: dict[str, Any] | None,
+        last_result: dict[str, Any],
+    ) -> str | None:
+        candidates: list[Any] = [
+            pending_payload.get("app_token") if isinstance(pending_payload, dict) else None,
+            getattr(table_ctx, "app_token", None),
+            extra.get("app_token") if isinstance(extra, dict) else None,
+        ]
+        active_record = extra.get("active_record") if isinstance(extra, dict) else None
+        if isinstance(active_record, dict):
+            candidates.append(active_record.get("app_token"))
+        if isinstance(planner_plan, dict):
+            params = planner_plan.get("params")
+            if isinstance(params, dict):
+                candidates.append(params.get("app_token"))
+        if isinstance(last_result, dict):
+            candidates.append(last_result.get("app_token"))
+
+        for key in ("BITABLE_APP_TOKEN", "FEISHU_BITABLE_APP_TOKEN", "APP_TOKEN"):
+            candidates.append(os.getenv(key))
+
+        for raw in candidates:
+            token = str(raw or "").strip()
+            if token:
+                return token
+        return None
 
     async def _search_records_by_query(self, query: str, table_id: str | None = None) -> list[dict[str, Any]]:
         """根据查询文本尝试搜索待删除记录。"""

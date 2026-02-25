@@ -29,6 +29,38 @@ class ConversationStateManager:
 
     CHUNK_STALE_SECONDS = 9.0
 
+    @staticmethod
+    def _resolve_pending_action_status(action: str, payload: dict[str, Any]) -> PendingActionStatus:
+        explicit = str(payload.get("status") or "").strip().lower()
+        if explicit:
+            try:
+                return PendingActionStatus(explicit)
+            except ValueError:
+                pass
+
+        if action == "update_collect_fields":
+            return PendingActionStatus.COLLECTING
+
+        awaiting_confirm = bool(payload.get("awaiting_confirm"))
+        missing_fields = payload.get("missing_fields")
+        if isinstance(missing_fields, list) and missing_fields and not awaiting_confirm:
+            return PendingActionStatus.COLLECTING
+
+        if awaiting_confirm:
+            return PendingActionStatus.CONFIRMABLE
+
+        if action.startswith("batch_") or action in {
+            "create_record",
+            "update_record",
+            "close_record",
+            "delete_record",
+            "create_reminder",
+            "query_list_navigation",
+        }:
+            return PendingActionStatus.CONFIRMABLE
+
+        return PendingActionStatus.COLLECTING
+
     def __init__(
         self,
         store: StateStore,
@@ -77,10 +109,13 @@ class ConversationStateManager:
         if state.active_record and state.active_record.is_expired(now):
             state.active_record = None
         if state.pending_action and state.pending_action.is_expired(now):
-            # S2: 用状态机倾转而非直接清空，保留 EXPIRED 记录
-            if state.pending_action.status == PendingActionStatus.PENDING:
+            # S2: 用状态机迁移而非直接清空，保留 INVALIDATED 记录
+            if state.pending_action.status in {
+                PendingActionStatus.COLLECTING,
+                PendingActionStatus.CONFIRMABLE,
+            }:
                 try:
-                    state.pending_action.transition_to(PendingActionStatus.EXPIRED, now=now)
+                    state.pending_action.transition_to(PendingActionStatus.INVALIDATED, now=now)
                 except ValueError:
                     pass
             pending_history = state.extras.get("pending_action_history")
@@ -360,6 +395,7 @@ class ConversationStateManager:
             action=str(action).strip(),
             payload=payload or {},
             operations=normalized_operations,
+            status=self._resolve_pending_action_status(str(action).strip(), payload or {}),
             created_at=now,
             expires_at=now + (ttl_seconds if ttl_seconds is not None else self._pending_action_ttl),
         )
@@ -384,7 +420,7 @@ class ConversationStateManager:
             return None
         now = time.time()
         try:
-            pa.transition_to(PendingActionStatus.CONFIRMED, now=now)
+            pa.transition_to(PendingActionStatus.EXECUTED, now=now)
         except ValueError:
             return None
         state.updated_at = now
@@ -399,7 +435,7 @@ class ConversationStateManager:
             return None
         now = time.time()
         try:
-            pa.transition_to(PendingActionStatus.CANCELLED, now=now)
+            pa.transition_to(PendingActionStatus.INVALIDATED, now=now)
         except ValueError:
             return None
         state.updated_at = now

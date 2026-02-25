@@ -103,6 +103,7 @@ def test_create_defaults_and_smart_inference_are_applied() -> None:
             table_name="案件项目总库",
             fields={"案号": "(2026)粤01执123号"},
             idempotency_key="idem-1",
+            app_token="app_test",
         )
     )
 
@@ -129,6 +130,7 @@ def test_team_overview_is_hard_blocked_for_all_writes() -> None:
             table_name="团队成员工作总览（只读）",
             fields={"任务描述": "foo"},
             idempotency_key=None,
+            app_token="app_test",
         )
     )
     update_result = asyncio.run(
@@ -140,6 +142,7 @@ def test_team_overview_is_hard_blocked_for_all_writes() -> None:
             fields={"任务状态": "完成"},
             source_fields={"任务状态": "进行中"},
             idempotency_key=None,
+            app_token="app_test",
         )
     )
     delete_result = asyncio.run(
@@ -149,6 +152,7 @@ def test_team_overview_is_hard_blocked_for_all_writes() -> None:
             record_id="rec_1",
             case_no="N/A",
             idempotency_key=None,
+            app_token="app_test",
         )
     )
 
@@ -179,6 +183,7 @@ def test_build_pending_close_action_data_uses_profile_rules() -> None:
         table_id="tbl_case",
         table_name="案件项目总库",
         idempotency_key="idem-close",
+        app_token="app_test",
         created_at=1.0,
         ttl_seconds=60,
         append_date="2026-02-23",
