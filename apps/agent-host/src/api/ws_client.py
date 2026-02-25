@@ -39,6 +39,7 @@ from src.api.file_pipeline import (
 )
 from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
+from src.core.errors import PendingActionExpiredError, get_user_message as get_core_user_message
 from src.core.orchestrator import AgentOrchestrator
 from src.core.response.models import RenderedResponse
 from src.core.session import SessionManager
@@ -552,7 +553,10 @@ async def _handle_card_action_callback_async(callback_payload: dict[str, Any]) -
     if not callback_action or not open_id:
         return
 
-    result: dict[str, Any] = {"status": "expired", "text": "操作已过期"}
+    result: dict[str, Any] = {
+        "status": "expired",
+        "text": get_core_user_message(PendingActionExpiredError()),
+    }
     for scoped_user_id in _build_callback_user_candidates(open_id, chat_id):
         try:
             current = await agent_core.handle_card_action_callback(

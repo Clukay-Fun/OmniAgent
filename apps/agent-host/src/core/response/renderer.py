@@ -5,6 +5,7 @@ from typing import Any, Dict, Mapping, cast
 
 import yaml
 
+from src.core.errors import get_user_message_by_code
 from src.core.response.models import Block, CardTemplateSpec, RenderedResponse
 
 
@@ -37,6 +38,9 @@ class ResponseRenderer:
         reply_text = payload.get("reply_text")
         message = payload.get("message")
         chosen_text = reply_text if self._is_non_blank(reply_text) else message
+        error_code = self._extract_error_code(payload)
+        if not success and error_code:
+            chosen_text = get_user_message_by_code(error_code, fallback=str(chosen_text or ""))
 
         template_key = "success" if success else "failure"
         template_text = self._templates.get(template_key) or DEFAULT_TEMPLATES[template_key]
@@ -56,6 +60,7 @@ class ResponseRenderer:
             success=success,
             text_fallback=str(text_fallback),
             data=data if isinstance(data, Mapping) else {},
+            error_code=error_code,
         )
 
         return RenderedResponse(
@@ -71,6 +76,7 @@ class ResponseRenderer:
         success: bool,
         text_fallback: str,
         data: Mapping[str, Any],
+        error_code: str = "",
     ) -> CardTemplateSpec | None:
         if not success:
             error_class = self._classify_error(text_fallback)
@@ -82,6 +88,7 @@ class ResponseRenderer:
                     "message": text_fallback,
                     "skill_name": skill_name,
                     "error_class": error_class,
+                    "error_code": error_code,
                 },
             )
 
@@ -288,6 +295,19 @@ class ResponseRenderer:
         if any(token in normalized for token in ["缺少", "必填", "参数", "未提供", "无法解析更新字段"]):
             return "missing_params"
         return "general"
+
+    def _extract_error_code(self, payload: Mapping[str, Any]) -> str:
+        top_level = str(payload.get("error_code") or "").strip()
+        if top_level:
+            return top_level
+
+        data_raw = payload.get("data")
+        data = data_raw if isinstance(data_raw, Mapping) else {}
+        from_data = str(data.get("error_code") or "").strip()
+        if from_data:
+            return from_data
+
+        return ""
 
     def _build_update_changes(self, data: Mapping[str, Any]) -> list[dict[str, str]]:
         updated_fields_raw = data.get("updated_fields")

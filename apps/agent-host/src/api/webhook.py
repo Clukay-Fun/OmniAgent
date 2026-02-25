@@ -36,6 +36,11 @@ from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_
 from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
+from src.core.errors import (
+    CallbackDuplicatedError,
+    PendingActionExpiredError,
+    get_user_message as get_core_user_message,
+)
 from src.core.response.models import RenderedResponse
 from src.core.skills.schema_cache import get_global_schema_cache
 from src.core.session import SessionManager
@@ -642,16 +647,18 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
     callback_payload = _extract_card_action_payload(payload)
     if callback_payload is not None:
+        expired_text = get_core_user_message(PendingActionExpiredError())
+        duplicated_text = get_core_user_message(CallbackDuplicatedError())
         event_id = str(callback_payload.get("event_id") or "")
         if event_id and settings.webhook.dedup.enabled and _get_deduplicator().is_duplicate(event_id):
-            return {"status": "ok", "reason": "已处理"}
+            return {"status": "ok", "reason": duplicated_text}
         # S4: 语义级 callback 去重（user_id + action + payload hash）
         open_id = str(callback_payload.get("open_id") or "").strip()
         if not open_id:
-            return {"status": "ok", "reason": "已过期"}
+            return {"status": "ok", "reason": expired_text}
         cb_action = str(callback_payload.get("callback_action") or "").strip()
         if not cb_action:
-            return {"status": "ok", "reason": "已过期"}
+            return {"status": "ok", "reason": expired_text}
         cb_deduper = _get_callback_deduper()
         cb_dedup_key = cb_deduper.build_key(
             user_id=open_id,
@@ -667,7 +674,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
                     "callback_action": cb_action,
                 },
             )
-            return {"status": "ok", "reason": "已处理"}
+            return {"status": "ok", "reason": duplicated_text}
         chat_id = str(callback_payload.get("chat_id") or "").strip()
         user_id = build_session_key(
             user_id=open_id,
@@ -692,7 +699,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             )
             if event_id and settings.webhook.dedup.enabled:
                 _get_deduplicator().mark(event_id)
-            return {"status": "ok", "reason": "已过期"}
+            return {"status": "ok", "reason": expired_text}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
 
@@ -701,8 +708,8 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
 
         text = str(result.get("text") or "")
         if str(result.get("status") or "") == "expired":
-            return {"status": "ok", "reason": text or "已过期"}
-        return {"status": "ok", "reason": text or "已处理"}
+            return {"status": "ok", "reason": text or expired_text}
+        return {"status": "ok", "reason": text or duplicated_text}
 
     header = payload.get("header") or {}
     if settings.feishu.verification_token:

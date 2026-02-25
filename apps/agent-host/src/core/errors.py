@@ -72,7 +72,24 @@ def _load_error_catalog() -> dict[str, str]:
     return _ERROR_CATALOG
 
 
+def get_user_message_by_code(code: str, *, fallback: str = "") -> str:
+    """Resolve user-facing message by error code."""
+    catalog = _load_error_catalog()
+    normalized = str(code or "").strip()
+    if normalized:
+        value = str(catalog.get(normalized) or "").strip()
+        if value:
+            return value
+
+    unknown = str(catalog.get("unknown_error") or "").strip()
+    if unknown:
+        return unknown
+
+    if fallback:
+        return fallback
+    return normalized or "unknown error"
+
+
 def get_user_message(error: CoreError) -> str:
     """Resolve user-facing message for a typed error from the YAML catalog."""
-    catalog = _load_error_catalog()
-    return catalog.get(error.code, str(error))
+    return get_user_message_by_code(error.code, fallback=str(error))

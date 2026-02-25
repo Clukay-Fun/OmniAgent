@@ -70,6 +70,11 @@ from src.skills_market import load_market_skills
 from src.core.usage_logger import UsageLogger, UsageRecord, now_iso
 from src.core.usage_cost import compute_usage_cost, load_model_pricing
 from src.core.cost_monitor import CostMonitorConfig, configure_cost_monitor
+from src.core.errors import (
+    PendingActionExpiredError,
+    PendingActionNotFoundError,
+    get_user_message as get_core_user_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1067,6 +1072,20 @@ class AgentOrchestrator:
                 extra={"event_code": "orchestrator.processing_status.emit_failed", "status": status.value},
             )
 
+    @staticmethod
+    def _expired_callback_response() -> dict[str, Any]:
+        return {
+            "status": "expired",
+            "text": get_core_user_message(PendingActionExpiredError()),
+        }
+
+    @staticmethod
+    def _missing_pending_action_response() -> dict[str, Any]:
+        return {
+            "status": "expired",
+            "text": get_core_user_message(PendingActionNotFoundError()),
+        }
+
     async def handle_card_action_callback(
         self,
         user_id: str,
@@ -1082,7 +1101,7 @@ class AgentOrchestrator:
 
         pending = self._state_manager.get_pending_action(user_id)
         if pending is None:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._missing_pending_action_response()
 
         action_name = pending.action
 
@@ -1121,14 +1140,14 @@ class AgentOrchestrator:
                     "callback_action": callback,
                 },
             )
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         is_confirm = callback == expected_confirm
         is_cancel = callback == expected_cancel
 
         skill = self._router.get_skill(skill_name)
         if skill is None:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         operation_payloads = self._resolve_pending_action_payloads(pending)
         if not operation_payloads:
@@ -1170,7 +1189,7 @@ class AgentOrchestrator:
                 break
 
         if result is None:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         if result.success:
             if is_confirm and hasattr(self._state_manager, "confirm_pending_action"):
@@ -1229,12 +1248,12 @@ class AgentOrchestrator:
     async def _handle_edit_callback(self, user_id: str, callback_value: Mapping[str, Any]) -> dict[str, Any] | None:
         skill = self._router.get_skill("UpdateSkill")
         if skill is None:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         record = self._resolve_record_from_callback(user_id=user_id, callback_value=callback_value)
         record_id = str(record.get("record_id") or "").strip()
         if not record_id:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         context = SkillContext(
             query="修改该案件内容",
@@ -1316,7 +1335,7 @@ class AgentOrchestrator:
     ) -> dict[str, Any] | None:
         callbacks = pending_payload.get("callbacks") if isinstance(pending_payload, dict) else None
         if not isinstance(callbacks, dict):
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         callback_data_raw = callbacks.get(callback_action)
         callback_data = callback_data_raw if isinstance(callback_data_raw, dict) else None
@@ -1334,7 +1353,7 @@ class AgentOrchestrator:
                     "callback_action": callback_action,
                 },
             )
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         kind = str(callback_data.get("kind") or "query").strip().lower()
         if kind == "no_more":
@@ -1345,7 +1364,7 @@ class AgentOrchestrator:
 
         skill = self._router.get_skill("QuerySkill")
         if skill is None:
-            return {"status": "expired", "text": "操作已过期"}
+            return self._expired_callback_response()
 
         query = str(callback_data.get("query") or "").strip() or "下一页"
         extra: dict[str, Any] = {}

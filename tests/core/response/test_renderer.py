@@ -442,6 +442,7 @@ from src.core.errors import (  # noqa: E402
     PendingActionNotFoundError,
     LocatorTripletMissingError,
     CallbackDuplicatedError,
+    get_user_message_by_code,
     get_user_message,
 )
 
@@ -463,3 +464,24 @@ def test_error_catalog_returns_fallback_for_unknown_code() -> None:
     msg = get_user_message(err)
     assert msg  # should return something, not empty
 
+
+def test_error_catalog_lookup_by_code_falls_back_to_unknown_message() -> None:
+    msg = get_user_message_by_code("totally_unknown_code_xyz")
+    assert msg == "操作失败，请稍后重试"
+
+
+def test_renderer_failure_uses_catalog_message_when_error_code_exists() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": False,
+            "skill_name": "UpdateSkill",
+            "message": "inline message should not leak",
+            "data": {"error_code": "pending_action_expired"},
+        }
+    )
+
+    assert response.text_fallback == "操作已过期，请重试"
+    assert response.card_template is not None
+    assert response.card_template.params["error_code"] == "pending_action_expired"

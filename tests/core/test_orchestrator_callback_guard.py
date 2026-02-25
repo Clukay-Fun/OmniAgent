@@ -11,6 +11,11 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.core.orchestrator import AgentOrchestrator  # noqa: E402
+from src.core.errors import (  # noqa: E402
+    PendingActionExpiredError,
+    PendingActionNotFoundError,
+    get_user_message,
+)
 
 
 class _FakeStateManager:
@@ -34,7 +39,17 @@ def test_callback_action_mismatch_returns_expired() -> None:
     result = asyncio.run(orchestrator.handle_card_action_callback("u1", "update_record_confirm"))
 
     assert result["status"] == "expired"
-    assert "过期" in result["text"]
+    assert result["text"] == get_user_message(PendingActionExpiredError())
+
+
+def test_callback_without_pending_action_returns_catalog_message() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator._state_manager = SimpleNamespace(get_pending_action=lambda _user_id: None)
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "update_record_confirm"))
+
+    assert result["status"] == "expired"
+    assert result["text"] == get_user_message(PendingActionNotFoundError())
 
 
 def test_query_list_navigation_callback_uses_existing_pending_action_route() -> None:
