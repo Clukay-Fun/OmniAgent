@@ -317,13 +317,20 @@ class ConversationStateManager:
         state = self.get_state(user_id)
         return state.active_record
 
-    def get_message_chunk(self, user_id: str) -> MessageChunkState | None:
+    def get_message_chunk(
+        self,
+        user_id: str,
+        now: float | None = None,
+        enforce_stale: bool = True,
+    ) -> MessageChunkState | None:
         state = self.get_state(user_id)
         chunk = state.message_chunk
-        now = time.time()
-        if chunk and (now - chunk.last_at > self.CHUNK_STALE_SECONDS):
+        if not enforce_stale:
+            return chunk
+        current = float(now) if now is not None else time.time()
+        if chunk and (current - chunk.last_at > self.CHUNK_STALE_SECONDS):
             state.message_chunk = None
-            state.updated_at = now
+            state.updated_at = current
             self._store.set(user_id, state)
             return None
         return chunk

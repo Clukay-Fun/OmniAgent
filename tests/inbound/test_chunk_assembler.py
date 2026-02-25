@@ -1,5 +1,7 @@
+import asyncio
 from pathlib import Path
 import sys
+import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,41 +10,54 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.api.chunk_assembler import ChunkAssembler
 from src.core.session import SessionManager
+from src.core.state import ConversationStateManager, MemoryStateStore
 from src.config import SessionSettings
 
 
-def test_chunk_assembler_fast_path_immediate() -> None:
-    assembler = ChunkAssembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
+def _build_assembler(**kwargs):
+    state_manager = ConversationStateManager(store=MemoryStateStore())
+    assembler = ChunkAssembler(state_manager=state_manager, **kwargs)
+    return assembler, state_manager
 
-    decision = assembler.ingest(scope_key="u1", text="请帮我查一下案件进展。", now=0.0)
+
+def test_chunk_assembler_fast_path_immediate() -> None:
+    assembler, state_manager = _build_assembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
+
+    decision = asyncio.run(assembler.ingest(scope_key="u1", text="请帮我查一下案件进展。", now=0.0))
 
     assert decision.should_process is True
     assert decision.text == "请帮我查一下案件进展。"
     assert decision.reason == "fast_path"
+    assert state_manager.get_message_chunk("u1", now=0.0) is None
 
 
 def test_chunk_assembler_aggregates_within_window_until_complete() -> None:
-    assembler = ChunkAssembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
+    assembler, state_manager = _build_assembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
 
-    first = assembler.ingest(scope_key="u1", text="请帮我查一下", now=0.0)
-    second = assembler.ingest(scope_key="u1", text="李四的", now=1.0)
-    third = assembler.ingest(scope_key="u1", text="案件。", now=2.0)
+    first = asyncio.run(assembler.ingest(scope_key="u1", text="请帮我查一下", now=0.0))
+    second = asyncio.run(assembler.ingest(scope_key="u1", text="李四的", now=1.0))
+    buffered = state_manager.get_message_chunk("u1", now=1.0)
+    buffered_segments = list(buffered.segments) if buffered is not None else []
+    third = asyncio.run(assembler.ingest(scope_key="u1", text="案件。", now=2.0))
 
     assert first.should_process is False
     assert second.should_process is False
+    assert buffered is not None
+    assert buffered_segments == ["请帮我查一下", "李四的"]
     assert third.should_process is True
     assert third.text == "请帮我查一下\n李四的\n案件。"
     assert third.reason == "fast_path"
+    assert state_manager.get_message_chunk("u1", now=2.0) is None
 
 
 def test_chunk_assembler_flushes_on_segment_fuse_limit() -> None:
-    assembler = ChunkAssembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
+    assembler, _ = _build_assembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
 
     for idx in range(4):
-        decision = assembler.ingest(scope_key="u1", text=f"片段{idx}", now=float(idx))
+        decision = asyncio.run(assembler.ingest(scope_key="u1", text=f"片段{idx}", now=float(idx)))
         assert decision.should_process is False
 
-    fused = assembler.ingest(scope_key="u1", text="片段4", now=2.5)
+    fused = asyncio.run(assembler.ingest(scope_key="u1", text="片段4", now=2.5))
 
     assert fused.should_process is True
     assert fused.reason == "fuse_limit"
@@ -50,10 +65,10 @@ def test_chunk_assembler_flushes_on_segment_fuse_limit() -> None:
 
 
 def test_chunk_assembler_flushes_on_char_fuse_limit() -> None:
-    assembler = ChunkAssembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
+    assembler, _ = _build_assembler(enabled=True, window_seconds=3, max_segments=5, max_chars=500)
 
-    first = assembler.ingest(scope_key="u1", text="a" * 280, now=0.0)
-    second = assembler.ingest(scope_key="u1", text="b" * 280, now=1.0)
+    first = asyncio.run(assembler.ingest(scope_key="u1", text="a" * 280, now=0.0))
+    second = asyncio.run(assembler.ingest(scope_key="u1", text="b" * 280, now=1.0))
 
     assert first.should_process is False
     assert second.should_process is True
@@ -62,7 +77,7 @@ def test_chunk_assembler_flushes_on_char_fuse_limit() -> None:
 
 
 def test_chunk_assembler_flushes_stale_buffer_before_new_context() -> None:
-    assembler = ChunkAssembler(
+    assembler, _ = _build_assembler(
         enabled=True,
         window_seconds=3,
         stale_window_seconds=10,
@@ -70,9 +85,9 @@ def test_chunk_assembler_flushes_stale_buffer_before_new_context() -> None:
         max_chars=500,
     )
 
-    first = assembler.ingest(scope_key="u1", text="删除第一个", now=0.0)
-    second = assembler.ingest(scope_key="u1", text="帮我查张三", now=30.0)
-    third = assembler.ingest(scope_key="u1", text="的案件。", now=31.0)
+    first = asyncio.run(assembler.ingest(scope_key="u1", text="删除第一个", now=0.0))
+    second = asyncio.run(assembler.ingest(scope_key="u1", text="帮我查张三", now=30.0))
+    third = asyncio.run(assembler.ingest(scope_key="u1", text="的案件。", now=31.0))
 
     assert first.should_process is False
     assert second.should_process is True
@@ -83,20 +98,21 @@ def test_chunk_assembler_flushes_stale_buffer_before_new_context() -> None:
 
 
 def test_chunk_assembler_flushes_orphan_chunks_on_session_expire() -> None:
-    assembler = ChunkAssembler(enabled=True, window_seconds=3, stale_window_seconds=10)
+    assembler, _ = _build_assembler(enabled=True, window_seconds=3, stale_window_seconds=10)
     session_manager = SessionManager(SessionSettings(ttl_minutes=1))
 
     flushed_texts: list[str] = []
 
     def on_expired(session_key: str) -> None:
-        decision = assembler.drain(session_key)
+        decision = asyncio.run(assembler.drain(session_key))
         if decision.should_process:
             flushed_texts.append(decision.text)
 
     session_manager.register_expire_listener(on_expired)
     session_key = "group:oc_g1:user:ou_u1"
     session_manager.add_message(session_key, "user", "帮我查")
-    first = assembler.ingest(scope_key=session_key, text="帮我查", now=0.0)
+    now = time.time()
+    first = asyncio.run(assembler.ingest(scope_key=session_key, text="帮我查", now=now))
     assert first.should_process is False
 
     # 手动将会话标记为过期，触发 cleanup 回调

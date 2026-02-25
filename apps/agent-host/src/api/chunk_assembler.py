@@ -3,14 +3,17 @@
 主要功能:
     - 按会话作用域在短窗口内聚合多条消息
     - 提供快速直通 (fast-path) 与保险丝上限 (fuse)
-    - 以同步可测试方式实现，便于后续替换为异步定时器
+    - 基于会话状态管理器持久化分片缓冲
 """
 
 from __future__ import annotations
 
-import threading
+import asyncio
 import time
 from dataclasses import dataclass
+
+from src.core.state.manager import ConversationStateManager
+from src.core.state.models import MessageChunkState
 
 
 @dataclass
@@ -22,13 +25,6 @@ class ChunkDecision:
     reason: str = ""
 
 
-@dataclass
-class _ChunkBuffer:
-    segments: list[str]
-    started_at: float
-    last_at: float
-
-
 class ChunkAssembler:
     """3 秒窗口分片聚合器。"""
 
@@ -37,20 +33,21 @@ class ChunkAssembler:
     def __init__(
         self,
         enabled: bool,
+        state_manager: ConversationStateManager,
         window_seconds: float = 3.0,
         stale_window_seconds: float = 10.0,
         max_segments: int = 5,
         max_chars: int = 500,
     ) -> None:
         self._enabled = bool(enabled)
+        self._state_manager = state_manager
         self._window_seconds = max(float(window_seconds), 0.1)
         self._stale_window_seconds = max(float(stale_window_seconds), self._window_seconds)
         self._max_segments = max(int(max_segments), 1)
         self._max_chars = max(int(max_chars), 1)
-        self._buffers: dict[str, _ChunkBuffer] = {}
-        self._lock = threading.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
 
-    def ingest(self, scope_key: str, text: str, now: float | None = None) -> ChunkDecision:
+    async def ingest(self, scope_key: str, text: str, now: float | None = None) -> ChunkDecision:
         """写入单条文本并返回是否应进入处理链路。"""
         content = str(text or "").strip()
         if not content:
@@ -60,53 +57,84 @@ class ChunkAssembler:
 
         ts = float(now) if now is not None else time.time()
         key = str(scope_key or "").strip() or "default"
-        with self._lock:
-            existing = self._buffers.get(key)
+        lock = self._get_lock(key)
+        async with lock:
+            existing = self._state_manager.get_message_chunk(key, now=ts, enforce_stale=False)
             if existing is None:
                 if self._is_fast_path(content):
+                    self._cleanup_lock_if_idle(key, now=ts)
                     return ChunkDecision(should_process=True, text=content, reason="fast_path")
-                self._buffers[key] = _ChunkBuffer(segments=[content], started_at=ts, last_at=ts)
-                limited = self._apply_fuse(self._buffers[key].segments)
-                if limited[1]:
-                    self._buffers.pop(key, None)
-                    return ChunkDecision(should_process=True, text=limited[0], reason="fuse_limit")
+                chunk = MessageChunkState(segments=[content], started_at=ts, last_at=ts)
+                merged, hit_fuse = self._apply_fuse(chunk.segments)
+                if hit_fuse:
+                    self._state_manager.set_message_chunk(key, None)
+                    self._cleanup_lock_if_idle(key, now=ts)
+                    return ChunkDecision(should_process=True, text=merged, reason="fuse_limit")
+                chunk.segments = self._split_back(merged)
+                chunk.last_at = ts
+                self._state_manager.set_message_chunk(key, chunk)
                 return ChunkDecision(should_process=False, reason="buffering")
 
             age = ts - existing.started_at
             if age > self._stale_window_seconds:
                 flushed, _ = self._apply_fuse(existing.segments)
-                self._buffers[key] = _ChunkBuffer(segments=[content], started_at=ts, last_at=ts)
+                self._state_manager.set_message_chunk(
+                    key,
+                    MessageChunkState(segments=[content], started_at=ts, last_at=ts),
+                )
                 return ChunkDecision(should_process=True, text=flushed, reason="stale_window_elapsed")
 
             if age > self._window_seconds:
                 flushed, _ = self._apply_fuse(existing.segments)
-                self._buffers[key] = _ChunkBuffer(segments=[content], started_at=ts, last_at=ts)
+                self._state_manager.set_message_chunk(
+                    key,
+                    MessageChunkState(segments=[content], started_at=ts, last_at=ts),
+                )
                 return ChunkDecision(should_process=True, text=flushed, reason="window_elapsed")
 
             existing.segments.append(content)
             existing.last_at = ts
             merged, hit_fuse = self._apply_fuse(existing.segments)
-            existing.segments = self._split_back(merged)
-
             if hit_fuse:
-                self._buffers.pop(key, None)
+                self._state_manager.set_message_chunk(key, None)
+                self._cleanup_lock_if_idle(key, now=ts)
                 return ChunkDecision(should_process=True, text=merged, reason="fuse_limit")
+
+            existing.segments = self._split_back(merged)
+            self._state_manager.set_message_chunk(key, existing)
             if self._is_fast_path(content):
-                self._buffers.pop(key, None)
+                self._state_manager.set_message_chunk(key, None)
+                self._cleanup_lock_if_idle(key, now=ts)
                 return ChunkDecision(should_process=True, text=merged, reason="fast_path")
             return ChunkDecision(should_process=False, reason="buffering")
 
-    def drain(self, scope_key: str) -> ChunkDecision:
+    async def drain(self, scope_key: str) -> ChunkDecision:
         """主动冲刷指定作用域残留分片。"""
         key = str(scope_key or "").strip() or "default"
-        with self._lock:
-            existing = self._buffers.pop(key, None)
-        if existing is None:
-            return ChunkDecision(should_process=False, reason="empty")
-        merged, _ = self._apply_fuse(existing.segments)
-        if not merged.strip():
-            return ChunkDecision(should_process=False, reason="empty")
-        return ChunkDecision(should_process=True, text=merged, reason="manual_drain")
+        lock = self._get_lock(key)
+        async with lock:
+            existing = self._state_manager.get_message_chunk(key, enforce_stale=False)
+            if existing is None:
+                self._cleanup_lock_if_idle(key)
+                return ChunkDecision(should_process=False, reason="empty")
+            self._state_manager.set_message_chunk(key, None)
+            merged, _ = self._apply_fuse(existing.segments)
+            if not merged.strip():
+                self._cleanup_lock_if_idle(key)
+                return ChunkDecision(should_process=False, reason="empty")
+            self._cleanup_lock_if_idle(key)
+            return ChunkDecision(should_process=True, text=merged, reason="manual_drain")
+
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
+
+    def _cleanup_lock_if_idle(self, key: str, now: float | None = None) -> None:
+        if self._state_manager.get_message_chunk(key, now=now, enforce_stale=False) is None:
+            self._locks.pop(key, None)
 
     def _is_fast_path(self, text: str) -> bool:
         stripped = text.strip()

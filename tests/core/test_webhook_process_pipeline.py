@@ -71,7 +71,7 @@ def test_process_message_sends_formatter_payload(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="请帮我看一下案件进展", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -135,7 +135,7 @@ def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="删除第一个。", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -192,7 +192,7 @@ def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatc
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到文件消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -261,7 +261,7 @@ def test_process_image_message_sends_status_and_ocr_summary(monkeypatch) -> None
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到图片消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())
@@ -330,7 +330,7 @@ def test_process_audio_message_transcript_flows_as_text(monkeypatch) -> None:
     monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
 
     class _AlwaysProcessAssembler:
-        def ingest(self, **_kwargs):
+        async def ingest(self, **_kwargs):
             return SimpleNamespace(should_process=True, text="[收到语音消息]", reason="fast_path")
 
     monkeypatch.setattr(webhook_module, "_get_chunk_assembler", lambda: _AlwaysProcessAssembler())

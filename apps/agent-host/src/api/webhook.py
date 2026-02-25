@@ -180,8 +180,10 @@ def _get_chunk_assembler() -> ChunkAssembler:
     if _chunk_assembler is None:
         settings = _get_settings()
         cfg = settings.webhook.chunk_assembler
+        core = _get_agent_core()
         _chunk_assembler = ChunkAssembler(
             enabled=cfg.enabled,
+            state_manager=core._state_manager,
             window_seconds=cfg.window_seconds,
             stale_window_seconds=cfg.stale_window_seconds,
             max_segments=cfg.max_segments,
@@ -200,8 +202,8 @@ def _bind_chunk_expire_hook() -> None:
         return
     assembler = _chunk_assembler
 
-    def _on_session_expired(session_key: str) -> None:
-        decision = assembler.drain(session_key)
+    async def _drain_expired_chunk(session_key: str) -> None:
+        decision = await assembler.drain(session_key)
         if decision.should_process:
             logger.warning(
                 "检测到会话过期残留分片，已执行兜底冲刷",
@@ -211,6 +213,13 @@ def _bind_chunk_expire_hook() -> None:
                     "text_len": len(decision.text),
                 },
             )
+
+    def _on_session_expired(session_key: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_drain_expired_chunk(session_key))
+        except RuntimeError:
+            asyncio.run(_drain_expired_chunk(session_key))
 
     _session_manager.register_expire_listener(_on_session_expired)
     _chunk_expire_hook_bound = True
@@ -909,7 +918,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         },
     )
 
-    chunk_decision = _get_chunk_assembler().ingest(
+    chunk_decision = await _get_chunk_assembler().ingest(
         scope_key=scoped_user_id,
         text=text,
     )

@@ -70,6 +70,7 @@ agent_core = AgentOrchestrator(
 )
 chunk_assembler = ChunkAssembler(
     enabled=bool(settings.webhook.chunk_assembler.enabled),
+    state_manager=agent_core._state_manager,
     window_seconds=float(settings.webhook.chunk_assembler.window_seconds),
     stale_window_seconds=float(settings.webhook.chunk_assembler.stale_window_seconds),
     max_segments=int(settings.webhook.chunk_assembler.max_segments),
@@ -79,16 +80,23 @@ _pending_chunk_flush_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
 def _flush_orphan_chunks(session_key: str) -> None:
-    decision = chunk_assembler.drain(session_key)
-    if decision.should_process:
-        logger.warning(
-            "检测到会话过期残留分片，已执行兜底冲刷",
-            extra={
-                "event_code": "ws.chunk_assembler.orphan_flushed",
-                "session_key": session_key,
-                "text_len": len(decision.text),
-            },
-        )
+    async def _drain() -> None:
+        decision = await chunk_assembler.drain(session_key)
+        if decision.should_process:
+            logger.warning(
+                "检测到会话过期残留分片，已执行兜底冲刷",
+                extra={
+                    "event_code": "ws.chunk_assembler.orphan_flushed",
+                    "session_key": session_key,
+                    "text_len": len(decision.text),
+                },
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_drain())
+    except RuntimeError:
+        asyncio.run(_drain())
 
 
 session_manager.register_expire_listener(_flush_orphan_chunks)
@@ -363,7 +371,7 @@ async def _flush_buffered_message_after_window(
     delay_seconds = max(float(settings.webhook.chunk_assembler.window_seconds), 0.1) + 0.05
     try:
         await asyncio.sleep(delay_seconds)
-        decision = chunk_assembler.drain(scope_key)
+        decision = await chunk_assembler.drain(scope_key)
         if not decision.should_process:
             return
 
@@ -673,18 +681,9 @@ def _noop_event_handler(event_type: str):
     return _handler
 
 
-def on_message_receive(data: P2ImMessageReceiveV1) -> None:
-    """
-    处理接收到的消息事件
-    
-    参数:
-        data: 飞书事件数据对象
-    """
+async def _handle_message_receive_event(event: Any) -> None:
+    """异步处理标准化后的 WS 消息事件。"""
     try:
-        event = FeishuEventAdapter.from_ws_event(data)
-        if event is None:
-            return
-
         message_id = event.message_id
         chat_id = event.chat_id
         message_type = event.message_type
@@ -743,7 +742,7 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             chat_type=chat_type,
             channel_type="feishu",
         )
-        chunk_decision = chunk_assembler.ingest(scope_key=scoped_user_id, text=text)
+        chunk_decision = await chunk_assembler.ingest(scope_key=scoped_user_id, text=text)
         if not chunk_decision.should_process:
             logger.info(
                 "长连接消息分片已缓存，等待聚合窗口",
@@ -780,20 +779,17 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             },
         )
         record_inbound_message("ws", message_type, "accepted")
-        
-        # 异步处理消息
-        asyncio.create_task(
-            handle_message_async(
-                scoped_user_id,
-                chat_id,
-                chat_type,
-                text,
-                message_id,
-                message_type=normalized.message_type,
-                attachments=normalized.attachments,
-            )
+
+        await handle_message_async(
+            scoped_user_id,
+            chat_id,
+            chat_type,
+            text,
+            message_id,
+            message_type=normalized.message_type,
+            attachments=normalized.attachments,
         )
-        
+
     except Exception as e:
         logger.error(
             "处理长连接事件失败: %s",
@@ -801,6 +797,24 @@ def on_message_receive(data: P2ImMessageReceiveV1) -> None:
             extra={"event_code": "ws.event.handle_error"},
             exc_info=True,
         )
+
+
+def on_message_receive(data: P2ImMessageReceiveV1) -> None:
+    """
+    处理接收到的消息事件
+    
+    参数:
+        data: 飞书事件数据对象
+    """
+    event = FeishuEventAdapter.from_ws_event(data)
+    if event is None:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_handle_message_receive_event(event))
+    except RuntimeError:
+        asyncio.run(_handle_message_receive_event(event))
 
 
 # endregion
