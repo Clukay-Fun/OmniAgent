@@ -836,3 +836,46 @@ def test_update_skill_requires_data_writer_injection() -> None:
 def test_multi_table_linker_requires_data_writer_injection() -> None:
     with pytest.raises(TypeError, match="data_writer"):
         MultiTableLinker(mcp_client=object(), skills_config={})
+
+
+# ── S1: locator triplet validation ──────────────────────────────────
+
+
+from src.core.skills.locator_triplet import LocatorTriplet, validate_locator_triplet  # noqa: E402
+
+
+def test_locator_triplet_rejects_missing_app_token() -> None:
+    with pytest.raises(ValueError, match="missing locator triplet"):
+        validate_locator_triplet(app_token=None, table_id="tbl_1")
+
+
+def test_locator_triplet_rejects_missing_table_id() -> None:
+    with pytest.raises(ValueError, match="missing locator triplet"):
+        validate_locator_triplet(app_token="app_abc", table_id=None)
+
+
+def test_locator_triplet_rejects_empty_strings() -> None:
+    with pytest.raises(ValueError, match="missing locator triplet"):
+        validate_locator_triplet(app_token="", table_id="")
+
+
+def test_locator_triplet_rejects_missing_record_id_when_required() -> None:
+    with pytest.raises(ValueError, match="record_id"):
+        validate_locator_triplet(
+            app_token="app_abc", table_id="tbl_1", require_record_id=True
+        )
+
+
+def test_locator_triplet_valid_create() -> None:
+    triplet = validate_locator_triplet(app_token="app_abc", table_id="tbl_1")
+    assert isinstance(triplet, LocatorTriplet)
+    assert triplet.app_token == "app_abc"
+    assert triplet.table_id == "tbl_1"
+    assert triplet.record_id is None
+
+
+def test_locator_triplet_valid_update() -> None:
+    triplet = validate_locator_triplet(
+        app_token="app_abc", table_id="tbl_1", record_id="rec_1", require_record_id=True
+    )
+    assert triplet.record_id == "rec_1"
