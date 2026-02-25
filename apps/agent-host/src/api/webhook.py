@@ -658,7 +658,7 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             action=cb_action,
             payload=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
         )
-        if cb_deduper.is_duplicate(cb_dedup_key):
+        if not cb_deduper.try_acquire(cb_dedup_key):
             logger.info(
                 "重复 callback 已短路",
                 extra={
@@ -692,11 +692,9 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             )
             if event_id and settings.webhook.dedup.enabled:
                 _get_deduplicator().mark(event_id)
-            cb_deduper.mark(cb_dedup_key)
             return {"status": "ok", "reason": "已过期"}
         if event_id and settings.webhook.dedup.enabled:
             _get_deduplicator().mark(event_id)
-        cb_deduper.mark(cb_dedup_key)
 
         if str(result.get("status") or "") == "processed":
             asyncio.create_task(_emit_callback_result_message(callback_payload, result))

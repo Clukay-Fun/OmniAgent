@@ -499,8 +499,8 @@ from src.api.callback_deduper import CallbackDeduper  # noqa: E402
 def test_callback_deduper_detects_duplicate() -> None:
     deduper = CallbackDeduper(window_seconds=60)
     key = deduper.build_key(user_id="u1", action="create_record_confirm", payload={"a": 1})
-    assert deduper.is_duplicate(key) is False
-    deduper.mark(key)
+    assert deduper.try_acquire(key) is True
+    assert deduper.try_acquire(key) is False
     assert deduper.is_duplicate(key) is True
 
 
@@ -704,3 +704,70 @@ def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
     assert "已处理" in second["reason"]
     assert calls["count"] == 1
     assert any(getattr(record, "event_code", "") == "callback.duplicated" for record in caplog.records)
+
+
+def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> None:
+    class _FakeRequest:
+        def __init__(self, payload: dict[str, object]):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    calls = {"count": 0}
+
+    class _FakeCore:
+        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
+            _ = user_id, callback_action, callback_value
+            calls["count"] += 1
+            await asyncio.sleep(0.02)
+            return {"status": "processed", "text": "已处理"}
+
+    settings = SimpleNamespace(
+        feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
+        webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
+    )
+
+    payload_1 = {
+        "header": {"event_id": "evt_cb_concurrent_1"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_concurrent_u1"}},
+            "open_chat_id": "oc_concurrent_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+    payload_2 = {
+        "header": {"event_id": "evt_cb_concurrent_2"},
+        "event": {
+            "operator": {"operator_id": {"open_id": "ou_concurrent_u1"}},
+            "open_chat_id": "oc_concurrent_1",
+            "action": {
+                "value": {
+                    "callback_action": "delete_record_confirm",
+                    "record_id": "rec_001",
+                }
+            },
+        },
+    }
+
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
+    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
+    monkeypatch.setattr(webhook_module, "_deduplicator", None)
+    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
+
+    async def _invoke_both() -> tuple[dict[str, object], dict[str, object]]:
+        return await asyncio.gather(
+            webhook_module.feishu_webhook(_FakeRequest(payload_1)),
+            webhook_module.feishu_webhook(_FakeRequest(payload_2)),
+        )
+
+    first, second = asyncio.run(_invoke_both())
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    assert calls["count"] == 1

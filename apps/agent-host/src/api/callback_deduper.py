@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 from collections import OrderedDict
 from typing import Any
@@ -23,15 +24,16 @@ class CallbackDeduper:
     用法:
         deduper = CallbackDeduper(window_seconds=10)
         key = deduper.build_key(user_id="u1", action="create_record_confirm", payload={...})
-        if deduper.is_duplicate(key):
+        if not deduper.try_acquire(key):
             return  # 短路
-        deduper.mark(key)
+        # continue processing callback
     """
 
     def __init__(self, window_seconds: int = 10, max_size: int = 2048) -> None:
         self._window = max(1, window_seconds)
         self._max_size = max(64, max_size)
         self._cache: OrderedDict[str, float] = OrderedDict()
+        self._lock = threading.Lock()
 
     def build_key(self, *, user_id: str, action: str, payload: dict[str, Any] | None = None) -> str:
         """Build a dedup key from user_id + action + deterministic payload hash."""
@@ -41,19 +43,37 @@ class CallbackDeduper:
 
     def is_duplicate(self, key: str) -> bool:
         """Check if this key was already seen within the dedup window."""
-        self._cleanup()
-        return key in self._cache
+        with self._lock:
+            self._cleanup_locked()
+            return key in self._cache
+
+    def try_acquire(self, key: str) -> bool:
+        """Atomically check-and-mark a key.
+
+        Returns True only for the first caller within the dedup window.
+        """
+        now = time.time()
+        with self._lock:
+            self._cleanup_locked(now)
+            if key in self._cache:
+                return False
+            self._cache[key] = now
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
+            return True
 
     def mark(self, key: str) -> None:
         """Mark this key as processed."""
         now = time.time()
-        self._cache.pop(key, None)
-        self._cache[key] = now
-        while len(self._cache) > self._max_size:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache.pop(key, None)
+            self._cache[key] = now
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
 
-    def _cleanup(self) -> None:
-        now = time.time()
+    def _cleanup_locked(self, now: float | None = None) -> None:
+        if now is None:
+            now = time.time()
         cutoff = now - self._window
         while self._cache:
             oldest_key = next(iter(self._cache))
