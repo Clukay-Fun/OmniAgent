@@ -84,6 +84,18 @@ class SkillExecutionError(SkillError):
             details={"cause": cause},
         )
         self.original_exception = original_exception
+
+
+class SkillTimeoutError(SkillError):
+    """技能执行超时"""
+
+    def __init__(self, skill_name: str, timeout_seconds: float) -> None:
+        super().__init__(
+            message=f"技能 '{skill_name}' 执行超时 ({timeout_seconds}s)",
+            skill_name=skill_name,
+            code="SKILL_TIMEOUT",
+            details={"timeout_seconds": timeout_seconds},
+        )
 # endregion
 # ============================================
 
@@ -253,6 +265,7 @@ class ConfigNotFoundError(ConfigError):
 USER_FRIENDLY_MESSAGES = {
     "SKILL_NOT_FOUND": "抱歉，我暂时无法处理这个请求。",
     "SKILL_EXECUTION_ERROR": "处理请求时遇到问题，请稍后重试。",
+    "SKILL_TIMEOUT": "抱歉，操作响应超时，请稍后重试。",
     "LLM_TIMEOUT": "响应超时，请稍后重试。",
     "LLM_RATE_LIMIT": "请求太频繁，请稍后再试。",
     "MCP_CONNECTION_ERROR": "服务暂时不可用，请稍后重试。",

@@ -8,7 +8,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class SkillExecutionStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    ERROR = "error"
 
 
 # region 技能上下文
@@ -67,11 +75,14 @@ class SkillResult:
 
     def to_reply(self) -> dict[str, Any]:
         """转换为标准回复字典"""
-        result = {
+        base = {
             "type": self.reply_type,
             "text": self.reply_text or self.message,
         }
         if self.reply_card:
-            result["card"] = self.reply_card
-        return result
+            return {
+                **base,
+                "card": self.reply_card,
+            }
+        return base
 # endregion

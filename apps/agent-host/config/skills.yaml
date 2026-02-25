@@ -1,5 +1,20 @@
 # 技能配置（支持热更新）
 
+defaults:
+  timeout_seconds: 10
+
+skills:
+  query:
+    timeout_seconds: 15
+  create:
+    timeout_seconds: 30
+  update:
+    timeout_seconds: 30
+  delete:
+    timeout_seconds: 30
+  confirm:
+    timeout_seconds: 30
+
 intent:
   thresholds:
     direct_execute: 0.5      # 直接执行（降低以支持单关键词命中）
