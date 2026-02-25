@@ -432,3 +432,34 @@ def test_load_templates_falls_back_to_defaults_when_yaml_invalid(tmp_path: Path)
     response = renderer.render({"success": False, "skill_name": "executor"})
 
     assert response.text_fallback == "处理失败：executor"
+
+
+# ── S3: typed error → error catalog → user message ──────────────────
+
+from src.core.errors import (  # noqa: E402
+    CoreError,
+    PendingActionExpiredError,
+    PendingActionNotFoundError,
+    LocatorTripletMissingError,
+    CallbackDuplicatedError,
+    get_user_message,
+)
+
+
+def test_typed_error_has_correct_code() -> None:
+    assert PendingActionExpiredError().code == "pending_action_expired"
+    assert PendingActionNotFoundError().code == "pending_action_not_found"
+    assert LocatorTripletMissingError().code == "locator_triplet_missing"
+    assert CallbackDuplicatedError().code == "callback_duplicated"
+
+
+def test_error_catalog_returns_user_message() -> None:
+    msg = get_user_message(PendingActionExpiredError())
+    assert "过期" in msg or "expired" in msg.lower()
+
+
+def test_error_catalog_returns_fallback_for_unknown_code() -> None:
+    err = CoreError("some error", code="totally_unknown_code_xyz")
+    msg = get_user_message(err)
+    assert msg  # should return something, not empty
+
