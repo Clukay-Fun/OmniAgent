@@ -61,6 +61,13 @@ class ActiveRecordState:
         return now >= self.expires_at
 
 
+@dataclass
+class MessageChunkState:
+    segments: list[str] = field(default_factory=list)
+    started_at: float = 0.0
+    last_at: float = 0.0
+
+
 from enum import Enum
 
 
@@ -129,7 +136,15 @@ class ConversationState:
     active_table_name: str | None = None
     active_record: ActiveRecordState | None = None
     pending_action: PendingActionState | None = None
+    message_chunk: MessageChunkState | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.message_chunk, dict):
+            try:
+                self.message_chunk = MessageChunkState(**self.message_chunk)
+            except Exception:
+                self.message_chunk = None
 
     @property
     def session_key(self) -> str:
@@ -141,3 +156,12 @@ class ConversationState:
 
     def is_expired(self, now: float) -> bool:
         return now >= self.expires_at
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ConversationState:
+        payload = dict(data)
+        chunk_data = payload.pop("message_chunk", None)
+        state = cls(**payload)
+        if isinstance(chunk_data, dict):
+            state.message_chunk = MessageChunkState(**chunk_data)
+        return state

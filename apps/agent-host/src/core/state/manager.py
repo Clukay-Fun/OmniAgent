@@ -15,6 +15,7 @@ from src.core.state.models import (
     ActiveRecordState,
     ConversationState,
     LastResultState,
+    MessageChunkState,
     PendingActionState,
     PendingActionStatus,
     PaginationState,
@@ -25,6 +26,8 @@ from src.core.state.store import StateStore
 
 class ConversationStateManager:
     """会话状态管理器（基于 StateStore）。"""
+
+    CHUNK_STALE_SECONDS = 9.0
 
     def __init__(
         self,
@@ -313,6 +316,23 @@ class ConversationStateManager:
     def get_active_record(self, user_id: str) -> ActiveRecordState | None:
         state = self.get_state(user_id)
         return state.active_record
+
+    def get_message_chunk(self, user_id: str) -> MessageChunkState | None:
+        state = self.get_state(user_id)
+        chunk = state.message_chunk
+        now = time.time()
+        if chunk and (now - chunk.last_at > self.CHUNK_STALE_SECONDS):
+            state.message_chunk = None
+            state.updated_at = now
+            self._store.set(user_id, state)
+            return None
+        return chunk
+
+    def set_message_chunk(self, user_id: str, chunk: MessageChunkState | None) -> None:
+        state = self.get_state(user_id)
+        state.message_chunk = chunk
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
 
     def set_pending_action(
         self,
