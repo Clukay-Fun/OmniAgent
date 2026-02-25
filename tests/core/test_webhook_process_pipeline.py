@@ -604,6 +604,28 @@ def test_s2_manager_expired_pending_action_cleared() -> None:
     assert history[-1]["status"] == "expired"
 
 
+def test_s2_manager_pending_action_supports_batch_operations() -> None:
+    store = MemoryStateStore()
+    mgr = ConversationStateManager(store=store)
+    operations = [
+        {"record_id": "rec_1", "fields": {"案件状态": "进行中"}},
+        {"record_id": "rec_2", "fields": {"案件状态": "已结案"}},
+    ]
+
+    mgr.set_pending_action(
+        "u_batch",
+        action="batch_update_records",
+        payload={"table_id": "tbl_main"},
+        operations=operations,
+    )
+
+    pending = mgr.get_pending_action("u_batch")
+
+    assert pending is not None
+    assert pending.action == "batch_update_records"
+    assert pending.operations == operations
+
+
 # ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
 
 def test_s4_callback_deduper_is_imported_in_webhook() -> None:

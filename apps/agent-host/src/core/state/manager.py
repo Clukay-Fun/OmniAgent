@@ -346,13 +346,20 @@ class ConversationStateManager:
         user_id: str,
         action: str,
         payload: dict[str, Any] | None = None,
+        operations: list[dict[str, Any]] | None = None,
         ttl_seconds: int | None = None,
     ) -> None:
         now = time.time()
         state = self.get_state(user_id)
+        normalized_operations: list[dict[str, Any]] = []
+        if isinstance(operations, list):
+            for item in operations:
+                if isinstance(item, dict):
+                    normalized_operations.append(dict(item))
         state.pending_action = PendingActionState(
             action=str(action).strip(),
             payload=payload or {},
+            operations=normalized_operations,
             created_at=now,
             expires_at=now + (ttl_seconds if ttl_seconds is not None else self._pending_action_ttl),
         )

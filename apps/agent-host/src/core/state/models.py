@@ -94,17 +94,44 @@ _VALID_TRANSITIONS: dict[PendingActionStatus, set[PendingActionStatus]] = {
 class PendingActionState:
     action: str
     payload: dict[str, Any] = field(default_factory=dict)
+    operations: list[dict[str, Any]] = field(default_factory=list)
     status: PendingActionStatus = PendingActionStatus.PENDING
     created_at: float = 0.0
     expires_at: float = 0.0
 
     def __post_init__(self) -> None:
+        if not isinstance(self.payload, dict):
+            self.payload = {}
+
+        normalized_operations: list[dict[str, Any]] = []
+        raw_operations = self.operations
+        if not isinstance(raw_operations, list):
+            raw_operations = []
+        for item in raw_operations:
+            if isinstance(item, dict):
+                normalized_operations.append(dict(item))
+        self.operations = normalized_operations
+
+        if not self.operations:
+            payload_operations = self.payload.get("operations") if isinstance(self.payload, dict) else None
+            if isinstance(payload_operations, list):
+                for item in payload_operations:
+                    if isinstance(item, dict):
+                        self.operations.append(dict(item))
+
         if isinstance(self.status, PendingActionStatus):
             return
         try:
             self.status = PendingActionStatus(str(self.status))
         except ValueError:
             self.status = PendingActionStatus.PENDING
+
+    def iter_operation_payloads(self) -> list[dict[str, Any]]:
+        if self.operations:
+            return [dict(item) for item in self.operations if isinstance(item, dict)]
+        if self.payload:
+            return [dict(self.payload)]
+        return []
 
     def is_expired(self, now: float) -> bool:
         return now >= self.expires_at

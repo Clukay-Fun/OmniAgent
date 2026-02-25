@@ -147,3 +147,38 @@ def test_pending_action_expired_is_terminal() -> None:
 def test_pending_action_status_string_is_normalized() -> None:
     state = PendingActionState(action="create_record", status="confirmed", created_at=0, expires_at=300)  # type: ignore[arg-type]
     assert state.status == PendingActionStatus.CONFIRMED
+
+
+def test_pending_action_operations_are_normalized() -> None:
+    state = PendingActionState(
+        action="batch_update_records",
+        operations=[{"record_id": "rec_1"}, "invalid", {"record_id": "rec_2"}],  # type: ignore[list-item]
+        created_at=0,
+        expires_at=300,
+    )
+
+    assert state.operations == [{"record_id": "rec_1"}, {"record_id": "rec_2"}]
+    assert state.iter_operation_payloads() == [{"record_id": "rec_1"}, {"record_id": "rec_2"}]
+
+
+def test_pending_action_iter_payloads_fallbacks_to_payload_and_payload_operations() -> None:
+    state_from_payload_operations = PendingActionState(
+        action="batch_delete_records",
+        payload={"operations": [{"record_id": "rec_1"}, {"record_id": "rec_2"}]},
+        created_at=0,
+        expires_at=300,
+    )
+    assert state_from_payload_operations.iter_operation_payloads() == [
+        {"record_id": "rec_1"},
+        {"record_id": "rec_2"},
+    ]
+
+    state_single = PendingActionState(
+        action="update_record",
+        payload={"record_id": "rec_single", "fields": {"状态": "已结案"}},
+        created_at=0,
+        expires_at=300,
+    )
+    assert state_single.iter_operation_payloads() == [
+        {"record_id": "rec_single", "fields": {"状态": "已结案"}}
+    ]

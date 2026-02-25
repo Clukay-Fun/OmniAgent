@@ -280,3 +280,110 @@ def test_callback_confirm_triggers_pending_action_transition_on_success() -> Non
     assert result["status"] == "processed"
     assert state_manager.confirmed == 1
     assert state_manager.cancelled == 0
+
+
+def test_batch_update_callback_confirm_executes_all_operations_in_order() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+
+    class _FakeStateManager:
+        def __init__(self) -> None:
+            self.confirmed = 0
+
+        def get_pending_action(self, _user_id: str):
+            return SimpleNamespace(
+                action="batch_update_records",
+                payload={},
+                operations=[
+                    {"action": "update_record", "record_id": "rec_1", "fields": {"进展": "已联系"}},
+                    {"action": "update_record", "record_id": "rec_2", "fields": {"进展": "已补证"}},
+                ],
+            )
+
+        def confirm_pending_action(self, _user_id: str):
+            self.confirmed += 1
+
+    state_manager = _FakeStateManager()
+    orchestrator._state_manager = state_manager
+
+    executed_record_ids: list[str] = []
+
+    class _FakeUpdateSkill:
+        async def execute(self, context):
+            pending_action_raw = context.extra.get("pending_action") if isinstance(context.extra, dict) else {}
+            pending_action = pending_action_raw if isinstance(pending_action_raw, dict) else {}
+            payload_raw = pending_action.get("payload")
+            payload = payload_raw if isinstance(payload_raw, dict) else {}
+            executed_record_ids.append(str(payload.get("record_id") or ""))
+            return SimpleNamespace(success=True, skill_name="UpdateSkill", data={}, reply_text="ok", message="")
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda _result: SimpleNamespace(text_fallback="ok", to_dict=lambda: {"text_fallback": "ok"})
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "batch_update_records_confirm"))
+
+    assert result["status"] == "processed"
+    assert executed_record_ids == ["rec_1", "rec_2"]
+    assert state_manager.confirmed == 1
+
+
+def test_batch_update_callback_stops_on_first_failed_operation() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+
+    class _FakeStateManager:
+        def __init__(self) -> None:
+            self.confirmed = 0
+
+        def get_pending_action(self, _user_id: str):
+            return SimpleNamespace(
+                action="batch_update_records",
+                payload={},
+                operations=[
+                    {"action": "update_record", "record_id": "rec_1", "fields": {"进展": "已联系"}},
+                    {"action": "update_record", "record_id": "rec_2", "fields": {"进展": "已补证"}},
+                ],
+            )
+
+        def confirm_pending_action(self, _user_id: str):
+            self.confirmed += 1
+
+    state_manager = _FakeStateManager()
+    orchestrator._state_manager = state_manager
+
+    executed_record_ids: list[str] = []
+
+    class _FakeUpdateSkill:
+        async def execute(self, context):
+            pending_action_raw = context.extra.get("pending_action") if isinstance(context.extra, dict) else {}
+            pending_action = pending_action_raw if isinstance(pending_action_raw, dict) else {}
+            payload_raw = pending_action.get("payload")
+            payload = payload_raw if isinstance(payload_raw, dict) else {}
+            current_record_id = str(payload.get("record_id") or "")
+            executed_record_ids.append(current_record_id)
+            return SimpleNamespace(
+                success=current_record_id != "rec_1",
+                skill_name="UpdateSkill",
+                data={},
+                reply_text="目标记录不存在",
+                message="",
+            )
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda _result: SimpleNamespace(
+            text_fallback="目标记录不存在",
+            to_dict=lambda: {"text_fallback": "目标记录不存在"},
+        )
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "batch_update_records_confirm"))
+
+    assert result["status"] == "processed"
+    assert "不存在" in result["text"]
+    assert executed_record_ids == ["rec_1"]
+    assert state_manager.confirmed == 0

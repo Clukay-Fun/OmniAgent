@@ -1102,6 +1102,9 @@ class AgentOrchestrator:
             "close_record": "UpdateSkill",
             "delete_record": "DeleteSkill",
             "create_reminder": "ReminderSkill",
+            "batch_update_records": "UpdateSkill",
+            "batch_close_records": "UpdateSkill",
+            "batch_delete_records": "DeleteSkill",
         }.get(action_name)
         if not skill_name:
             return {"status": "processed", "text": "已处理"}
@@ -1123,41 +1126,58 @@ class AgentOrchestrator:
         is_confirm = callback == expected_confirm
         is_cancel = callback == expected_cancel
 
-        query = "确认" if is_confirm else "取消"
-        if action_name == "delete_record" and is_confirm:
-            query = "确认删除"
-        if action_name == "delete_record" and is_cancel:
-            query = "取消"
-
         skill = self._router.get_skill(skill_name)
         if skill is None:
             return {"status": "expired", "text": "操作已过期"}
 
-        last_result: dict[str, Any] = {}
-        if action_name == "delete_record":
-            last_result = {
-                "pending_delete": pending.payload,
-            }
-        context = SkillContext(
-            query=query,
-            user_id=user_id,
-            last_result=last_result,
-            last_skill=skill_name,
-            extra={
-                "pending_action": {
-                    "action": action_name,
-                    "payload": pending.payload,
+        operation_payloads = self._resolve_pending_action_payloads(pending)
+        if not operation_payloads:
+            operation_payloads = [pending.payload if isinstance(pending.payload, dict) else {}]
+        if is_cancel and len(operation_payloads) > 1:
+            operation_payloads = operation_payloads[:1]
+
+        result = None
+        sync_query = "确认" if is_confirm else "取消"
+        operation_count = len(operation_payloads)
+        for index, operation_payload in enumerate(operation_payloads, start=1):
+            operation_action = self._resolve_operation_action_name(action_name, operation_payload)
+            operation_query = self._build_pending_action_query(operation_action, is_confirm=is_confirm, is_cancel=is_cancel)
+            sync_query = operation_query
+            last_result: dict[str, Any] = {}
+            if operation_action == "delete_record":
+                last_result = {
+                    "pending_delete": operation_payload,
+                }
+            context = SkillContext(
+                query=operation_query,
+                user_id=user_id,
+                last_result=last_result,
+                last_skill=skill_name,
+                extra={
+                    "pending_action": {
+                        "action": operation_action,
+                        "payload": operation_payload,
+                    },
+                    "callback_intent": "confirm" if is_confirm else "cancel",
+                    "batch_operation": {
+                        "index": index,
+                        "total": operation_count,
+                    } if operation_count > 1 else {},
                 },
-                "callback_intent": "confirm" if is_confirm else "cancel",
-            },
-        )
-        result = await skill.execute(context)
+            )
+            result = await skill.execute(context)
+            if not result.success:
+                break
+
+        if result is None:
+            return {"status": "expired", "text": "操作已过期"}
+
         if result.success:
             if is_confirm and hasattr(self._state_manager, "confirm_pending_action"):
                 self._state_manager.confirm_pending_action(user_id)
             if is_cancel and hasattr(self._state_manager, "cancel_pending_action"):
                 self._state_manager.cancel_pending_action(user_id)
-        self._sync_state_after_result(user_id, query, result)
+        self._sync_state_after_result(user_id, sync_query, result)
         rendered = self._response_renderer.render(result)
         rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
         return {
@@ -1165,6 +1185,46 @@ class AgentOrchestrator:
             "text": rendered.text_fallback,
             "outbound": rendered.to_dict(),
         }
+
+    @staticmethod
+    def _resolve_pending_action_payloads(pending: Any) -> list[dict[str, Any]]:
+        operations = getattr(pending, "operations", None)
+        if isinstance(operations, list):
+            normalized = [dict(item) for item in operations if isinstance(item, Mapping)]
+            if normalized:
+                return normalized
+
+        payload_raw = getattr(pending, "payload", None)
+        payload = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
+        nested_operations = payload.get("operations")
+        if isinstance(nested_operations, list):
+            normalized = [dict(item) for item in nested_operations if isinstance(item, Mapping)]
+            if normalized:
+                return normalized
+
+        if payload:
+            return [payload]
+        return []
+
+    @staticmethod
+    def _resolve_operation_action_name(action_name: str, operation_payload: Mapping[str, Any]) -> str:
+        payload_action = str(operation_payload.get("action") or "").strip()
+        if payload_action:
+            return payload_action
+
+        return {
+            "batch_update_records": "update_record",
+            "batch_close_records": "close_record",
+            "batch_delete_records": "delete_record",
+        }.get(action_name, action_name)
+
+    @staticmethod
+    def _build_pending_action_query(action_name: str, *, is_confirm: bool, is_cancel: bool) -> str:
+        if is_cancel:
+            return "取消"
+        if is_confirm and action_name == "delete_record":
+            return "确认删除"
+        return "确认"
 
     async def _handle_edit_callback(self, user_id: str, callback_value: Mapping[str, Any]) -> dict[str, Any] | None:
         skill = self._router.get_skill("UpdateSkill")
@@ -1787,6 +1847,8 @@ class AgentOrchestrator:
             if isinstance(pending_action_data, dict):
                 action = str(pending_action_data.get("action") or "").strip()
                 payload = pending_action_data.get("payload")
+                operations_raw = pending_action_data.get("operations")
+                operations = [item for item in operations_raw if isinstance(item, dict)] if isinstance(operations_raw, list) else []
                 ttl_seconds = None
                 raw_ttl = pending_action_data.get("ttl_seconds")
                 try:
@@ -1799,6 +1861,7 @@ class AgentOrchestrator:
                         user_id,
                         action=action,
                         payload=payload if isinstance(payload, dict) else {},
+                        operations=operations,
                         ttl_seconds=ttl_seconds,
                     )
             if bool(data.get("clear_pending_action")):
