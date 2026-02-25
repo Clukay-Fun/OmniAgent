@@ -61,15 +61,50 @@ class ActiveRecordState:
         return now >= self.expires_at
 
 
+from enum import Enum
+
+
+class PendingActionStatus(str, Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+_VALID_TRANSITIONS: dict[PendingActionStatus, set[PendingActionStatus]] = {
+    PendingActionStatus.PENDING: {
+        PendingActionStatus.CONFIRMED,
+        PendingActionStatus.CANCELLED,
+        PendingActionStatus.EXPIRED,
+    },
+    PendingActionStatus.CONFIRMED: set(),
+    PendingActionStatus.CANCELLED: set(),
+    PendingActionStatus.EXPIRED: set(),
+}
+
+
 @dataclass
 class PendingActionState:
     action: str
     payload: dict[str, Any] = field(default_factory=dict)
+    status: PendingActionStatus = PendingActionStatus.PENDING
     created_at: float = 0.0
     expires_at: float = 0.0
 
     def is_expired(self, now: float) -> bool:
         return now >= self.expires_at
+
+    def transition_to(self, target: PendingActionStatus, now: float | None = None) -> None:
+        """Transition status. Raises ValueError on invalid transition."""
+        import time as _time
+        _now = now if now is not None else _time.time()
+        if self.is_expired(_now) and self.status == PendingActionStatus.PENDING:
+            self.status = PendingActionStatus.EXPIRED
+        if target not in _VALID_TRANSITIONS.get(self.status, set()):
+            raise ValueError(
+                f"invalid pending_action transition: {self.status.value} -> {target.value}"
+            )
+        self.status = target
 
 
 @dataclass

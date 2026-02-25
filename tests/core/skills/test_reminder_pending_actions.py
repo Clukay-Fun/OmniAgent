@@ -88,3 +88,58 @@ def test_reminder_skill_executes_pending_create_reminder_cancel() -> None:
     assert result.success is True
     assert result.data.get("clear_pending_action") is True
     assert "取消" in result.reply_text
+
+
+# ── S2: pending_action lifecycle and TTL ────────────────────────────
+
+import time
+
+import pytest
+
+from src.core.state.models import PendingActionState, PendingActionStatus  # noqa: E402
+
+
+def test_pending_action_lifecycle_pending_to_confirmed() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now, expires_at=now + 300)
+    assert state.status == PendingActionStatus.PENDING
+
+    state.transition_to(PendingActionStatus.CONFIRMED, now=now)
+    assert state.status == PendingActionStatus.CONFIRMED
+
+
+def test_pending_action_lifecycle_pending_to_cancelled() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now, expires_at=now + 300)
+    state.transition_to(PendingActionStatus.CANCELLED, now=now)
+    assert state.status == PendingActionStatus.CANCELLED
+
+
+def test_pending_action_expires_after_ttl() -> None:
+    now = time.time()
+    state = PendingActionState(action="create_record", created_at=now - 600, expires_at=now - 1)
+    # Attempt confirm on expired action — should auto-transition to EXPIRED first
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.CONFIRMED, now=now)
+    assert state.status == PendingActionStatus.EXPIRED
+
+
+def test_pending_action_confirmed_cannot_reconfirm() -> None:
+    now = time.time()
+    state = PendingActionState(
+        action="create_record", status=PendingActionStatus.CONFIRMED,
+        created_at=now, expires_at=now + 300,
+    )
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.CONFIRMED, now=now)
+
+
+def test_pending_action_expired_is_terminal() -> None:
+    now = time.time()
+    state = PendingActionState(
+        action="create_record", status=PendingActionStatus.EXPIRED,
+        created_at=now - 600, expires_at=now - 1,
+    )
+    with pytest.raises(ValueError, match="invalid pending_action transition"):
+        state.transition_to(PendingActionStatus.CANCELLED, now=now)
+
