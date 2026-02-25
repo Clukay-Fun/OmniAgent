@@ -485,3 +485,35 @@ def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
 
     assert result["status"] == "ok"
     assert "过期" in result["reason"]
+
+
+# ── S4: callback dedup ──────────────────────────────────────────────
+
+import time as _time
+
+from src.api.callback_deduper import CallbackDeduper  # noqa: E402
+
+
+def test_callback_deduper_detects_duplicate() -> None:
+    deduper = CallbackDeduper(window_seconds=60)
+    key = deduper.build_key(user_id="u1", action="create_record_confirm", payload={"a": 1})
+    assert deduper.is_duplicate(key) is False
+    deduper.mark(key)
+    assert deduper.is_duplicate(key) is True
+
+
+def test_callback_deduper_expires_after_window() -> None:
+    deduper = CallbackDeduper(window_seconds=1)
+    key = deduper.build_key(user_id="u1", action="x")
+    deduper.mark(key)
+    # Artificially expire
+    deduper._cache[key] = _time.time() - 2
+    assert deduper.is_duplicate(key) is False
+
+
+def test_callback_deduper_key_is_deterministic() -> None:
+    deduper = CallbackDeduper()
+    k1 = deduper.build_key(user_id="u1", action="a", payload={"x": 1, "y": 2})
+    k2 = deduper.build_key(user_id="u1", action="a", payload={"y": 2, "x": 1})
+    assert k1 == k2
+
