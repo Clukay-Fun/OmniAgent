@@ -72,22 +72,33 @@ def _load_error_catalog() -> dict[str, str]:
     return _ERROR_CATALOG
 
 
-def get_user_message_by_code(code: str, *, fallback: str = "") -> str:
+def get_user_message_by_code(code: str, *, fallback: str = "", **kwargs: Any) -> str:
     """Resolve user-facing message by error code."""
     catalog = _load_error_catalog()
     normalized = str(code or "").strip()
+    template = ""
     if normalized:
         value = str(catalog.get(normalized) or "").strip()
         if value:
-            return value
+            template = value
 
-    unknown = str(catalog.get("unknown_error") or "").strip()
-    if unknown:
-        return unknown
+    if not template:
+        unknown = str(catalog.get("unknown_error") or "").strip()
+        if unknown:
+            template = unknown
 
-    if fallback:
-        return fallback
-    return normalized or "unknown error"
+    if not template:
+        if fallback:
+            template = fallback
+        else:
+            template = normalized or "unknown error"
+
+    if kwargs:
+        try:
+            return template.format(**kwargs)
+        except KeyError:
+            return template
+    return template
 
 
 def get_user_message(error: CoreError) -> str:

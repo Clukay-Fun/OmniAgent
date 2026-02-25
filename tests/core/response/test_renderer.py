@@ -354,6 +354,37 @@ def test_render_pending_close_action_uses_close_record_callbacks() -> None:
     assert actions["cancel"]["callback_action"] == "close_record_cancel"
 
 
+def test_render_pending_batch_action_includes_retry_callback() -> None:
+    renderer = build_renderer()
+
+    response = renderer.render(
+        {
+            "success": True,
+            "skill_name": "UpdateSkill",
+            "reply_text": "请确认批量更新",
+            "data": {
+                "table_name": "案件项目总库",
+                "pending_action": {
+                    "action": "batch_update_records",
+                    "payload": {
+                        "operations": [
+                            {"record_id": "rec_1", "fields": {"进展": "已联系"}},
+                            {"record_id": "rec_2", "fields": {"进展": "已补证"}},
+                        ]
+                    },
+                },
+            },
+        }
+    )
+
+    assert response.card_template is not None
+    assert response.card_template.template_id == "action.confirm"
+    actions = response.card_template.params["actions"]
+    assert actions["confirm"]["callback_action"] == "batch_update_records_confirm"
+    assert actions["cancel"]["callback_action"] == "batch_update_records_cancel"
+    assert actions["retry"]["callback_action"] == "batch_update_records_retry"
+
+
 def test_render_pending_update_collect_fields_uses_update_guide_template() -> None:
     renderer = build_renderer()
 
@@ -485,3 +516,13 @@ def test_renderer_failure_uses_catalog_message_when_error_code_exists() -> None:
     assert response.text_fallback == "操作已过期，请重试"
     assert response.card_template is not None
     assert response.card_template.params["error_code"] == "pending_action_expired"
+
+
+def test_error_catalog_lookup_by_code_supports_template_kwargs() -> None:
+    msg = get_user_message_by_code("delete_record_failed", detail="RecordIdNotFound")
+    assert msg == "删除失败：RecordIdNotFound"
+
+
+def test_error_catalog_lookup_by_code_ignores_missing_template_kwargs() -> None:
+    msg = get_user_message_by_code("delete_record_failed")
+    assert msg == "删除失败：{detail}"

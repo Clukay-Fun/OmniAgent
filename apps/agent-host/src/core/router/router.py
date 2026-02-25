@@ -15,6 +15,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.intent import IntentResult, SkillMatch
 from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
 
@@ -253,8 +254,9 @@ class SkillRouter:
             return SkillResult(
                 success=False,
                 skill_name=normalized_name,
+                data={"error_code": "router_processing_failed"},
                 message=f"技能执行出错：{str(e)}",
-                reply_text="抱歉，处理请求时遇到问题，请稍后重试。",
+                reply_text=get_user_message_by_code("router_processing_failed"),
             )
         finally:
             duration = time.perf_counter() - start_time
@@ -329,8 +331,9 @@ class SkillRouter:
         return SkillResult(
             success=False,
             skill_name="fallback",
+            data={"error_code": "router_fallback_unavailable"},
             message=message,
-            reply_text='抱歉，我暂时无法处理您的请求。试试问我"本周有什么庭"吧！',
+            reply_text=get_user_message_by_code("router_fallback_unavailable"),
         )
 
 

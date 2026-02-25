@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from src.core.errors import get_user_message_by_code
 from src.core.skills.action_smart_engine import ActionSmartEngine
 from src.core.skills.auto_reminders import build_auto_reminder_items
 from src.core.skills.data_writer import DataWriter
@@ -141,16 +142,31 @@ class ActionExecutionService:
         # S1: triplet 校验 — table_id 为必经路径
         _table_id = str(table_id or "").strip()
         if not _table_id:
-            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                "missing table_id",
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
         try:
             validate_locator_triplet(app_token=app_token, table_id=_table_id)
         except ValueError as exc:
-            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                str(exc),
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
-            return ActionExecutionOutcome(False, "写入受限", denied_text, {})
+            return ActionExecutionOutcome(
+                False,
+                "写入受限",
+                denied_text,
+                {"error_code": "write_read_only_table"},
+            )
 
         effective_fields = self.apply_create_defaults(table_name, fields)
         inferred = self._smart.infer_create_fields(table_type, effective_fields)
@@ -166,8 +182,8 @@ class ActionExecutionService:
             return ActionExecutionOutcome(
                 False,
                 write_result.error or "创建失败",
-                "创建记录失败，请稍后重试。",
-                {},
+                get_user_message_by_code("create_record_failed"),
+                {"error_code": "create_record_failed"},
             )
 
         record_id = write_result.record_id or ""
@@ -237,9 +253,19 @@ class ActionExecutionService:
         _table_id = str(table_id or "").strip()
         _record_id = str(record_id or "").strip()
         if not _table_id:
-            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                "missing table_id",
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
         if not _record_id:
-            return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                "missing record_id",
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
         try:
             validate_locator_triplet(
                 app_token=app_token,
@@ -248,12 +274,22 @@ class ActionExecutionService:
                 require_record_id=True,
             )
         except ValueError as exc:
-            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                str(exc),
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
-            return ActionExecutionOutcome(False, "写入受限", denied_text, {})
+            return ActionExecutionOutcome(
+                False,
+                "写入受限",
+                denied_text,
+                {"error_code": "write_read_only_table"},
+            )
 
         effective_fields = self.apply_update_rules(
             table_name,
@@ -271,8 +307,11 @@ class ActionExecutionService:
             return ActionExecutionOutcome(
                 False,
                 write_result.error or "更新失败",
-                f"更新失败：{write_result.error or '未知错误'}\n请回复“确认”重试，或回复“取消”终止。",
-                {},
+                get_user_message_by_code(
+                    "update_record_retryable_failed",
+                    detail=str(write_result.error or "未知错误"),
+                ),
+                {"error_code": "update_record_retryable_failed"},
             )
 
         close_profile = self._resolve_close_profile(table_name=table_name, semantic=close_semantic)
@@ -353,9 +392,19 @@ class ActionExecutionService:
         _table_id = str(table_id or "").strip()
         _record_id = str(record_id or "").strip()
         if not _table_id:
-            return ActionExecutionOutcome(False, "missing table_id", "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                "missing table_id",
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
         if not _record_id:
-            return ActionExecutionOutcome(False, "missing record_id", "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                "missing record_id",
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
         try:
             validate_locator_triplet(
                 app_token=app_token,
@@ -364,12 +413,22 @@ class ActionExecutionService:
                 require_record_id=True,
             )
         except ValueError as exc:
-            return ActionExecutionOutcome(False, str(exc), "写入参数缺失，请重试。", {})
+            return ActionExecutionOutcome(
+                False,
+                str(exc),
+                get_user_message_by_code("locator_triplet_missing"),
+                {"error_code": "locator_triplet_missing"},
+            )
 
         table_type = self.resolve_table_type(table_name)
         denied_text = self._deny_write_reason(table_type)
         if denied_text:
-            return ActionExecutionOutcome(False, "写入受限", denied_text, {})
+            return ActionExecutionOutcome(
+                False,
+                "写入受限",
+                denied_text,
+                {"error_code": "write_read_only_table"},
+            )
 
         write_result = await self._data_writer.delete(
             _table_id,
@@ -378,7 +437,12 @@ class ActionExecutionService:
         )
         if not write_result.success:
             error = write_result.error or "未知错误"
-            return ActionExecutionOutcome(False, f"删除失败: {error}", f"删除失败：{error}", {})
+            return ActionExecutionOutcome(
+                False,
+                f"删除失败: {error}",
+                get_user_message_by_code("delete_record_failed", detail=str(error)),
+                {"error_code": "delete_record_failed"},
+            )
 
         link_sync = await self._linker.sync_after_delete(
             parent_table_id=_table_id,
@@ -691,7 +755,7 @@ class ActionExecutionService:
         read_only_raw = self._cfg.get("read_only_table_types")
         read_only = [str(item).strip() for item in read_only_raw if str(item).strip()] if isinstance(read_only_raw, list) else []
         if table_type in read_only:
-            return "该表为只读视图，禁止执行新增、修改、关闭或删除操作。"
+            return get_user_message_by_code("write_read_only_table")
         return None
 
     def _resolve_close_profile(self, *, table_name: str | None, semantic: str) -> dict[str, Any]:

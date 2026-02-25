@@ -385,7 +385,7 @@ class ResponseRenderer:
             "close_record": "close_record",
             "delete_record": "delete_record",
         }.get(action_name, action_name or "pending_action")
-        return {
+        actions: dict[str, Any] = {
             "confirm": {
                 "callback_action": f"{callback_prefix}_confirm",
                 "intent": "confirm",
@@ -395,6 +395,12 @@ class ResponseRenderer:
                 "intent": "cancel",
             },
         }
+        if str(action_name or "").startswith("batch_"):
+            actions["retry"] = {
+                "callback_action": f"{callback_prefix}_retry",
+                "intent": "retry",
+            }
+        return actions
 
     def _build_query_list_actions(self, data: Mapping[str, Any]) -> dict[str, Any]:
         pending_action = data.get("pending_action") if isinstance(data.get("pending_action"), Mapping) else {}

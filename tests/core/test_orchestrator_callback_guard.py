@@ -16,6 +16,7 @@ from src.core.errors import (  # noqa: E402
     PendingActionNotFoundError,
     get_user_message,
 )
+from src.core.state.models import OperationEntry, OperationExecutionStatus, PendingActionState  # noqa: E402
 
 
 class _FakeStateManager:
@@ -402,3 +403,135 @@ def test_batch_update_callback_stops_on_first_failed_operation() -> None:
     assert "不存在" in result["text"]
     assert executed_record_ids == ["rec_1"]
     assert state_manager.confirmed == 0
+
+
+def test_batch_update_callback_persists_per_operation_status_after_failure() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    pending = PendingActionState(
+        action="batch_update_records",
+        operations=[
+            OperationEntry(index=0, payload={"action": "update_record", "record_id": "rec_1", "fields": {"进展": "已联系"}}),
+            OperationEntry(index=1, payload={"action": "update_record", "record_id": "rec_2", "fields": {"进展": "已补证"}}),
+        ],
+        created_at=1.0,
+        expires_at=9999999999.0,
+    )
+
+    class _FakeStateManager:
+        def __init__(self) -> None:
+            self.confirmed = 0
+            self.updated = 0
+
+        def get_pending_action(self, _user_id: str):
+            return pending
+
+        def confirm_pending_action(self, _user_id: str):
+            self.confirmed += 1
+
+        def update_pending_action_operations(self, _user_id: str, _pending: PendingActionState):
+            self.updated += 1
+            return _pending
+
+    state_manager = _FakeStateManager()
+    orchestrator._state_manager = state_manager
+
+    class _FakeUpdateSkill:
+        async def execute(self, context):
+            pending_action_raw = context.extra.get("pending_action") if isinstance(context.extra, dict) else {}
+            payload_raw = pending_action_raw.get("payload") if isinstance(pending_action_raw, dict) else {}
+            payload = payload_raw if isinstance(payload_raw, dict) else {}
+            record_id = str(payload.get("record_id") or "")
+            return SimpleNamespace(
+                success=record_id != "rec_1",
+                skill_name="UpdateSkill",
+                data={},
+                reply_text="目标记录不存在" if record_id == "rec_1" else "ok",
+                message="",
+            )
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda result: SimpleNamespace(text_fallback=result.reply_text, to_dict=lambda: {"text_fallback": result.reply_text})
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "batch_update_records_confirm"))
+
+    assert result["status"] == "processed"
+    assert "失败" in result["text"]
+    assert state_manager.confirmed == 0
+    assert state_manager.updated == 1
+    assert pending.operations[0].status == OperationExecutionStatus.FAILED
+    assert pending.operations[1].status == OperationExecutionStatus.SKIPPED
+
+
+def test_batch_update_callback_retry_executes_failed_and_skipped_only() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    pending = PendingActionState(
+        action="batch_update_records",
+        operations=[
+            OperationEntry(
+                index=0,
+                payload={"action": "update_record", "record_id": "rec_1", "fields": {"进展": "已联系"}},
+                status=OperationExecutionStatus.SUCCEEDED,
+            ),
+            OperationEntry(
+                index=1,
+                payload={"action": "update_record", "record_id": "rec_2", "fields": {"进展": "已补证"}},
+                status=OperationExecutionStatus.FAILED,
+                error_code="update_record_failed",
+            ),
+            OperationEntry(
+                index=2,
+                payload={"action": "update_record", "record_id": "rec_3", "fields": {"进展": "已回访"}},
+                status=OperationExecutionStatus.SKIPPED,
+            ),
+        ],
+        created_at=1.0,
+        expires_at=9999999999.0,
+    )
+
+    class _FakeStateManager:
+        def __init__(self) -> None:
+            self.confirmed = 0
+            self.updated = 0
+
+        def get_pending_action(self, _user_id: str):
+            return pending
+
+        def confirm_pending_action(self, _user_id: str):
+            self.confirmed += 1
+
+        def update_pending_action_operations(self, _user_id: str, _pending: PendingActionState):
+            self.updated += 1
+            return _pending
+
+    state_manager = _FakeStateManager()
+    orchestrator._state_manager = state_manager
+
+    executed_record_ids: list[str] = []
+
+    class _FakeUpdateSkill:
+        async def execute(self, context):
+            pending_action_raw = context.extra.get("pending_action") if isinstance(context.extra, dict) else {}
+            payload_raw = pending_action_raw.get("payload") if isinstance(pending_action_raw, dict) else {}
+            payload = payload_raw if isinstance(payload_raw, dict) else {}
+            record_id = str(payload.get("record_id") or "")
+            executed_record_ids.append(record_id)
+            return SimpleNamespace(success=True, skill_name="UpdateSkill", data={}, reply_text="ok", message="")
+
+    orchestrator._router = SimpleNamespace(get_skill=lambda name: _FakeUpdateSkill() if name == "UpdateSkill" else None)
+    orchestrator._sync_state_after_result = lambda *_args, **_kwargs: None
+    orchestrator._response_renderer = SimpleNamespace(
+        render=lambda result: SimpleNamespace(text_fallback=result.reply_text, to_dict=lambda: {"text_fallback": result.reply_text})
+    )
+    orchestrator._reply_personalization_enabled = False
+
+    result = asyncio.run(orchestrator.handle_card_action_callback("u1", "batch_update_records_retry"))
+
+    assert result["status"] == "processed"
+    assert state_manager.confirmed == 1
+    assert state_manager.updated == 1
+    assert executed_record_ids == ["rec_2", "rec_3"]
+    assert all(item.status == OperationExecutionStatus.SUCCEEDED for item in pending.operations)

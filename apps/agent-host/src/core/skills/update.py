@@ -16,11 +16,11 @@ import time
 from datetime import date
 from typing import Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.skills.base import BaseSkill
 from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.response_pool import pool
 from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
 from src.utils.time_parser import parse_time_range
@@ -220,14 +220,16 @@ class UpdateSkill(BaseSkill):
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
+                    data={"error_code": "update_record_not_found_hint"},
                     message="未找到匹配记录",
-                    reply_text="未找到对应案件，请确认案号/项目ID是否正确，或先查询后再更新。",
+                    reply_text=get_user_message_by_code("update_record_not_found_hint"),
                 )
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "update_target_required"},
                 message="需要先定位要更新的记录",
-                reply_text="请先提供案号/项目ID，或先查询后再更新。",
+                reply_text=get_user_message_by_code("update_target_required"),
             )
 
         if len(records) > 1 and not planner_record_id:
@@ -261,8 +263,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "update_record_id_missing"},
                 message="记录缺少 record_id",
-                reply_text="无法获取记录 ID，更新失败。",
+                reply_text=get_user_message_by_code("update_record_id_missing"),
             )
 
         # 解析更新字段（简化版：从查询中提取）
@@ -472,9 +475,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=True,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_pending_expired"},
                 message="更新确认已超时",
-                reply_text="本次更新确认已超时，请重新发起更新。",
+                reply_text=get_user_message_by_code("update_pending_expired"),
             )
 
         app_token = self._resolve_app_token(table_ctx=table_ctx, pending_payload=pending_payload)
@@ -537,9 +540,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_pending_record_missing"},
                 message="更新确认缺少 record_id",
-                reply_text="更新失败：缺少目标记录，请重新发起。",
+                reply_text=get_user_message_by_code("update_pending_record_missing"),
             )
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
@@ -631,9 +634,10 @@ class UpdateSkill(BaseSkill):
                             "record_id": record_id,
                             "table_id": table_id,
                             "table_name": table_name,
+                            "error_code": "update_record_deleted",
                         },
                         message="目标记录不存在",
-                        reply_text="目标记录不存在或已被删除，请重新查询定位后再更新。",
+                        reply_text=get_user_message_by_code("update_record_deleted"),
                     )
                 return self._build_pending_update_result(
                     action_name=action_name,
@@ -665,8 +669,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "update_record_failed"},
                 message=str(exc),
-                reply_text=pool.pick("error", "更新失败，请稍后重试。"),
+                reply_text=get_user_message_by_code("update_record_failed"),
             )
 
     def _is_record_not_found_error(self, message: str, reply_text: str) -> bool:
@@ -700,9 +705,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=True,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_collect_context_expired"},
                 message="更新引导已超时",
-                reply_text="本次修改上下文已过期，请重新指定要修改的案件。",
+                reply_text=get_user_message_by_code("update_collect_context_expired"),
             )
 
         record_id = str(pending_payload.get("record_id") or "").strip()
@@ -710,9 +715,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_collect_record_missing"},
                 message="更新上下文缺少 record_id",
-                reply_text="未找到待修改记录，请重新指定案件后再试。",
+                reply_text=get_user_message_by_code("update_collect_record_missing"),
             )
 
         table_id = str(pending_payload.get("table_id") or table_ctx.table_id or "").strip() or None
@@ -1123,9 +1128,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_repair_subtable_missing"},
                 message="补录缺少子表信息",
-                reply_text="补录失败：未找到目标子表，请重新发起操作。",
+                reply_text=get_user_message_by_code("update_repair_subtable_missing"),
             )
 
         fields_raw = pending_payload.get("fields")
@@ -1249,9 +1254,9 @@ class UpdateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
-                data={"clear_pending_action": True},
+                data={"clear_pending_action": True, "error_code": "update_repair_record_missing"},
                 message="补录目标不存在",
-                reply_text="未找到可补录的子表记录，请重新发起操作。",
+                reply_text=get_user_message_by_code("update_repair_record_missing"),
             )
 
         updated_count = 0
@@ -1274,7 +1279,7 @@ class UpdateSkill(BaseSkill):
                         "table_name": table_name,
                         "record_ids": record_ids,
                     },
-                    reply_text=f"子表补录失败：{error}\n请修正后继续。",
+                    reply_text=get_user_message_by_code("update_repair_failed", detail=error),
                 )
             updated_count += 1
 

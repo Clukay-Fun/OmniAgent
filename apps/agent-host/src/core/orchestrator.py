@@ -45,6 +45,7 @@ from src.core.router import (
 from src.core.l0 import L0RuleEngine
 from src.core.planner import PlannerEngine, PlannerOutput
 from src.core.state import ConversationStateManager, create_state_store
+from src.core.state.models import OperationEntry, OperationExecutionStatus, PendingActionState
 from src.core.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
 from src.core.skills import (
     QuerySkill,
@@ -73,6 +74,7 @@ from src.core.cost_monitor import CostMonitorConfig, configure_cost_monitor
 from src.core.errors import (
     PendingActionExpiredError,
     PendingActionNotFoundError,
+    get_user_message_by_code,
     get_user_message as get_core_user_message,
 )
 
@@ -1130,7 +1132,12 @@ class AgentOrchestrator:
 
         expected_confirm = f"{action_name}_confirm"
         expected_cancel = f"{action_name}_cancel"
-        if callback not in {expected_confirm, expected_cancel}:
+        expected_retry = f"{action_name}_retry"
+        allowed_callbacks = {expected_confirm, expected_cancel}
+        if action_name.startswith("batch_"):
+            allowed_callbacks.add(expected_retry)
+
+        if callback not in allowed_callbacks:
             logger.warning(
                 "callback action mismatch",
                 extra={
@@ -1144,10 +1151,23 @@ class AgentOrchestrator:
 
         is_confirm = callback == expected_confirm
         is_cancel = callback == expected_cancel
+        is_retry = callback == expected_retry and action_name.startswith("batch_")
 
         skill = self._router.get_skill(skill_name)
         if skill is None:
             return self._expired_callback_response()
+
+        if action_name.startswith("batch_"):
+            return await self._handle_batch_pending_action_callback(
+                user_id=user_id,
+                pending=pending,
+                action_name=action_name,
+                skill_name=skill_name,
+                skill=skill,
+                is_confirm=is_confirm,
+                is_cancel=is_cancel,
+                is_retry=is_retry,
+            )
 
         operation_payloads = self._resolve_pending_action_payloads(pending)
         if not operation_payloads:
@@ -1205,11 +1225,202 @@ class AgentOrchestrator:
             "outbound": rendered.to_dict(),
         }
 
+    async def _handle_batch_pending_action_callback(
+        self,
+        *,
+        user_id: str,
+        pending: Any,
+        action_name: str,
+        skill_name: str,
+        skill: Any,
+        is_confirm: bool,
+        is_cancel: bool,
+        is_retry: bool,
+    ) -> dict[str, Any]:
+        if is_cancel:
+            if hasattr(self._state_manager, "cancel_pending_action"):
+                self._state_manager.cancel_pending_action(user_id)
+            cancel_result = SkillResult(
+                success=True,
+                skill_name=skill_name,
+                data={"clear_pending_action": True},
+                message="批量操作已取消",
+                reply_text=get_user_message_by_code("batch_cancelled"),
+            )
+            self._sync_state_after_result(user_id, "取消", cancel_result)
+            rendered = self._response_renderer.render(cancel_result)
+            rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
+            return {
+                "status": "processed",
+                "text": rendered.text_fallback,
+                "outbound": rendered.to_dict(),
+            }
+
+        batch_pending = self._coerce_batch_pending_state(action_name=action_name, pending=pending)
+        operation_entries = list(batch_pending.operations)
+        if not operation_entries:
+            return self._expired_callback_response()
+
+        if is_retry:
+            remaining_ttl = float(batch_pending.expires_at or 0.0) - time.time()
+            if remaining_ttl < 30:
+                return self._expired_callback_response()
+            self._reset_batch_retry_entries(operation_entries)
+
+        last_result: SkillResult | None = None
+        for position, entry in enumerate(operation_entries):
+            if entry.status != OperationExecutionStatus.PENDING:
+                continue
+
+            operation_payload = dict(entry.payload)
+            operation_action = self._resolve_operation_action_name(action_name, operation_payload)
+            operation_query = self._build_pending_action_query(operation_action, is_confirm=is_confirm, is_cancel=False)
+            context = SkillContext(
+                query=operation_query,
+                user_id=user_id,
+                last_result={"pending_delete": operation_payload} if operation_action == "delete_record" else {},
+                last_skill=skill_name,
+                extra={
+                    "pending_action": {
+                        "action": operation_action,
+                        "payload": operation_payload,
+                    },
+                    "callback_intent": "confirm",
+                    "batch_operation": {
+                        "index": position + 1,
+                        "total": len(operation_entries),
+                    },
+                },
+            )
+            current = await skill.execute(context)
+            last_result = current
+            entry.executed_at = time.time()
+            if current.success:
+                entry.status = OperationExecutionStatus.SUCCEEDED
+                entry.error_code = None
+                entry.error_detail = None
+                continue
+
+            entry.status = OperationExecutionStatus.FAILED
+            entry.error_code = self._extract_batch_operation_error_code(current)
+            entry.error_detail = str(current.message or current.reply_text or "").strip() or None
+            for remaining in operation_entries[position + 1 :]:
+                if remaining.status == OperationExecutionStatus.PENDING:
+                    remaining.status = OperationExecutionStatus.SKIPPED
+            break
+
+        batch_pending.operations = operation_entries
+        if hasattr(pending, "operations"):
+            pending.operations = operation_entries
+
+        if hasattr(self._state_manager, "update_pending_action_operations"):
+            self._state_manager.update_pending_action_operations(user_id, batch_pending)
+
+        succeeded = [item for item in operation_entries if item.status == OperationExecutionStatus.SUCCEEDED]
+        failed = [item for item in operation_entries if item.status == OperationExecutionStatus.FAILED]
+        remaining = [
+            item
+            for item in operation_entries
+            if item.status in {OperationExecutionStatus.FAILED, OperationExecutionStatus.SKIPPED, OperationExecutionStatus.PENDING}
+        ]
+        total = len(operation_entries)
+
+        if not failed and not remaining:
+            if hasattr(self._state_manager, "confirm_pending_action"):
+                self._state_manager.confirm_pending_action(user_id)
+            success_result = SkillResult(
+                success=True,
+                skill_name=skill_name,
+                data={"clear_pending_action": True},
+                message="批量操作完成",
+                reply_text=get_user_message_by_code("batch_all_succeeded", total=total),
+            )
+            self._sync_state_after_result(user_id, "确认", success_result)
+            rendered = self._response_renderer.render(success_result)
+            rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
+            return {
+                "status": "processed",
+                "text": rendered.text_fallback,
+                "outbound": rendered.to_dict(),
+            }
+
+        failure_summary = "; ".join(
+            [
+                f"第{item.index + 1}条: {get_user_message_by_code(item.error_code or 'unknown_error')}"
+                for item in failed
+            ]
+        )
+        if succeeded:
+            error_code = "batch_partial_success"
+            text = get_user_message_by_code(
+                error_code,
+                total=total,
+                succeeded=len(succeeded),
+                failed=len(failed),
+                failure_summary=failure_summary or "-",
+            )
+        else:
+            error_code = "batch_all_failed"
+            first_failed = failed[0] if failed else None
+            first_error = get_user_message_by_code((first_failed.error_code if first_failed else "") or "unknown_error")
+            text = get_user_message_by_code(
+                error_code,
+                total=total,
+                first_error=first_error,
+            )
+
+        if remaining:
+            text = f"{text}\n{get_user_message_by_code('batch_retry_available', remaining=len(remaining))}"
+
+        payload = dict(batch_pending.payload) if isinstance(batch_pending.payload, dict) else {}
+        payload["retry_available"] = True
+        payload["retry_remaining"] = len(remaining)
+        failure_result = SkillResult(
+            success=False,
+            skill_name=skill_name,
+            data={
+                "error_code": error_code,
+                "pending_action": {
+                    "action": action_name,
+                    "payload": payload,
+                    "operations": self._serialize_operation_entries(operation_entries),
+                },
+            },
+            message=text,
+            reply_text=text,
+        )
+        self._sync_state_after_result(user_id, "重试" if is_retry else "确认", failure_result)
+        rendered = self._response_renderer.render(failure_result)
+        rendered = self._maybe_apply_reply_personalization(user_id=user_id, user_text="", rendered=rendered)
+        return {
+            "status": "processed",
+            "text": rendered.text_fallback,
+            "outbound": rendered.to_dict(),
+        }
+
     @staticmethod
     def _resolve_pending_action_payloads(pending: Any) -> list[dict[str, Any]]:
+        iter_payloads = getattr(pending, "iter_operation_payloads", None)
+        if callable(iter_payloads):
+            try:
+                data = iter_payloads()
+            except Exception:
+                data = []
+            if isinstance(data, list):
+                normalized = [dict(item) for item in data if isinstance(item, Mapping)]
+                if normalized:
+                    return normalized
+
         operations = getattr(pending, "operations", None)
         if isinstance(operations, list):
-            normalized = [dict(item) for item in operations if isinstance(item, Mapping)]
+            normalized: list[dict[str, Any]] = []
+            for item in operations:
+                if isinstance(item, OperationEntry):
+                    if item.status == OperationExecutionStatus.PENDING:
+                        normalized.append(dict(item.payload))
+                    continue
+                if isinstance(item, Mapping):
+                    normalized.append(dict(item))
             if normalized:
                 return normalized
 
@@ -1224,6 +1435,89 @@ class AgentOrchestrator:
         if payload:
             return [payload]
         return []
+
+    @staticmethod
+    def _serialize_operation_entries(entries: list[OperationEntry]) -> list[dict[str, Any]]:
+        return [
+            {
+                "index": int(entry.index),
+                "payload": dict(entry.payload),
+                "status": str(entry.status.value),
+                "error_code": entry.error_code,
+                "error_detail": entry.error_detail,
+                "executed_at": entry.executed_at,
+            }
+            for entry in entries
+        ]
+
+    @staticmethod
+    def _coerce_batch_pending_state(*, action_name: str, pending: Any) -> PendingActionState:
+        if isinstance(pending, PendingActionState):
+            return pending
+
+        payload_raw = getattr(pending, "payload", None)
+        payload = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
+        operations_raw = getattr(pending, "operations", None)
+        operations: list[OperationEntry] = []
+        if isinstance(operations_raw, list):
+            for index, item in enumerate(operations_raw):
+                if isinstance(item, OperationEntry):
+                    operations.append(item)
+                    continue
+                if not isinstance(item, Mapping):
+                    continue
+                payload_item = item.get("payload") if isinstance(item.get("payload"), Mapping) else item
+                operations.append(
+                    OperationEntry(
+                        index=item.get("index", index),
+                        payload=dict(payload_item) if isinstance(payload_item, Mapping) else {},
+                        status=item.get("status", OperationExecutionStatus.PENDING.value),
+                        error_code=item.get("error_code"),
+                        error_detail=item.get("error_detail"),
+                        executed_at=item.get("executed_at"),
+                    )
+                )
+
+        now = time.time()
+        created_at_raw = getattr(pending, "created_at", now)
+        expires_at_raw = getattr(pending, "expires_at", now + 300)
+        try:
+            created_at = float(created_at_raw)
+        except Exception:
+            created_at = now
+        try:
+            expires_at = float(expires_at_raw)
+        except Exception:
+            expires_at = now + 300
+
+        return PendingActionState(
+            action=action_name,
+            payload=payload,
+            operations=operations,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+
+    @staticmethod
+    def _reset_batch_retry_entries(entries: list[OperationEntry]) -> None:
+        for entry in entries:
+            if entry.status in {OperationExecutionStatus.FAILED, OperationExecutionStatus.SKIPPED}:
+                entry.status = OperationExecutionStatus.PENDING
+                entry.error_code = None
+                entry.error_detail = None
+                entry.executed_at = None
+
+    @staticmethod
+    def _extract_batch_operation_error_code(result: SkillResult) -> str:
+        data = result.data if isinstance(result.data, dict) else {}
+        explicit = str(data.get("error_code") or "").strip()
+        if explicit:
+            return explicit
+
+        text = f"{result.message}\n{result.reply_text}".lower()
+        if any(token in text for token in ["recordidnotfound", "record not found", "不存在", "未找到"]):
+            return "update_record_deleted"
+        return "unknown_error"
 
     @staticmethod
     def _resolve_operation_action_name(action_name: str, operation_payload: Mapping[str, Any]) -> str:
@@ -1867,7 +2161,13 @@ class AgentOrchestrator:
                 action = str(pending_action_data.get("action") or "").strip()
                 payload = pending_action_data.get("payload")
                 operations_raw = pending_action_data.get("operations")
-                operations = [item for item in operations_raw if isinstance(item, dict)] if isinstance(operations_raw, list) else []
+                operations: list[dict[str, Any] | OperationEntry] = []
+                if isinstance(operations_raw, list):
+                    for item in operations_raw:
+                        if isinstance(item, OperationEntry):
+                            operations.append(item)
+                        elif isinstance(item, dict):
+                            operations.append(dict(item))
                 ttl_seconds = None
                 raw_ttl = pending_action_data.get("ttl_seconds")
                 try:

@@ -14,12 +14,12 @@ import hashlib
 import json
 from typing import Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.skills.bitable_adapter import BitableAdapter
 from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.base import BaseSkill
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.response_pool import pool
 from src.core.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
@@ -115,8 +115,9 @@ class DeleteSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "delete_disabled"},
                 message="删除能力已关闭",
-                reply_text="当前环境未开启删除能力，请联系管理员开启 CRUD_DELETE_ENABLED。",
+                reply_text=get_user_message_by_code("delete_disabled"),
             )
 
         pending_action_raw = extra.get("pending_action")
@@ -212,8 +213,9 @@ class DeleteSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "delete_target_required"},
                 message="需要先查询要删除的记录",
-                reply_text="请先查询要删除的案件，例如：查询案号XXX的案件",
+                reply_text=get_user_message_by_code("delete_target_required"),
             )
         
         # 如果有多条记录，需要用户明确
@@ -236,8 +238,9 @@ class DeleteSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "delete_record_id_missing"},
                 message="记录缺少 record_id",
-                reply_text="无法获取记录 ID，删除失败。",
+                reply_text=get_user_message_by_code("delete_record_id_missing"),
             )
         
         # 构建确认提示
@@ -296,8 +299,9 @@ class DeleteSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "delete_pending_not_found"},
                 message="没有待删除的记录",
-                reply_text="没有找到待删除的记录，请重新操作。",
+                reply_text=get_user_message_by_code("delete_pending_not_found"),
             )
         
         record_id = pending.get("record_id")
@@ -338,9 +342,12 @@ class DeleteSkill(BaseSkill):
                 app_token=app_token,
             )
             if not outcome.success:
+                failure_data = dict(outcome.data) if isinstance(outcome.data, dict) else {}
+                failure_data.setdefault("error_code", "delete_record_failed")
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
+                    data=failure_data,
                     message=outcome.message,
                     reply_text=outcome.reply_text,
                 )
@@ -357,8 +364,9 @@ class DeleteSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "delete_record_failed"},
                 message=str(e),
-                reply_text=pool.pick("error", "删除失败，请稍后重试。"),
+                reply_text=get_user_message_by_code("delete_record_failed", detail=str(e)),
             )
     
     def _is_confirmation(self, query: str) -> bool:

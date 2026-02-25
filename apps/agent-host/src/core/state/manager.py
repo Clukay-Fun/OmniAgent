@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from src.core.state.models import (
     ActiveRecordState,
     ConversationState,
     LastResultState,
     MessageChunkState,
+    OperationEntry,
     PendingActionState,
     PendingActionStatus,
     PaginationState,
@@ -381,26 +382,45 @@ class ConversationStateManager:
         user_id: str,
         action: str,
         payload: dict[str, Any] | None = None,
-        operations: list[dict[str, Any]] | None = None,
+        operations: list[dict[str, Any] | OperationEntry] | None = None,
         ttl_seconds: int | None = None,
     ) -> None:
         now = time.time()
         state = self.get_state(user_id)
-        normalized_operations: list[dict[str, Any]] = []
+        normalized_operations: list[OperationEntry] = []
         if isinstance(operations, list):
-            for item in operations:
-                if isinstance(item, dict):
-                    normalized_operations.append(dict(item))
+            for index, item in enumerate(operations):
+                if isinstance(item, OperationEntry):
+                    normalized_operations.append(item)
+                elif isinstance(item, dict):
+                    normalized_operations.append(OperationEntry(index=index, payload=dict(item)))
         state.pending_action = PendingActionState(
             action=str(action).strip(),
             payload=payload or {},
-            operations=normalized_operations,
+            operations=cast(list[OperationEntry], normalized_operations),
             status=self._resolve_pending_action_status(str(action).strip(), payload or {}),
             created_at=now,
             expires_at=now + (ttl_seconds if ttl_seconds is not None else self._pending_action_ttl),
         )
         state.updated_at = now
         self._store.set(user_id, state)
+
+    def update_pending_action_operations(self, user_id: str, pending: PendingActionState) -> PendingActionState | None:
+        """Persist per-operation status updates for the current pending action."""
+        state = self.get_state(user_id)
+        current = state.pending_action
+        if current is None:
+            return None
+
+        if str(current.action or "").strip() != str(pending.action or "").strip():
+            return None
+
+        current.operations = list(pending.operations)
+        current.payload = dict(pending.payload) if isinstance(pending.payload, dict) else {}
+        current.status = pending.status
+        state.updated_at = time.time()
+        self._store.set(user_id, state)
+        return current
 
     def get_pending_action(self, user_id: str) -> PendingActionState | None:
         state = self.get_state(user_id)

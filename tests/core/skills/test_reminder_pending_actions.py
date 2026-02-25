@@ -96,7 +96,12 @@ import time
 
 import pytest
 
-from src.core.state.models import PendingActionState, PendingActionStatus  # noqa: E402
+from src.core.state.models import (  # noqa: E402
+    OperationEntry,
+    OperationExecutionStatus,
+    PendingActionState,
+    PendingActionStatus,
+)
 
 
 def test_pending_action_lifecycle_pending_to_confirmed() -> None:
@@ -157,7 +162,10 @@ def test_pending_action_operations_are_normalized() -> None:
         expires_at=300,
     )
 
-    assert state.operations == [{"record_id": "rec_1"}, {"record_id": "rec_2"}]
+    assert len(state.operations) == 2
+    assert state.operations[0].payload == {"record_id": "rec_1"}
+    assert state.operations[1].payload == {"record_id": "rec_2"}
+    assert state.operations[0].status == OperationExecutionStatus.PENDING
     assert state.iter_operation_payloads() == [{"record_id": "rec_1"}, {"record_id": "rec_2"}]
 
 
@@ -182,3 +190,18 @@ def test_pending_action_iter_payloads_fallbacks_to_payload_and_payload_operation
     assert state_single.iter_operation_payloads() == [
         {"record_id": "rec_single", "fields": {"状态": "已结案"}}
     ]
+
+
+def test_pending_action_iter_payloads_only_returns_pending_entries() -> None:
+    state = PendingActionState(
+        action="batch_update_records",
+        operations=[
+            OperationEntry(index=0, payload={"record_id": "rec_1"}, status=OperationExecutionStatus.SUCCEEDED),
+            OperationEntry(index=1, payload={"record_id": "rec_2"}, status=OperationExecutionStatus.PENDING),
+            OperationEntry(index=2, payload={"record_id": "rec_3"}, status=OperationExecutionStatus.FAILED),
+        ],
+        created_at=0,
+        expires_at=300,
+    )
+
+    assert state.iter_operation_payloads() == [{"record_id": "rec_2"}]

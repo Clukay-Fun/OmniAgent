@@ -13,11 +13,11 @@ import os
 import re
 from typing import Any
 
+from src.core.errors import get_user_message_by_code
 from src.core.skills.base import BaseSkill
 from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
 from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.response_pool import pool
 from src.core.skills.table_adapter import TableAdapter
 from src.core.types import SkillContext, SkillResult
 
@@ -314,11 +314,14 @@ class CreateSkill(BaseSkill):
                 app_token=app_token,
             )
             if not outcome.success:
+                failure_data = dict(outcome.data) if isinstance(outcome.data, dict) else {}
+                failure_data.setdefault("error_code", "create_record_failed")
                 return SkillResult(
                     success=False,
                     skill_name=self.name,
+                    data=failure_data,
                     message=outcome.message,
-                    reply_text=outcome.reply_text or pool.pick("error", "创建记录失败，请稍后重试。"),
+                    reply_text=outcome.reply_text or get_user_message_by_code("create_record_failed"),
                 )
 
             return SkillResult(
@@ -334,8 +337,9 @@ class CreateSkill(BaseSkill):
             return SkillResult(
                 success=False,
                 skill_name=self.name,
+                data={"error_code": "create_record_failed"},
                 message=str(e),
-                reply_text=pool.pick("error", "创建记录失败，请稍后重试。"),
+                reply_text=get_user_message_by_code("create_record_failed"),
             )
 
     def _parse_fields(self, query: str) -> dict[str, Any]:

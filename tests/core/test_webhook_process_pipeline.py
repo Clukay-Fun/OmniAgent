@@ -577,7 +577,7 @@ def test_s1_execute_delete_rejects_missing_record_id() -> None:
 
 from src.core.state.manager import ConversationStateManager
 from src.core.state.memory_store import MemoryStateStore
-from src.core.state.models import PendingActionStatus
+from src.core.state.models import OperationExecutionStatus, PendingActionStatus
 
 
 def test_s2_manager_confirm_pending_action() -> None:
@@ -633,7 +633,8 @@ def test_s2_manager_pending_action_supports_batch_operations() -> None:
 
     assert pending is not None
     assert pending.action == "batch_update_records"
-    assert pending.operations == operations
+    assert [item.payload for item in pending.operations] == operations
+    assert all(item.status == OperationExecutionStatus.PENDING for item in pending.operations)
 
 
 # ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
