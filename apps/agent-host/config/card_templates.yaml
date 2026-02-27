@@ -126,12 +126,12 @@ render_templates:
         完成时间: completed_at
     field_keys:
       case:
-        case_no: [案号, 项目ID]
+        case_no: [案号, 项目ID, 项目 ID, 项目编号, 案件号]
         title_left: [委托人及联系方式, 委托人]
         title_right: [对方当事人]
         cause: [案由]
         court: [审理法院]
-        stage: [程序阶段]
+        stage: [程序阶段, 审理程序, 程序, 审理阶段]
         status: [案件状态, 进展, 程序阶段]
         date: [开庭日, 截止日, 上诉截止日, 举证截止日]
         owner: [主办律师, 负责人]

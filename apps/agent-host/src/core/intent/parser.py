@@ -255,8 +255,42 @@ class IntentParser:
 
     def _normalize_skills_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """标准化技能配置格式 (v1/v2 兼容)"""
+        # v2: 支持顶层 `skills`（常用于 timeout 等结构配置）
+        # 但规则匹配所需的 `keywords/time_keywords/weights/description` 往往仍放在顶层 skill 节点（如 `query:`）。
+        # 这里做一次合并：以顶层 skill 节点为基底，再叠加 `skills.<name>` 覆盖，确保规则引擎能拿到关键词配置。
         if "skills" in config:
-            return config.get("skills", {})
+            merged_skills: dict[str, Any] = {}
+            skills_section = config.get("skills", {})
+            if isinstance(skills_section, dict):
+                for key, raw in skills_section.items():
+                    if not isinstance(key, str):
+                        continue
+                    base = config.get(key)
+                    base_cfg = dict(base) if isinstance(base, dict) else {}
+                    overlay_cfg = dict(raw) if isinstance(raw, dict) else {}
+                    merged = dict(base_cfg)
+                    merged.update(overlay_cfg)
+                    if merged.get("enabled") is False:
+                        continue
+                    merged.setdefault("name", _SKILL_NAME_MAP.get(key, key))
+                    if key == "chitchat" and "keywords" not in merged:
+                        merged["keywords"] = merged.get("whitelist", [])
+                    merged_skills[key] = merged
+
+            # 兼容：若顶层还存在 skill 配置但未出现在 `skills` 里，也要纳入。
+            for key in ("query", "create", "update", "delete", "summary", "reminder", "chitchat"):
+                if key in merged_skills:
+                    continue
+                base = config.get(key)
+                if not isinstance(base, dict) or base.get("enabled") is False:
+                    continue
+                merged = dict(base)
+                merged.setdefault("name", _SKILL_NAME_MAP.get(key, key))
+                if key == "chitchat" and "keywords" not in merged:
+                    merged["keywords"] = merged.get("whitelist", [])
+                merged_skills[key] = merged
+
+            return merged_skills
 
         skills: dict[str, Any] = {}
         for key in ("query", "create", "update", "delete", "summary", "reminder", "chitchat"):

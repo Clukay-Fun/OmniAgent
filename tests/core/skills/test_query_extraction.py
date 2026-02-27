@@ -160,6 +160,42 @@ def test_build_params_company_query_downgrades_person_exact_to_keyword() -> None
     assert params["keyword"] == "深圳市神州红国际软装艺术有限公司"
 
 
+def test_filter_records_for_org_entity_keeps_only_party_matches() -> None:
+    skill = _build_skill()
+    keyword = "小蝌蚪信息咨询（深圳）有限公司"
+    records = [
+        {
+            "record_id": "rec_1",
+            "fields_text": {
+                "委托人": "深圳市中嘉建科股份有限公司",
+                "备注": f"可能相关：{keyword}",
+            },
+        },
+        {
+            "record_id": "rec_2",
+            "fields_text": {
+                "委托人": keyword,
+                "对方当事人": "某某公司",
+            },
+        },
+    ]
+
+    filtered = skill._filter_records_for_org_entity(records, keyword)
+    assert [item.get("record_id") for item in filtered] == ["rec_2"]
+
+
+def test_filter_records_for_org_entity_returns_empty_when_only_low_priority_hits() -> None:
+    skill = _build_skill()
+    keyword = "小蝌蚪信息咨询（深圳）有限公司"
+    records = [
+        {"record_id": "rec_1", "fields_text": {"备注": f"{keyword} 提到过"}},
+        {"record_id": "rec_2", "fields_text": {"进展": f"相关方：{keyword}"}},
+    ]
+
+    filtered = skill._filter_records_for_org_entity(records, keyword)
+    assert filtered == []
+
+
 def test_empty_result_prefer_message_uses_message_text() -> None:
     skill = _build_skill()
     result = skill._empty_result("该时间范围内没有开庭安排", prefer_message=True)

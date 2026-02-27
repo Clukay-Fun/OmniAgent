@@ -237,9 +237,19 @@ class QuerySkill(BaseSkill):
             page_token = result.get("page_token") or ""
             total = result.get("total")
 
-            relevance_keyword = self._extract_entity_keyword(query)
-            if not relevance_keyword:
-                relevance_keyword = str(params.get("keyword") or "").strip()
+            entity_keyword = self._extract_entity_keyword(query)
+            if entity_keyword and isinstance(records, list) and records:
+                filtered = self._filter_records_for_org_entity(records, entity_keyword)
+                if not filtered:
+                    return self._empty_result(
+                        f"未找到委托人/对方当事人包含“{entity_keyword}”的记录。"
+                        "\n建议：提供案号/项目ID，或确认表中当事人字段是否已填写。",
+                        prefer_message=True,
+                    )
+                records = filtered
+                total = len(records)
+
+            relevance_keyword = entity_keyword or str(params.get("keyword") or "").strip()
             if relevance_keyword and isinstance(records, list) and len(records) > 1:
                 records = self._apply_keyword_relevance(records, relevance_keyword)
                 total = len(records)
@@ -1153,6 +1163,54 @@ class QuerySkill(BaseSkill):
             return records
         scored.sort(key=lambda item: item[0], reverse=True)
         return [record for score, record in scored if score > 0]
+
+    def _filter_records_for_org_entity(self, records: list[dict[str, Any]], keyword: str) -> list[dict[str, Any]]:
+        """公司名/机构名查询的强约束过滤。
+
+        目标：避免公司名查询时命中到“仅在备注等低优先字段出现关键词”的记录，造成用户感知的误答。
+        规则：仅当关键词看起来像组织名时生效；只在高优先字段中做包含匹配。
+        """
+        entity = str(keyword or "").strip()
+        if not entity:
+            return records
+        if not self._looks_like_org_name(entity):
+            return records
+
+        target = entity.replace(" ", "").lower()
+        if not target:
+            return records
+
+        must_fields = {
+            # 展示字段（常见）
+            self._display_fields.get("title_left", "委托人"),
+            self._display_fields.get("title_right", "对方当事人"),
+            self._display_fields.get("case_no", "案号"),
+            # 高优先业务字段（兜底）
+            "委托人",
+            "委托人及联系方式",
+            "对方当事人",
+            "案号",
+            "案件号",
+            "项目ID",
+            "项目 ID",
+            "项目编号",
+        }
+
+        matched: list[dict[str, Any]] = []
+        for record in records:
+            fields = record.get("fields_text") or record.get("fields") or {}
+            if not isinstance(fields, dict):
+                continue
+            for field_name in must_fields:
+                name = str(field_name or "").strip()
+                if not name:
+                    continue
+                value = str(fields.get(name) or "").replace(" ", "").lower()
+                if value and target in value:
+                    matched.append(record)
+                    break
+
+        return matched
 
     def _build_keyword_fields(self) -> list[str]:
         fields: list[str] = []
