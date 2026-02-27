@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -54,7 +54,7 @@ def test_cron_jobs_route_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(automation_server, "get_automation_service", lambda _settings: service)
 
     with pytest.raises(Exception) as excinfo:
-        asyncio.run(automation_server.automation_cron_jobs(request=_FakeRequest(), status=None, limit=10))
+        asyncio.run(automation_server.automation_cron_jobs(request=cast(Any, _FakeRequest()), status=None, limit=10))
 
     assert getattr(excinfo.value, "status_code", None) == 401
 
@@ -66,7 +66,7 @@ def test_cron_jobs_route_returns_items_when_authorized(monkeypatch: pytest.Monke
 
     response = asyncio.run(
         automation_server.automation_cron_jobs(
-            request=_FakeRequest(headers={"x-automation-key": "k"}),
+            request=cast(Any, _FakeRequest(headers={"x-automation-key": "k"})),
             status="active",
             limit=10,
         )
@@ -82,9 +82,20 @@ def test_cron_resume_route_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(automation_server, "get_automation_service", lambda _settings: service)
 
     with pytest.raises(Exception) as excinfo:
-        asyncio.run(automation_server.automation_cron_resume("missing", request=_FakeRequest()))
+        asyncio.run(automation_server.automation_cron_resume("missing", request=cast(Any, _FakeRequest())))
 
     assert getattr(excinfo.value, "status_code", None) == 404
+
+
+def test_cron_resume_route_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _FakeService(auth_ok=False)
+    monkeypatch.setattr(automation_server, "get_settings", lambda: object())
+    monkeypatch.setattr(automation_server, "get_automation_service", lambda _settings: service)
+
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(automation_server.automation_cron_resume("job-1", request=cast(Any, _FakeRequest())))
+
+    assert getattr(excinfo.value, "status_code", None) == 401
 
 
 def test_cron_resume_route_returns_ok_when_authorized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,7 +106,7 @@ def test_cron_resume_route_returns_ok_when_authorized(monkeypatch: pytest.Monkey
     response = asyncio.run(
         automation_server.automation_cron_resume(
             "job-1",
-            request=_FakeRequest(headers={"x-automation-key": "k"}),
+            request=cast(Any, _FakeRequest(headers={"x-automation-key": "k"})),
         )
     )
 
@@ -111,7 +122,7 @@ def test_cron_cancel_route_returns_ok_when_authorized(monkeypatch: pytest.Monkey
     response = asyncio.run(
         automation_server.automation_cron_cancel(
             "job-1",
-            request=_FakeRequest(headers={"x-automation-key": "k"}),
+            request=cast(Any, _FakeRequest(headers={"x-automation-key": "k"})),
         )
     )
 

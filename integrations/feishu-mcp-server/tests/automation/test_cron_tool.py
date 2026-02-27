@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import sys
+from typing import Any, cast
+
+import pytest
 
 
 MCP_ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +24,7 @@ class _FakeClient:
 
 def _build_context() -> ToolContext:
     settings = Settings(automation=AutomationSettings(enabled=True))
-    return ToolContext(settings=settings, client=_FakeClient())
+    return ToolContext(settings=settings, client=cast(Any, _FakeClient()))
 
 
 def test_parse_schedule_text_daily_pattern() -> None:
@@ -80,3 +83,24 @@ def test_cron_tool_list_operation(monkeypatch) -> None:
     assert result["operation"] == "list"
     assert result["count"] == 1
     assert result["items"][0]["job_id"] == "job-1"
+
+
+def test_cron_tool_rejects_missing_required_params() -> None:
+    tool = AutomationCronTool(_build_context())
+
+    with pytest.raises(ValueError, match="cron or schedule_text is required"):
+        asyncio.run(
+            tool.run(
+                {
+                    "operation": "create",
+                    "action": {"type": "log.write", "message": "x"},
+                }
+            )
+        )
+
+
+def test_cron_tool_rejects_invalid_operation() -> None:
+    tool = AutomationCronTool(_build_context())
+
+    with pytest.raises(ValueError, match="operation must be one of"):
+        asyncio.run(tool.run({"operation": "invalid_op"}))
