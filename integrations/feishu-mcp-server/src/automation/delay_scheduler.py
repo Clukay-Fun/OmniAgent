@@ -25,12 +25,14 @@ class DelayScheduler:
         enabled: bool,
         interval_seconds: float = 5.0,
         cleanup_retention_seconds: float = 86400.0,
+        worker_count: int = 1,
     ) -> None:
         self._service = service
         self._store = service.delay_store
         self._enabled = bool(enabled)
         self._interval_seconds = max(0.1, float(interval_seconds))
         self._cleanup_retention_seconds = max(1.0, float(cleanup_retention_seconds))
+        self._worker_count = max(1, int(worker_count or 1))
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -45,6 +47,12 @@ class DelayScheduler:
         if not self._enabled:
             LOGGER.info("delay scheduler disabled")
             return
+        if self._worker_count > 1:
+            LOGGER.warning(
+                "delay scheduler multi-worker mode detected; keep only one scheduler active to avoid duplicate polling "
+                "(workers=%s)",
+                self._worker_count,
+            )
         if self._task and not self._task.done():
             return
         self._get_stop_event().clear()
