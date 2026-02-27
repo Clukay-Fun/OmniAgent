@@ -47,6 +47,7 @@ class UpdateSkill(BaseSkill):
     def __init__(
         self,
         mcp_client: Any,
+        llm_client: Any = None,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
         *,
@@ -57,9 +58,11 @@ class UpdateSkill(BaseSkill):
         
         参数:
             mcp_client: MCP 客户端实例
+            llm_client: LLM 客户端实例
             settings: 配置信息
         """
         self._mcp = mcp_client
+        self._llm = llm_client
         self._settings = settings
         self._skills_config = skills_config or {}
         if data_writer is None:
@@ -72,6 +75,9 @@ class UpdateSkill(BaseSkill):
             data_writer=self._data_writer,
         )
         self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
+        
+        from src.core.skills.entity_extractor import EntityExtractor
+        self._extractor = EntityExtractor(llm_client)
 
         update_cfg = self._skills_config.get("update", {}) if isinstance(self._skills_config, dict) else {}
         if not isinstance(update_cfg, dict):
@@ -97,35 +103,6 @@ class UpdateSkill(BaseSkill):
             self._confirm_ttl_seconds = max(1, int(confirm_ttl_seconds))
         except Exception:
             self._confirm_ttl_seconds = 60
-        self._field_aliases = {
-            "状态": "案件状态",
-            "案件状态": "案件状态",
-            "进展": "进展",
-            "案由": "案由",
-            "开庭": "开庭日",
-            "开庭日": "开庭日",
-            "法院": "审理法院",
-            "审理法院": "审理法院",
-            "委托人": "委托人",
-            "主办": "主办律师",
-            "主办律师": "主办律师",
-            "协办": "协办律师",
-            "协办律师": "协办律师",
-            "备注": "备注",
-            "金额": "金额",
-            "费用": "金额",
-        }
-        self._update_value_prefixes = (
-            "改成",
-            "改为",
-            "变成",
-            "变为",
-            "更新为",
-            "修改为",
-            "设为",
-            "设成",
-            "调整为",
-        )
         self._date_field_names = {
             "开庭日",
             "截止日",
@@ -135,6 +112,37 @@ class UpdateSkill(BaseSkill):
             "到期日期",
             "付款截止",
         }
+
+        default_aliases = {
+            "案件号": "案号",
+            "编号": "案号",
+            "项目编号": "项目ID",
+            "项目号": "项目ID",
+            "当事人": "委托人",
+            "客户": "委托人",
+            "法院": "审理法院",
+            "程序": "程序阶段",
+            "备注内容": "备注",
+        }
+        raw_aliases = update_cfg.get("field_aliases") if isinstance(update_cfg, dict) else None
+        alias_overrides = raw_aliases if isinstance(raw_aliases, dict) else {}
+        merged_aliases = dict(default_aliases)
+        for key, value in alias_overrides.items():
+            alias = str(key).strip()
+            target = str(value).strip()
+            if alias and target:
+                merged_aliases[alias] = target
+        self._field_aliases = merged_aliases
+
+        prefixes_raw = update_cfg.get(
+            "update_value_prefixes",
+            ["改成", "改为", "修改为", "更新为", "变更为", "设为", "设置为", "调整为"],
+        )
+        if isinstance(prefixes_raw, list):
+            prefixes = [str(item).strip() for item in prefixes_raw if str(item).strip()]
+        else:
+            prefixes = ["改成", "改为", "修改为", "更新为", "变更为", "设为", "设置为", "调整为"]
+        self._update_value_prefixes = tuple(prefixes)
     
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -274,7 +282,7 @@ class UpdateSkill(BaseSkill):
             planner_plan=planner_plan,
             table_name=table_ctx.table_name,
         )
-        fields = self._collect_update_fields(query=query, planner_plan=planner_plan)
+        fields = await self._collect_update_fields(query=query, planner_plan=planner_plan, table_id=table_ctx.table_id)
 
         if pending_action_name == "close_record":
             close_profile_data = self._action_service.build_pending_close_action_data(
@@ -387,60 +395,28 @@ class UpdateSkill(BaseSkill):
             close_semantic=close_semantic,
         )
     
-    def _parse_update_fields(self, query: str) -> dict[str, Any]:
+    async def _parse_update_fields(self, query: str, table_id: str | None = None) -> dict[str, Any]:
         """
-        解析更新字段（简化版）
-        
-        参数:
-            query: 用户查询
-            
-        返回:
-            字段字典
+        解析更新字段（使用 LLM）
         """
-        fields: dict[str, Any] = {}
-        
-        # 简单规则：识别"把X改成Y"、"修改X为Y"等模式
-        import re
-        
-        # 模式1: 把X改成Y / 把X设成Y / 把X设置为Y
-        pattern1 = re.compile(r"把(.+?)(?:改成|改为|设成|设置为|设为)(.+)")
-        match = pattern1.search(query)
-        if match:
-            field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = self._normalize_field_value(field_name, match.group(2).strip())
-            fields[field_name] = field_value
-            return fields
+        available_fields: list[str] = []
+        if table_id and hasattr(self._table_adapter, "get_fields"):
+            try:
+                fields_data = await self._table_adapter.get_fields(table_id)
+                if isinstance(fields_data, list):
+                    for item in fields_data:
+                        if isinstance(item, str):
+                            field_name = item.strip()
+                        elif isinstance(item, dict):
+                            field_name = str(item.get("field_name") or item.get("name") or "").strip()
+                        else:
+                            field_name = ""
+                        if field_name:
+                            available_fields.append(field_name)
+            except Exception as e:
+                logger.warning("_parse_update_fields failed to get fields for %s: %s", table_id, e)
 
-        # 模式1.1: X改成Y / X改为Y / X调整为Y
-        pattern1_1 = re.compile(
-            r"(案号|案件状态|状态|开庭日|开庭|审理法院|法院|主办律师|主办|协办律师|协办|进展|备注|案由|金额|费用)(?:内容)?\s*(?:改成|改为|变成|变为|更新为|修改为|设为|设成|调整为|为|:|：)(.+)"
-        )
-        match = pattern1_1.search(query)
-        if match:
-            field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = self._normalize_field_value(field_name, match.group(2).strip())
-            fields[field_name] = field_value
-            return fields
-        
-        # 模式2: 修改X为Y / 更新X为Y
-        pattern2 = re.compile(r"(?:修改|更新)(.+?)为(.+)")
-        match = pattern2.search(query)
-        if match:
-            field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = self._normalize_field_value(field_name, match.group(2).strip())
-            fields[field_name] = field_value
-            return fields
-        
-        # 模式3: 更新X=Y
-        pattern3 = re.compile(r"更新(.+?)[=为](.+)")
-        match = pattern3.search(query)
-        if match:
-            field_name = self._normalize_field_segment(match.group(1).strip())
-            field_value = self._normalize_field_value(field_name, match.group(2).strip())
-            fields[field_name] = field_value
-            return fields
-        
-        return fields
+        return await self._extractor.parse_update_fields(query=query, available_fields=available_fields)
 
     def _extract_pending_update(self, extra: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
         pending = extra.get("pending_action")
@@ -727,7 +703,7 @@ class UpdateSkill(BaseSkill):
         source_fields_raw = pending_payload.get("source_fields")
         source_fields = dict(source_fields_raw) if isinstance(source_fields_raw, dict) else {}
 
-        fields = self._collect_update_fields(query=query, planner_plan=None)
+        fields = await self._collect_update_fields(query=query, planner_plan=None, table_id=table_id)
         if not fields:
             return self._build_update_collect_fields_result(
                 record_id=record_id,
@@ -903,14 +879,14 @@ class UpdateSkill(BaseSkill):
                 return token
         return None
 
-    def _collect_update_fields(self, *, query: str, planner_plan: dict[str, Any] | None) -> dict[str, Any]:
+    async def _collect_update_fields(self, *, query: str, planner_plan: dict[str, Any] | None, table_id: str | None = None) -> dict[str, Any]:
         merged: dict[str, Any] = {}
 
         planner_fields = self._extract_fields_from_planner(planner_plan)
         for key, value in planner_fields.items():
             merged[str(key)] = value
 
-        parsed_fields = self._parse_update_fields(query)
+        parsed_fields = await self._parse_update_fields(query, table_id)
         for key, value in parsed_fields.items():
             merged[str(key)] = value
 
@@ -1175,7 +1151,7 @@ class UpdateSkill(BaseSkill):
                 field_name = str(key).strip()
                 if field_name:
                     fields[field_name] = value
-        parsed_fields = self._parse_update_fields(query)
+        parsed_fields = await self._parse_update_fields(query, table_ctx.table_id)
         kv_fields = self._parse_key_value_fields(query)
         for key, value in parsed_fields.items():
             fields[key] = value
@@ -1380,10 +1356,12 @@ class UpdateSkill(BaseSkill):
         segment = re.sub(r"^(?:修改|更新|调整)", "", segment).strip()
         if " 的" in segment:
             segment = segment.split(" 的", 1)[1].strip()
-        if "的" in segment and any(token in segment for token in ["案号", "项目", "记录"]):
+        if "的" in segment and any(token in segment for token in ["案号", "项目", "记录", "案件"]):
             segment = segment.rsplit("的", 1)[-1].strip()
+        segment = re.sub(r"(?:是|为|：|:|=)\s*$", "", segment).strip()
         segment = re.sub(r"(?:案件|案子|记录|项目)的?内容$", "", segment).strip()
         segment = segment.replace("内容", "").strip()
+        segment = re.sub(r"(?:是|为|：|:|=)\s*$", "", segment).strip()
         mapped = self._field_aliases.get(segment, segment)
         return str(mapped).strip()
 

@@ -88,6 +88,10 @@ query:
     - 仅视图
     - 视图内
     - 只看视图
+  semantic_resolution:
+    enabled: true
+    min_confidence: 0.55
+    trace_slots: true
   classification_fields:
     - 项目类型
     - 案件分类

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from pathlib import Path
 import sys
@@ -11,7 +12,9 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.core.skills.query import QuerySkill  # noqa: E402
+import src.core.skills.query as query_module  # noqa: E402
 from src.core.skills.data_writer import WriteResult  # noqa: E402
+from src.core.skills.semantic_slots import SemanticSlotKey  # noqa: E402
 from src.utils.time_parser import parse_time_range  # noqa: E402
 
 
@@ -28,6 +31,10 @@ def _build_skill(query_card_v2_enabled: bool = False) -> QuerySkill:
     return QuerySkill(mcp_client=object(), settings=settings, skills_config={}, data_writer=_NoopWriter())
 
 
+def _build_params(skill: QuerySkill, query: str, extra: dict, table_result: dict) -> tuple[str, dict]:
+    return asyncio.run(skill._build_bitable_params(query, extra=extra, table_result=table_result))
+
+
 def test_extract_entity_keyword_strips_action_noise() -> None:
     skill = _build_skill()
     assert skill._extract_entity_keyword("帮我查一下房怡康的案子") == "房怡康"
@@ -36,13 +43,153 @@ def test_extract_entity_keyword_strips_action_noise() -> None:
 
 def test_extract_exact_field_cleans_case_number_tail() -> None:
     skill = _build_skill()
-    exact = skill._extract_exact_field("查询案号为（2024）粤01民终28497号的案件")
+    exact = asyncio.run(skill._extract_exact_field("查询案号为（2024）粤01民终28497号的案件"))
     assert exact == {"field": "案号", "value": "（2024）粤01民终28497号"}
+
+
+def test_extract_unlabeled_case_identifier() -> None:
+    skill = _build_skill()
+    value = skill._extract_unlabeled_case_identifier("查找JFTD-20260023")
+    assert value == "JFTD-20260023"
+
+
+def test_extract_semantic_slots_supports_case_identifier_and_party() -> None:
+    skill = _build_skill()
+    extraction = skill._extract_semantic_slots("查案号JFTD-20260023，当事人是张三")
+
+    assert extraction.slots.get(SemanticSlotKey.CASE_IDENTIFIER) == "JFTD-20260023"
+    assert extraction.slots.get(SemanticSlotKey.PARTY_A) == "张三"
+    assert extraction.confidence is not None
+
+
+def test_build_params_unlabeled_case_identifier_uses_id_field_keyword_search() -> None:
+    skill = _build_skill()
+    tool, params = _build_params(
+        skill,
+        "查找JFTD-20260023",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "JFTD-20260023"
+    assert "案号" in params["fields"]
+    assert "项目ID" in params["fields"]
+
+
+def test_build_params_semantic_case_identifier_has_higher_priority_than_party() -> None:
+    skill = _build_skill()
+    tool, params = _build_params(
+        skill,
+        "查找JFTD-20260023这条张三相关案件",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "JFTD-20260023"
+    assert skill._last_resolution_trace[0]["source"] == "semantic.case_identifier"
+
+
+def test_build_params_semantic_party_compiles_party_fields() -> None:
+    skill = _build_skill()
+    tool, params = _build_params(
+        skill,
+        "请查当事人是张三的案件",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "张三"
+    assert "委托人" in params["fields"]
+    assert "对方当事人" in params["fields"]
+    assert skill._last_resolution_trace[0]["source"] == "semantic.party"
+
+
+def test_build_params_semantic_disabled_falls_back_to_rule_and_keeps_trace() -> None:
+    skill = QuerySkill(
+        mcp_client=object(),
+        settings=SimpleNamespace(reply=SimpleNamespace(query_card_v2_enabled=False)),
+        skills_config={"query": {"semantic_resolution": {"enabled": False}}},
+        data_writer=_NoopWriter(),
+    )
+    tool, params = _build_params(
+        skill,
+        "查找JFTD-20260023",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "JFTD-20260023"
+    assert skill._last_resolution_trace[0]["source"] == "semantic.skipped"
+    assert skill._last_resolution_trace[0]["reason"] == "disabled"
+    assert skill._last_resolution_trace[-1]["source"] == "rule.id_keyword"
+
+
+def test_build_params_semantic_low_confidence_falls_back_to_rule() -> None:
+    skill = QuerySkill(
+        mcp_client=object(),
+        settings=SimpleNamespace(reply=SimpleNamespace(query_card_v2_enabled=False)),
+        skills_config={"query": {"semantic_resolution": {"enabled": True, "min_confidence": 0.9}}},
+        data_writer=_NoopWriter(),
+    )
+    tool, params = _build_params(
+        skill,
+        "当事人是张三的案子",
+        extra={},
+        table_result={"table_id": "tbl_x"},
+    )
+
+    assert tool == "data.bitable.search_keyword"
+    assert params["keyword"] == "张三"
+    assert skill._last_resolution_trace[0]["source"] == "semantic.skipped"
+    assert skill._last_resolution_trace[0]["reason"] == "low_confidence"
+    assert skill._last_resolution_trace[-1]["source"] == "rule.structured_query"
+
+
+def test_build_params_records_semantic_metrics(monkeypatch) -> None:
+    resolution_events: list[tuple[str, str]] = []
+    fallback_reasons: list[str] = []
+    confidences: list[float] = []
+
+    monkeypatch.setattr(
+        query_module,
+        "record_query_resolution",
+        lambda source, status: resolution_events.append((source, status)),
+    )
+    monkeypatch.setattr(
+        query_module,
+        "record_query_semantic_fallback",
+        lambda reason: fallback_reasons.append(reason),
+    )
+    monkeypatch.setattr(
+        query_module,
+        "observe_query_semantic_confidence",
+        lambda value: confidences.append(float(value)),
+    )
+
+    skill = _build_skill()
+    _build_params(skill, "查找JFTD-20260023", extra={}, table_result={"table_id": "tbl_x"})
+
+    assert ("semantic.case_identifier", "selected") in resolution_events
+    assert confidences
+
+    disabled_skill = QuerySkill(
+        mcp_client=object(),
+        settings=SimpleNamespace(reply=SimpleNamespace(query_card_v2_enabled=False)),
+        skills_config={"query": {"semantic_resolution": {"enabled": False}}},
+        data_writer=_NoopWriter(),
+    )
+    _build_params(disabled_skill, "查找JFTD-20260023", extra={}, table_result={"table_id": "tbl_x"})
+    assert "disabled" in fallback_reasons
 
 
 def test_build_params_fills_planner_search_exact_value_from_query() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "查询案号为（2024）粤01民终28497号的案子",
         extra={"planner_plan": {"tool": "search_exact", "params": {"field": "案号"}}},
         table_result={"table_id": "tbl_x"},
@@ -55,7 +202,8 @@ def test_build_params_fills_planner_search_exact_value_from_query() -> None:
 
 def test_build_params_enriches_search_person_with_entity_name() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "查看房怡康负责的案件",
         extra={"planner_plan": {"tool": "search_person", "params": {"field": "主办律师"}}},
         table_result={"table_id": "tbl_x"},
@@ -68,7 +216,8 @@ def test_build_params_enriches_search_person_with_entity_name() -> None:
 
 def test_build_params_recent_hearing_defaults_date_window() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "查一下最近的开庭",
         extra={"planner_plan": {"tool": "search_date_range", "params": {"field": "开庭日"}}},
         table_result={"table_id": "tbl_x"},
@@ -93,7 +242,8 @@ def test_guess_date_field_supports_multiple_deadline_fields() -> None:
 
 def test_build_params_query_next_month_hearing_range() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "查询下个月的开庭安排",
         extra={"planner_plan": {"tool": "search_date_range", "params": {"field": "截止日"}}},
         table_result={"table_id": "tbl_x"},
@@ -114,7 +264,8 @@ def test_parse_time_range_supports_next_month() -> None:
 
 def test_build_params_explicit_date_hearing() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "2月20号有什么庭要开",
         extra={"planner_plan": {"tool": "search_date_range", "params": {}}},
         table_result={"table_id": "tbl_x"},
@@ -127,7 +278,8 @@ def test_build_params_explicit_date_hearing() -> None:
 
 def test_build_params_search_with_hearing_phrase_upgrades_to_date_range() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "这周有什么庭要开",
         extra={"planner_plan": {"tool": "search", "params": {}}},
         table_result={"table_id": "tbl_x"},
@@ -143,9 +295,15 @@ def test_is_case_domain_query_supports_hearing_phrase() -> None:
     assert skill._is_case_domain_query("2月20号有什么庭要开") is True
 
 
+def test_is_case_domain_query_supports_unlabeled_case_identifier() -> None:
+    skill = _build_skill()
+    assert skill._is_case_domain_query("查找JFTD-20260023") is True
+
+
 def test_build_params_company_query_downgrades_person_exact_to_keyword() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "帮我查一下深圳市神州红国际软装艺术有限公司的案子",
         extra={
             "planner_plan": {
@@ -250,7 +408,8 @@ def test_format_case_result_uses_markdown_list_and_status_badge() -> None:
 
 def test_build_params_structured_party_query_maps_to_target_fields() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "当事人是张三的案子",
         extra={},
         table_result={"table_id": "tbl_x"},
@@ -264,7 +423,8 @@ def test_build_params_structured_party_query_maps_to_target_fields() -> None:
 
 def test_build_params_structured_court_query_maps_to_court_field() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "法院是广州中院的案件",
         extra={},
         table_result={"table_id": "tbl_x"},
@@ -277,7 +437,8 @@ def test_build_params_structured_court_query_maps_to_court_field() -> None:
 
 def test_build_params_past_hearing_query_uses_date_to_before_today() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "已经开过庭的案子",
         extra={},
         table_result={"table_id": "tbl_x"},
@@ -290,7 +451,8 @@ def test_build_params_past_hearing_query_uses_date_to_before_today() -> None:
 
 def test_build_params_future_hearing_query_uses_date_from_today() -> None:
     skill = _build_skill()
-    tool, params = skill._build_bitable_params(
+    tool, params = _build_params(
+        skill,
         "后续要开庭的案子",
         extra={},
         table_result={"table_id": "tbl_x"},

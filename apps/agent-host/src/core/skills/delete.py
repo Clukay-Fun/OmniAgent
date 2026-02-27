@@ -44,6 +44,7 @@ class DeleteSkill(BaseSkill):
     def __init__(
         self,
         mcp_client: Any,
+        llm_client: Any = None,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
         data_writer: DataWriter | None = None,
@@ -53,10 +54,12 @@ class DeleteSkill(BaseSkill):
         
         参数:
             mcp_client: MCP 客户端实例
+            llm_client: LLM 客户端实例
             settings: 配置信息
             skills_config: 技能配置
         """
         self._mcp = mcp_client
+        self._llm = llm_client
         self._settings = settings
         self._skills_config = skills_config or {}
         if data_writer is None:
@@ -65,6 +68,9 @@ class DeleteSkill(BaseSkill):
         self._table_adapter = BitableAdapter(mcp_client, skills_config=self._skills_config)
         self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
         self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
+        
+        from src.core.skills.entity_extractor import EntityExtractor
+        self._extractor = EntityExtractor(llm_client)
         
         # 确认短语配置
         delete_cfg = self._skills_config.get("delete", {})
@@ -451,17 +457,13 @@ class DeleteSkill(BaseSkill):
 
     async def _search_records_by_query(self, query: str, table_id: str | None = None) -> list[dict[str, Any]]:
         """根据查询文本尝试搜索待删除记录。"""
-        exact_case = re.search(r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
-        exact_project = re.search(r"(?:项目ID|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", query)
+        exact_field = await self._extractor.extract_exact_match_field(query)
 
         tool_name = None
         params: dict[str, Any] = {}
-        if exact_case:
+        if exact_field:
             tool_name = "data.bitable.search_exact"
-            params = {"field": "案号", "value": exact_case.group(1).strip()}
-        elif exact_project:
-            tool_name = "data.bitable.search_exact"
-            params = {"field": "项目ID", "value": exact_project.group(1).strip()}
+            params.update(exact_field)
 
         if table_id:
             params["table_id"] = table_id

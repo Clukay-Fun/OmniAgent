@@ -41,6 +41,7 @@ class CreateSkill(BaseSkill):
     def __init__(
         self,
         mcp_client: Any,
+        llm_client: Any = None,
         settings: Any = None,
         skills_config: dict[str, Any] | None = None,
         *,
@@ -51,9 +52,11 @@ class CreateSkill(BaseSkill):
 
         参数:
             mcp_client: MCP 客户端实例
+            llm_client: LLM 客户端实例
             settings: 配置信息
         """
         self._mcp = mcp_client
+        self._llm = llm_client
         self._settings = settings
         self._skills_config = skills_config or {}
         if data_writer is None:
@@ -67,27 +70,8 @@ class CreateSkill(BaseSkill):
         )
         self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
         
-        # 字段映射：用户可能使用的别名 -> 实际字段名
-        self._field_aliases = {
-            "律师": "主办律师",
-            "主办律师": "主办律师",
-            "委托人": "委托人",
-            "客户": "委托人",
-            "对方": "对方当事人",
-            "被告": "对方当事人",
-            "原告": "对方当事人",
-            "案号": "案号",
-            "案由": "案由",
-            "法院": "审理法院",
-            "阶段": "程序阶段",
-            "程序": "程序阶段",
-            "开庭日": "开庭日",
-            "开庭": "开庭日",
-            "法官": "承办法官",
-            "进展": "进展",
-            "待办": "待做事项",
-            "备注": "备注",
-        }
+        from src.core.skills.entity_extractor import EntityExtractor
+        self._extractor = EntityExtractor(llm_client)
 
         create_cfg = self._skills_config.get("create", {}) if isinstance(self._skills_config, dict) else {}
         required = create_cfg.get("required_fields", ["案号", "委托人", "案由"])
@@ -99,6 +83,25 @@ class CreateSkill(BaseSkill):
         self._confirm_phrases = {str(item).strip().lower() for item in confirm_phrases if str(item).strip()}
         cancel_phrases = create_cfg.get("cancel_phrases", ["取消", "算了", "不了", "不创建", "不建了", "不用了"])
         self._cancel_phrases = {str(item).strip().lower() for item in cancel_phrases if str(item).strip()}
+
+        default_aliases = {
+            "案件号": "案号",
+            "编号": "案号",
+            "项目编号": "项目ID",
+            "当事人": "委托人",
+            "客户": "委托人",
+            "法院": "审理法院",
+            "程序": "程序阶段",
+        }
+        raw_aliases = create_cfg.get("field_aliases") if isinstance(create_cfg, dict) else None
+        alias_overrides = raw_aliases if isinstance(raw_aliases, dict) else {}
+        merged_aliases = dict(default_aliases)
+        for key, value in alias_overrides.items():
+            alias = str(key).strip()
+            target = str(value).strip()
+            if alias and target:
+                merged_aliases[alias] = target
+        self._field_aliases = merged_aliases
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -152,7 +155,7 @@ class CreateSkill(BaseSkill):
         for k, v in planner_fields.items():
             fields.setdefault(k, v)
 
-        parsed_fields = self._parse_fields(query)
+        parsed_fields = await self._parse_fields(query, table_ctx.table_id)
         for k, v in parsed_fields.items():
             fields[k] = v
 
@@ -342,52 +345,37 @@ class CreateSkill(BaseSkill):
                 reply_text=get_user_message_by_code("create_record_failed"),
             )
 
-    def _parse_fields(self, query: str) -> dict[str, Any]:
+    async def _parse_fields(self, query: str, table_id: str | None = None) -> dict[str, Any]:
         """
         解析用户输入字段
-
-        支持格式:
-            - "主办律师是张三，委托人是XX公司"
-            - "律师：张三，委托人：XX公司"
-
-        参数:
-            query: 用户输入文本
-        返回:
-            解析后的字段字典
         """
-        fields: dict[str, Any] = {}
-        
-        # 模式1：字段是/为值
-        pattern1 = r"([^\s,，、]+?)(?:是|为|：|:)\s*([^\s,，、是为：:]+)"
-        matches = re.findall(pattern1, query)
-        
-        for alias, value in matches:
-            alias = alias.strip()
-            value = value.strip()
-            
-            # 查找实际字段名
-            actual_field = self._field_aliases.get(alias, alias)
-            if actual_field and value:
-                fields[actual_field] = value
+        available_fields: list[str] = []
+        if table_id and hasattr(self._table_adapter, "get_fields"):
+            try:
+                available_fields = await self._table_adapter.get_fields(table_id)
+            except Exception as e:
+                logger.warning("_parse_fields failed to get fields for %s: %s", table_id, e)
 
-        # 模式2：字段+值（无连接词）
-        direct_patterns = {
-            "案号": r"案号\s*([A-Za-z0-9\-_/（）()\u4e00-\u9fa5]+)",
-            "委托人": r"委托人\s*([^,，。；;\n]+)",
-            "案由": r"案由\s*([^,，。；;\n]+)",
-            "主办律师": r"主办律师\s*([^,，。；;\n]+)",
-            "协办律师": r"协办律师\s*([^,，。；;\n]+)",
-            "审理法院": r"(?:审理法院|法院)\s*([^,，。；;\n]+)",
-            "开庭日": r"(?:开庭日|开庭)\s*([^,，。；;\n]+)",
-        }
-        for field_name, pattern in direct_patterns.items():
-            match = re.search(pattern, query)
-            if not match:
+        llm_fields = await self._extractor.parse_create_fields(
+            query=query, required_fields=self._required_fields, available_fields=available_fields
+        )
+        kv_fields = self._parse_key_value_fields(query)
+        for key, value in llm_fields.items():
+            kv_fields[str(key)] = value
+        return kv_fields
+
+    def _parse_key_value_fields(self, query: str) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        pattern = r"([^\s,，、]+?)\s*(?:是|为|：|:|=)\s*([^,，。；;\n]+)"
+        for alias, value in re.findall(pattern, query):
+            key = str(alias).strip()
+            if not key:
                 continue
-            value = match.group(1).strip()
-            if value:
-                fields[field_name] = value
-        
+            mapped = self._field_aliases.get(key, key)
+            value_text = str(value).strip().strip('"\'')
+            if not value_text:
+                continue
+            fields[mapped] = value_text
         return fields
 
     def _extract_pending_create(self, extra: dict[str, Any]) -> dict[str, Any]:

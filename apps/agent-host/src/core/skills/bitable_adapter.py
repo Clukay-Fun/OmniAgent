@@ -192,6 +192,10 @@ class BitableAdapter:
             logger.warning("Get table schema failed (table_id=%s): %s", table_id, exc)
             return []
 
+    async def get_fields(self, table_id: str) -> list[str]:
+        """Backward-compatible alias for get_table_fields."""
+        return await self.get_table_fields(table_id)
+
     async def search_exact_records(
         self,
         *,
@@ -338,9 +342,16 @@ class BitableAdapter:
         if not table_id:
             records = last_result.get("records")
             if isinstance(records, list) and records:
-                table_id = self.extract_table_id_from_record(records[0])
-                if not app_token and isinstance(records[0], dict):
-                    app_token = str(records[0].get("app_token") or "").strip() or None
+                for record in records:
+                    if not isinstance(record, dict):
+                        continue
+                    record_table_id = self.extract_table_id_from_record(record)
+                    if not record_table_id:
+                        continue
+                    table_id = record_table_id
+                    if not app_token:
+                        app_token = str(record.get("app_token") or "").strip() or None
+                    break
 
         return TableContext(table_id=table_id, table_name=table_name, app_token=app_token, source="last_result")
 
@@ -404,6 +415,15 @@ class BitableAdapter:
         for candidate in candidates:
             if candidate in available_fields:
                 return candidate
+
+        # Step 1.5: exact match after text normalization
+        for candidate in candidates:
+            normalized_candidate = _normalize_text(candidate)
+            if not normalized_candidate:
+                continue
+            matched = normalized_lookup.get(normalized_candidate)
+            if matched:
+                return matched
 
         # Step 2: exact match after removing spaces
         compact_lookup: dict[str, list[str]] = {}

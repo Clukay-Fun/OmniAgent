@@ -19,12 +19,22 @@ from typing import Any
 import yaml
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.action_execution_service import ActionExecutionService
 from src.core.skills.data_writer import DataWriter
-from src.core.skills.field_formatter import format_field_value
 from src.core.skills.multi_table_linker import MultiTableLinker
+from src.core.skills.table_adapter import TableAdapter
+from src.core.skills.entity_extractor import EntityExtractor
+from src.core.skills.field_formatter import format_field_value
+from src.core.skills.semantic_slots import SemanticSlotExtraction, SemanticSlotKey
 from src.core.skills.schema_cache import SchemaCache, get_global_schema_cache
 from src.core.types import SkillContext, SkillResult
-from src.utils.metrics import observe_bitable_query_latency, record_field_format
+from src.utils.metrics import (
+    observe_bitable_query_latency,
+    observe_query_semantic_confidence,
+    record_field_format,
+    record_query_resolution,
+    record_query_semantic_fallback,
+)
 from src.utils.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
@@ -65,9 +75,15 @@ class QuerySkill(BaseSkill):
         self._llm = llm_client
         self._skills_config = skills_config or {}
         self._schema_cache = schema_cache or get_global_schema_cache()
-        if data_writer is None:
-            raise ValueError("QuerySkill requires an injected data_writer")
-        self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
+        self._data_writer = data_writer
+        self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
+        self._linker = MultiTableLinker(
+            mcp_client,
+            skills_config=skills_config,
+            data_writer=self._data_writer,
+        )
+        self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
+        self._extractor = EntityExtractor(llm_client)
 
         self._table_aliases = self._skills_config.get("table_aliases", {}) or {}
         self._alias_lookup = self._build_alias_lookup(self._table_aliases)
@@ -153,6 +169,23 @@ class QuerySkill(BaseSkill):
         self._classification_alias_pairs = self._build_classification_alias_pairs(self._classification_aliases)
         reply_settings = getattr(settings, "reply", None) if settings is not None else None
         self._query_card_v2_enabled = bool(getattr(reply_settings, "query_card_v2_enabled", False))
+        semantic_cfg = query_cfg.get("semantic_resolution", {})
+        if not isinstance(semantic_cfg, dict):
+            semantic_cfg = {}
+        self._semantic_resolution_enabled = bool(
+            semantic_cfg.get(
+                "enabled",
+                query_cfg.get("semantic_resolution_enabled", True),
+            )
+        )
+        self._semantic_min_confidence = float(
+            semantic_cfg.get(
+                "min_confidence",
+                query_cfg.get("semantic_min_confidence", 0.55),
+            )
+        )
+        self._semantic_trace_slots = bool(semantic_cfg.get("trace_slots", True))
+        self._last_resolution_trace: list[dict[str, Any]] = []
 
     async def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -209,7 +242,7 @@ class QuerySkill(BaseSkill):
                 reply_text=table_result.get("reply_text", "无法识别要查询的表，请明确表名。"),
             )
 
-        tool_name, params = self._build_bitable_params(query, extra, table_result)
+        tool_name, params = await self._build_bitable_params(query, extra, table_result)
         override = self._linker.resolve_query_override(
             query=query,
             current_tool=tool_name,
@@ -264,6 +297,7 @@ class QuerySkill(BaseSkill):
                 "params": {k: v for k, v in params.items() if k != "page_token"},
                 "table_name": table_result.get("table_name") or "",
                 "table_id": table_result.get("table_id") or params.get("table_id") or "",
+                "resolution_trace": list(self._last_resolution_trace),
             }
 
             if not records:
@@ -573,7 +607,7 @@ class QuerySkill(BaseSkill):
                 matched.append((len(alias), table))
                 logger.info(f"Matched alias: '{alias}' -> '{table}'")
         if not matched:
-            logger.warning("No alias matched")
+            logger.info("No alias matched")
             return None
         matched.sort(reverse=True)
         result = matched[0][1]
@@ -590,7 +624,9 @@ class QuerySkill(BaseSkill):
     def _is_case_domain_query(self, query: str) -> bool:
         normalized = query.replace(" ", "")
         keywords = ["开庭", "庭审", "案件", "案子", "案号", "审理", "法院", "委托人", "对方当事人"]
-        return any(token in normalized for token in keywords) or self._is_hearing_query(normalized)
+        if any(token in normalized for token in keywords) or self._is_hearing_query(normalized):
+            return True
+        return self._extract_unlabeled_case_identifier(query) != ""
 
     def _pick_case_default_table(self, table_names: list[str]) -> str | None:
         preferred = ["案件项目总库", "案件 项目总库", "【诉讼案件】", "诉讼案件"]
@@ -640,7 +676,7 @@ class QuerySkill(BaseSkill):
             return multi_tpl.format(candidate_list=candidate_list)
         return no_match_tpl.format(all_tables="、".join(all_tables))
 
-    def _build_bitable_params(
+    async def _build_bitable_params(
         self,
         query: str,
         extra: dict[str, Any],
@@ -648,6 +684,23 @@ class QuerySkill(BaseSkill):
     ) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = {}
         selected_tool: str | None = None
+        semantic_extraction = self._extract_semantic_slots(query)
+        self._last_resolution_trace = []
+        if semantic_extraction.confidence is not None:
+            observe_query_semantic_confidence(semantic_extraction.confidence)
+
+        def add_trace(source: str, status: str = "selected", reason: str | None = None) -> None:
+            entry: dict[str, Any] = {
+                "source": source,
+                "status": status,
+                "confidence": semantic_extraction.confidence,
+            }
+            if self._semantic_trace_slots:
+                entry["slots"] = self._summarize_semantic_slots(semantic_extraction)
+            if reason:
+                entry["reason"] = reason
+            self._last_resolution_trace.append(entry)
+            record_query_resolution(source=source, status=status)
 
         pagination = extra.get("pagination") if isinstance(extra.get("pagination"), dict) else None
         if isinstance(pagination, dict) and pagination.get("tool"):
@@ -658,6 +711,7 @@ class QuerySkill(BaseSkill):
             if pagination.get("page_token"):
                 params["page_token"] = pagination.get("page_token")
             logger.info("Query scenario: pagination_next")
+            add_trace("pagination.next")
             return str(pagination.get("tool")), params
 
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
@@ -734,7 +788,7 @@ class QuerySkill(BaseSkill):
                     params["field"] = "主办律师"
 
                 if mapped_tool == "data.bitable.search_exact" and not params.get("value"):
-                    exact = self._extract_exact_field(query)
+                    exact = await self._extract_exact_field(query)
                     if exact:
                         params.setdefault("field", exact.get("field"))
                         params["value"] = exact.get("value")
@@ -742,7 +796,7 @@ class QuerySkill(BaseSkill):
                 if mapped_tool == "data.bitable.search" and not any(
                     params.get(k) for k in ("keyword", "date_from", "date_to", "filters")
                 ):
-                    exact = self._extract_exact_field(query)
+                    exact = await self._extract_exact_field(query)
                     if exact:
                         mapped_tool = "data.bitable.search_exact"
                         params.update(exact)
@@ -809,7 +863,33 @@ class QuerySkill(BaseSkill):
                 params["fields"] = list(self._classification_fields)
                 self._maybe_ignore_default_view(params, query)
                 logger.info("Query scenario: case_classification")
+                add_trace("rule.case_classification")
                 return "data.bitable.search_keyword", params
+
+        if not isinstance(planner_plan, dict):
+            if not self._semantic_resolution_enabled:
+                add_trace("semantic.skipped", status="skipped", reason="disabled")
+                record_query_semantic_fallback("disabled")
+            elif not semantic_extraction.slots:
+                add_trace("semantic.skipped", status="skipped", reason="no_slots")
+                record_query_semantic_fallback("no_slots")
+            elif (
+                semantic_extraction.confidence is not None
+                and semantic_extraction.confidence < self._semantic_min_confidence
+            ):
+                add_trace("semantic.skipped", status="skipped", reason="low_confidence")
+                record_query_semantic_fallback("low_confidence")
+            else:
+                semantic_compiled = self._compile_semantic_slots(semantic_extraction)
+                if semantic_compiled:
+                    semantic_tool, semantic_params, source = semantic_compiled
+                    params.update(semantic_params)
+                    self._maybe_ignore_default_view(params, query)
+                    logger.info("Query scenario: semantic_slots (%s)", source)
+                    add_trace(source)
+                    return semantic_tool, params
+                add_trace("semantic.fallback", status="fallback", reason="compile_failed")
+                record_query_semantic_fallback("compile_failed")
 
         structured_query = self._extract_structured_query_params(query)
         if structured_query:
@@ -820,6 +900,7 @@ class QuerySkill(BaseSkill):
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: structured_query")
             if structured_tool:
+                add_trace("rule.structured_query")
                 return structured_tool, params
 
         if isinstance(planner_plan, dict):
@@ -837,12 +918,14 @@ class QuerySkill(BaseSkill):
                     mapped_tool = None
 
             if mapped_tool:
+                add_trace("planner.mapped")
                 return mapped_tool, params
 
         if self._is_all_cases_query(query):
             if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
                 params["ignore_default_view"] = True
             logger.info("Query scenario: all_cases")
+            add_trace("rule.all_cases")
             return "data.bitable.search", params
 
         # 优先级1: 检查是否为"我的xxx"查询（根据目标表动态选择人员字段）
@@ -876,6 +959,7 @@ class QuerySkill(BaseSkill):
                 "Query scenario: my_records (table_identity_fields=%s)",
                 table_identity_fields or ["主办律师"],
             )
+            add_trace("rule.my_records")
             return "data.bitable.search_person", params
 
         # 优先级2: 提取“X的案件/项目”主体关键词
@@ -885,6 +969,7 @@ class QuerySkill(BaseSkill):
             params["keyword"] = entity_keyword
             params["fields"] = self._build_keyword_fields()
             self._maybe_ignore_default_view(params, query)
+            add_trace("rule.entity_keyword")
             return "data.bitable.search_keyword", params
 
         date_from = extra.get("date_from")
@@ -909,13 +994,24 @@ class QuerySkill(BaseSkill):
             if time_to:
                 params["time_to"] = time_to
             self._maybe_ignore_default_view(params, query)
+            add_trace("rule.date_range")
             return "data.bitable.search_date_range", params
 
-        exact_field = self._extract_exact_field(query)
+        unlabeled_case_id = self._extract_unlabeled_case_identifier(query)
+        if unlabeled_case_id:
+            params["keyword"] = unlabeled_case_id
+            params["fields"] = self._build_identifier_keyword_fields()
+            self._maybe_ignore_default_view(params, query)
+            logger.info("Query scenario: id_keyword")
+            add_trace("rule.id_keyword")
+            return "data.bitable.search_keyword", params
+
+        exact_field = await self._extract_exact_field(query)
         if exact_field:
             params.update(exact_field)
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: exact_match")
+            add_trace("rule.exact_match")
             return "data.bitable.search_exact", params
 
         keyword = self._extract_keyword(query)
@@ -924,11 +1020,13 @@ class QuerySkill(BaseSkill):
             params["fields"] = self._build_keyword_fields()
             self._maybe_ignore_default_view(params, query)
             logger.info("Query scenario: keyword")
+            add_trace("rule.keyword")
             return "data.bitable.search_keyword", params
 
         if self._all_cases_ignore_default_view and not self._should_keep_view_filter(query):
             params["ignore_default_view"] = True
         logger.info("Query scenario: full_scan")
+        add_trace("rule.full_scan")
         return "data.bitable.search", params
 
     def _map_planner_tool(self, tool: str) -> str | None:
@@ -1085,13 +1183,96 @@ class QuerySkill(BaseSkill):
                 return value
         return ""
 
+    def _extract_semantic_slots(self, query: str) -> SemanticSlotExtraction:
+        slots: dict[SemanticSlotKey, str] = {}
+
+        case_identifier = self._extract_labeled_case_identifier(query) or self._extract_unlabeled_case_identifier(query)
+        if case_identifier:
+            slots[SemanticSlotKey.CASE_IDENTIFIER] = case_identifier
+
+        party_value = self._extract_labeled_value(query, ("委托人", "当事人", "对方当事人", "甲方", "乙方"))
+        if party_value:
+            slots[SemanticSlotKey.PARTY_A] = party_value
+
+        confidence = 0.0
+        if SemanticSlotKey.CASE_IDENTIFIER in slots:
+            confidence += 0.72
+        if SemanticSlotKey.PARTY_A in slots:
+            confidence += 0.58
+        if confidence <= 0:
+            confidence = 0.2
+        confidence = min(confidence, 0.98)
+
+        return SemanticSlotExtraction(slots=slots, confidence=round(confidence, 2))
+
+    def _extract_labeled_case_identifier(self, query: str) -> str:
+        patterns = [
+            r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)",
+            r"(?:项目ID|项目Id|项目id|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, query)
+            if not match:
+                continue
+            value = self._sanitize_search_keyword(match.group(1))
+            if value:
+                return value
+        return ""
+
+    def _compile_semantic_slots(
+        self,
+        extraction: SemanticSlotExtraction,
+    ) -> tuple[str, dict[str, Any], str] | None:
+        case_identifier = extraction.slots.get(SemanticSlotKey.CASE_IDENTIFIER)
+        if case_identifier:
+            return (
+                "data.bitable.search_keyword",
+                {
+                    "keyword": case_identifier,
+                    "fields": self._build_identifier_keyword_fields(),
+                },
+                "semantic.case_identifier",
+            )
+
+        party = extraction.slots.get(SemanticSlotKey.PARTY_A)
+        if party:
+            return (
+                "data.bitable.search_keyword",
+                {
+                    "keyword": party,
+                    "fields": ["委托人", "委托人及联系方式", "对方当事人", "联系人"],
+                },
+                "semantic.party",
+            )
+
+        return None
+
+    def _summarize_semantic_slots(self, extraction: SemanticSlotExtraction) -> dict[str, str]:
+        summary: dict[str, str] = {}
+        case_identifier = extraction.slots.get(SemanticSlotKey.CASE_IDENTIFIER)
+        if case_identifier:
+            summary[SemanticSlotKey.CASE_IDENTIFIER.value] = "present"
+        party = extraction.slots.get(SemanticSlotKey.PARTY_A)
+        if party:
+            summary[SemanticSlotKey.PARTY_A.value] = "present"
+        return summary
+
     def _is_hearing_query(self, query: str) -> bool:
         normalized = query.replace(" ", "")
         if "开庭" in normalized or "庭审" in normalized or "庭要开" in normalized:
             return True
         return bool(re.search(r"庭.*开|开.*庭", normalized))
 
-    def _extract_exact_field(self, query: str) -> dict[str, str] | None:
+    async def _extract_exact_field(self, query: str) -> dict[str, str] | None:
+        """
+        Dynamically extract exact match criteria using LLM. 
+        Will fallback to legacy basic exact mapping if needed.
+        """
+        result = await self._extractor.extract_exact_match_field(query)
+        if result:
+            return result
+        
+        # Fallback to legacy fast matching
         exact_patterns: list[tuple[str, str]] = [
             (r"(?:案号|案件号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", "案号"),
             (r"(?:项目ID|项目Id|项目id|项目编号|项目号)[是为:：\s]*([A-Za-z0-9\-_/（）()_\u4e00-\u9fa5]+)", "项目ID"),
@@ -1107,6 +1288,20 @@ class QuerySkill(BaseSkill):
             if value:
                 return {"field": field, "value": value}
         return None
+
+    def _extract_unlabeled_case_identifier(self, query: str) -> str:
+        """提取未显式标注“案号/项目ID”的编号型关键词。
+
+        示例："查找JFTD-20260023" -> "JFTD-20260023"
+        """
+        text = str(query or "")
+        # 常见案号/项目编号样式：字母前缀 + 连字符 + 数字主体
+        # 例如 JFTD-20260023, ABC-12345
+        match = re.search(r"([A-Za-z]{2,}[A-Za-z0-9]*-\d{4,})", text)
+        if not match:
+            return ""
+        value = self._sanitize_search_keyword(match.group(1))
+        return value
 
     def _extract_entity_keyword(self, query: str) -> str:
         """提取“X的案件/案子/项目”中的主体关键词。"""
@@ -1222,6 +1417,18 @@ class QuerySkill(BaseSkill):
             field = str(value).strip()
             if field and field not in fields:
                 fields.append(field)
+        return fields
+
+    def _build_identifier_keyword_fields(self) -> list[str]:
+        fields: list[str] = []
+        for field in ["案号", "案件号", "项目ID", "项目 ID", "项目编号"]:
+            name = str(field).strip()
+            if name and name not in fields:
+                fields.append(name)
+
+        display_case_no = str(self._display_fields.get("case_no", "")).strip()
+        if display_case_no and display_case_no not in fields:
+            fields.append(display_case_no)
         return fields
 
     def _maybe_ignore_default_view(self, params: dict[str, Any], query: str) -> None:

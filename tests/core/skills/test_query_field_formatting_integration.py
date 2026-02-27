@@ -95,3 +95,11 @@ def test_query_skill_formats_fields_with_schema_cache() -> None:
     assert records[0]["fields_text"]["金额"] == "¥1,234.56"
     assert records[0]["fields_text"]["标签"] == "重点、本周"
     assert records[0]["fields_text"]["附件"] == "OK 证据A.pdf"
+
+    query_meta = result.data.get("query_meta") or {}
+    resolution_trace = query_meta.get("resolution_trace") or []
+    assert isinstance(resolution_trace, list)
+    assert resolution_trace
+    assert "source" in resolution_trace[0]
+    assert "status" in resolution_trace[0]
+    assert "slots" in resolution_trace[0]

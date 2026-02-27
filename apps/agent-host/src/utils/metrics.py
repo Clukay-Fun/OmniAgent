@@ -165,6 +165,24 @@ if PROMETHEUS_AVAILABLE:
         buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
     )
 
+    QUERY_RESOLUTION_COUNT = Counter(
+        "query_resolution_total",
+        "Total query resolution decisions by source and status",
+        ["source", "status"],
+    )
+
+    QUERY_SEMANTIC_FALLBACK_COUNT = Counter(
+        "query_semantic_fallback_total",
+        "Total semantic query fallbacks by reason",
+        ["reason"],
+    )
+
+    QUERY_SEMANTIC_CONFIDENCE = Histogram(
+        "query_semantic_confidence",
+        "Distribution of semantic slot extraction confidence",
+        buckets=(0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0),
+    )
+
     DEAD_LETTER_FILE_SIZE_GAUGE = Gauge(
         "dead_letter_file_size_bytes",
         "Dead letter file size in bytes",
@@ -260,6 +278,9 @@ else:
     USER_MAPPING_MISS_COUNT = DummyMetric()
     CREDENTIAL_REFRESH_COUNT = DummyMetric()
     BITABLE_QUERY_LATENCY = DummyMetric()
+    QUERY_RESOLUTION_COUNT = DummyMetric()
+    QUERY_SEMANTIC_FALLBACK_COUNT = DummyMetric()
+    QUERY_SEMANTIC_CONFIDENCE = DummyMetric()
     DEAD_LETTER_FILE_SIZE_GAUGE = DummyMetric()
     FIELD_FORMAT_COUNT = DummyMetric()
     CARD_TEMPLATE_COUNT = DummyMetric()
@@ -377,6 +398,30 @@ def observe_bitable_query_latency(duration_seconds: float) -> None:
     if duration_seconds <= 0:
         return
     BITABLE_QUERY_LATENCY.observe(duration_seconds)
+
+
+def record_query_resolution(source: str, status: str) -> None:
+    """记录 Query 参数解析决策来源。"""
+    QUERY_RESOLUTION_COUNT.labels(
+        source=str(source or "unknown"),
+        status=str(status or "unknown"),
+    ).inc()
+
+
+def record_query_semantic_fallback(reason: str) -> None:
+    """记录 Query 语义解析回退原因。"""
+    QUERY_SEMANTIC_FALLBACK_COUNT.labels(reason=str(reason or "unknown")).inc()
+
+
+def observe_query_semantic_confidence(confidence: float) -> None:
+    """记录 Query 语义槽位置信分布。"""
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return
+    if value < 0:
+        return
+    QUERY_SEMANTIC_CONFIDENCE.observe(min(value, 1.0))
 
 
 def observe_dead_letter_file_size_bytes(size_bytes: int) -> None:

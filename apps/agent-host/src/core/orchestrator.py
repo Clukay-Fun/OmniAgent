@@ -395,18 +395,21 @@ class AgentOrchestrator:
             ),
             CreateSkill(
                 mcp_client=self._mcp,
+                llm_client=self._task_llm,
                 settings=self._settings,
                 skills_config=self._skills_config,
                 data_writer=self._data_writer,
             ),
             UpdateSkill(
                 mcp_client=self._mcp,
+                llm_client=self._task_llm,
                 settings=self._settings,
                 skills_config=self._skills_config,
                 data_writer=self._data_writer,
             ),
             DeleteSkill(
                 mcp_client=self._mcp,
+                llm_client=self._task_llm,
                 settings=self._settings,
                 skills_config=self._skills_config,
                 data_writer=self._data_writer,
