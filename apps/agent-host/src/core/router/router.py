@@ -21,6 +21,7 @@ from src.core.intent import IntentResult, SkillMatch
 from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
 
 if TYPE_CHECKING:
+    from src.core.router.llm_selector import LLMSelectionResult, LLMSkillSelector
     from src.core.skills.base import BaseSkill
     from src.core.skills.metadata import ReloadReport, SkillMetadata, SkillMetadataLoader
 
@@ -70,6 +71,7 @@ class SkillRouter:
         skills_config: dict[str, Any],
         max_hops: int = 2,
         skills_metadata_dir: str | Path | None = None,
+        llm_client: Any | None = None,
     ) -> None:
         self._config = skills_config
         self._max_hops = max_hops
@@ -92,6 +94,34 @@ class SkillRouter:
                 "skills_dir": str(resolved_metadata_dir),
                 "loaded": len(self._skill_metadata_report.loaded),
                 "failed": len(self._skill_metadata_report.failed),
+            },
+        )
+
+        routing_cfg = self._config.get("routing", {})
+        if not isinstance(routing_cfg, dict):
+            routing_cfg = {}
+        self._routing_mode = str(routing_cfg.get("mode", "rule") or "rule").strip().lower()
+        self._llm_selection_timeout = float(routing_cfg.get("llm_selection_timeout", 5.0))
+        self._llm_confidence_threshold = float(routing_cfg.get("llm_confidence_threshold", 0.6))
+        self._shadow_max_pending = max(1, int(routing_cfg.get("shadow_max_pending", 10)))
+        self._shadow_tasks: set[asyncio.Task[Any]] = set()
+        self._llm_selector: LLMSkillSelector | None = None
+        if llm_client is not None:
+            from src.core.router.llm_selector import LLMSkillSelector
+
+            self._llm_selector = LLMSkillSelector(
+                llm_client=llm_client,
+                metadata_loader=self._skill_metadata_loader,
+                timeout_seconds=self._llm_selection_timeout,
+                confidence_threshold=self._llm_confidence_threshold,
+            )
+        logger.info(
+            "技能路由模式已初始化",
+            extra={
+                "event_code": "router.mode.initialized",
+                "mode": self._routing_mode,
+                "llm_selector_enabled": bool(self._llm_selector),
+                "shadow_max_pending": self._shadow_max_pending,
             },
         )
 
@@ -182,21 +212,21 @@ class SkillRouter:
         intent: IntentResult,
         context: SkillContext,
     ) -> SkillResult:
-        """
-        核心路由入口
+        if self._routing_mode == "rule":
+            return await self._rule_based_route(intent, context)
+        if self._routing_mode == "shadow":
+            return await self._shadow_route(intent, context)
+        if self._routing_mode == "llm":
+            return await self._llm_route_with_fallback(intent, context)
 
-        逻辑:
-            1. 检查意图是否为空
-            2. 判断是否为链式意图 (Chain)
-            3. 执行单个技能或技能链
-            
-        参数:
-            intent: 意图分析结果
-            context: 当前会话上下文
-            
-        返回:
-            SkillResult: 执行结果
-        """
+        logger.warning(
+            "未知路由模式，回退到规则模式: %s",
+            self._routing_mode,
+            extra={"event_code": "router.mode.unknown_fallback_rule"},
+        )
+        return await self._rule_based_route(intent, context)
+
+    async def _rule_based_route(self, intent: IntentResult, context: SkillContext) -> SkillResult:
         top_skill = intent.top_skill()
         if not top_skill:
             return self._fallback_result("无法识别意图")
@@ -207,6 +237,114 @@ class SkillRouter:
                 return await self._execute_chain(chain_sequence, context)
 
         return await self._execute_skill(top_skill.name, context)
+
+    async def _llm_route_with_fallback(self, intent: IntentResult, context: SkillContext) -> SkillResult:
+        if self._llm_selector is not None:
+            selected = await self._llm_selector.select(context.query, context)
+            if selected is not None:
+                normalized_skill_name = self._normalize_skill_name(selected.skill_name)
+                if normalized_skill_name in self._skills:
+                    logger.info(
+                        "LLM选路命中: %s",
+                        normalized_skill_name,
+                        extra={
+                            "event_code": "router.llm.selected",
+                            "skill": normalized_skill_name,
+                            "confidence": selected.confidence,
+                            "latency_ms": round(selected.latency_ms, 2),
+                        },
+                    )
+                    return await self._execute_skill(normalized_skill_name, context)
+
+                logger.warning(
+                    "LLM选路结果未注册，回退规则: %s",
+                    normalized_skill_name,
+                    extra={"event_code": "router.llm.selected_unregistered"},
+                )
+
+        logger.info(
+            "LLM选路失败，回退规则匹配",
+            extra={"event_code": "router.llm.fallback_rule"},
+        )
+        return await self._rule_based_route(intent, context)
+
+    async def _shadow_route(self, intent: IntentResult, context: SkillContext) -> SkillResult:
+        rule_result = await self._rule_based_route(intent, context)
+        if self._llm_selector is None:
+            return rule_result
+
+        if len(self._shadow_tasks) >= self._shadow_max_pending:
+            logger.warning(
+                "Shadow任务队列已满 (%s/%s)，跳过本次LLM对比",
+                len(self._shadow_tasks),
+                self._shadow_max_pending,
+                extra={"event_code": "router.shadow.queue_full"},
+            )
+            return rule_result
+
+        rule_skill_name = str(rule_result.skill_name or "")
+        task = asyncio.create_task(
+            self._shadow_llm_compare(
+                user_message=context.query,
+                context=context,
+                rule_skill_name=rule_skill_name,
+            )
+        )
+        self._shadow_tasks.add(task)
+        task.add_done_callback(self._shadow_tasks.discard)
+        return rule_result
+
+    async def _shadow_llm_compare(
+        self,
+        user_message: str,
+        context: SkillContext,
+        rule_skill_name: str,
+    ) -> None:
+        if self._llm_selector is None:
+            return
+
+        try:
+            llm_result = await self._llm_selector.select(user_message, context)
+            self._log_shadow_comparison(user_message, rule_skill_name, llm_result)
+        except Exception as exc:
+            logger.warning(
+                "Shadow LLM 对比异常: %s",
+                exc,
+                extra={"event_code": "router.shadow.error"},
+            )
+
+    def _log_shadow_comparison(
+        self,
+        user_message: str,
+        rule_skill_name: str,
+        llm_result: LLMSelectionResult | None,
+    ) -> None:
+        normalized_rule = self._normalize_skill_name(rule_skill_name)
+        llm_skill = "NONE"
+        llm_confidence = 0.0
+        llm_latency_ms = 0.0
+
+        if llm_result is not None:
+            llm_skill = self._normalize_skill_name(llm_result.skill_name)
+            llm_confidence = float(llm_result.confidence)
+            llm_latency_ms = float(llm_result.latency_ms)
+
+        is_match = normalized_rule == llm_skill
+        logger.info(
+            "Shadow 对比: rule=%s llm=%s match=%s",
+            normalized_rule,
+            llm_skill,
+            is_match,
+            extra={
+                "event_code": "router.shadow.comparison",
+                "rule_skill": normalized_rule,
+                "llm_skill": llm_skill,
+                "match": is_match,
+                "confidence": llm_confidence,
+                "latency_ms": round(llm_latency_ms, 2),
+                "query_preview": user_message[:80],
+            },
+        )
 
     async def _execute_skill(
         self,
