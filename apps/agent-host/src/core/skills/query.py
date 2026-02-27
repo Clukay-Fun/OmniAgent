@@ -1316,8 +1316,9 @@ class QuerySkill(BaseSkill):
         # 随机开场白
         opener_pool = self._response_pool.get("result_opener")
         opener = random.choice(opener_pool) if opener_pool else ""
-        title = f"{opener}OK 案件查询结果（共 {title_count} 条）"
-        
+        title_prefix = f"{opener}" if opener else ""
+        title = f"{title_prefix}案件查询结果（共 {title_count} 条）"
+
         items = []
         df = self._display_fields  # 使用配置的字段名
         for i, record in enumerate(records, start=1):
@@ -1328,13 +1329,22 @@ class QuerySkill(BaseSkill):
             case_no = self._clean_text_value(fields.get(df.get("case_no", "案号"), ""))
             court = self._clean_text_value(fields.get(df.get("court", "审理法院"), ""))
             stage = self._clean_text_value(fields.get(df.get("stage", "程序阶段"), ""))
-            item = (
-                f"{i}. {left} vs {right}｜{suffix}\n"
-                f"   • 案号：{case_no}\n"
-                f"   • 法院：{court}\n"
-                f"   • 程序：{stage}\n"
-                f"   • 查看详情：{record.get('record_url', '')}"
+            status_raw = self._clean_text_value(
+                fields.get("案件状态") or fields.get("状态") or fields.get("进展") or ""
             )
+            status_text = self._format_status_badge(status_raw)
+            detail_url = self._clean_text_value(record.get("record_url", ""))
+
+            item_lines = [
+                f"- **{i}. {left or '未填写'} vs {right or '未填写'}**｜{suffix or '未填写'}",
+                f"  - **状态**：{status_text}",
+                f"  - **案号**：{case_no or '未填写'}",
+                f"  - **法院**：{court or '未填写'}",
+                f"  - **程序**：{stage or '未填写'}",
+            ]
+            if detail_url:
+                item_lines.append(f"  - [查看详情]({detail_url})")
+            item = "\n".join(item_lines)
             items.append(item)
         
         parts = [title]
@@ -1376,6 +1386,21 @@ class QuerySkill(BaseSkill):
             reply_text=reply_text,
             reply_card=card,
         )
+
+    def _format_status_badge(self, status_text: str) -> str:
+        text = self._clean_text_value(status_text)
+        if not text:
+            return "⚪ 未标注"
+
+        if any(token in text for token in ["进行", "处理中", "在办", "推进"]):
+            return f"🟡 {text}"
+        if any(token in text for token in ["结案", "已结", "完成", "办结"]):
+            return f"✅ {text}"
+        if any(token in text for token in ["暂停", "中止", "挂起"]):
+            return f"⏸️ {text}"
+        if any(token in text for token in ["失败", "异常", "驳回"]):
+            return f"❌ {text}"
+        return f"🔹 {text}"
 
     def _build_query_card_pending_action(
         self,
