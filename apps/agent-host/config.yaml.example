@@ -89,11 +89,11 @@ llm:
 
   # 备用模型（可选，主模型失败时切换）
   fallback:
-    enabled: false
-    provider: "deepseek"
-    model: "deepseek-chat"
+    enabled: ${LLM_FALLBACK_ENABLED:-false}
+    provider: ${LLM_FALLBACK_PROVIDER:-deepseek}
+    model: ${LLM_FALLBACK_MODEL:-deepseek-chat}
     api_key: ${LLM_FALLBACK_API_KEY:-}
-    api_base: "https://api.deepseek.com/v1"
+    api_base: ${LLM_FALLBACK_API_BASE:-https://api.deepseek.com/v1}
 
 # ------------------------------------------------------------
 # 任务模型配置（意图识别/工具调用专用，可选）
