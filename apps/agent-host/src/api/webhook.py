@@ -435,6 +435,54 @@ def _verify_reload_request(request: Request) -> None:
         raise HTTPException(status_code=401, detail="invalid reload token")
 
 
+def _verify_automation_notify_request(request: Request) -> None:
+    """校验 /notify 自动化回调请求。"""
+    settings = _get_settings()
+    notify_settings = getattr(settings, "automation_notify", None)
+    enabled = bool(getattr(notify_settings, "enabled", False))
+    if not enabled:
+        raise HTTPException(status_code=503, detail="automation notify is disabled")
+
+    expected_key = str(getattr(notify_settings, "api_key", "") or "").strip()
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="automation notify auth is not configured")
+
+    provided_key = str(request.headers.get("x-automation-key") or "").strip()
+    if not provided_key or not hmac.compare_digest(provided_key, expected_key):
+        raise HTTPException(status_code=401, detail="invalid automation notify api key")
+
+
+def _resolve_automation_notify_receiver(payload: dict[str, Any]) -> tuple[str, str]:
+    target_raw = payload.get("notify_target")
+    target = target_raw if isinstance(target_raw, dict) else {}
+    chat_id = str(target.get("chat_id") or payload.get("chat_id") or "").strip()
+    if chat_id:
+        return chat_id, "chat_id"
+    user_id = str(target.get("user_id") or payload.get("user_id") or "").strip()
+    if user_id:
+        return user_id, "open_id"
+    return "", ""
+
+
+def _build_automation_notify_text(payload: dict[str, Any]) -> str:
+    status = str(payload.get("status") or "").strip().lower()
+    job_type = str(payload.get("job_type") or "").strip() or "unknown"
+    job_id = str(payload.get("job_id") or "").strip() or "-"
+    summary = str(payload.get("summary") or "").strip() or "自动化任务已完成。"
+    error = str(payload.get("error") or "").strip()
+
+    icon = "✅" if status == "success" else "⚠️"
+    lines = [
+        f"{icon} 自动化任务{('完成' if status == 'success' else '失败')}",
+        f"类型: {job_type}",
+        f"任务ID: {job_id}",
+        f"摘要: {summary}",
+    ]
+    if error:
+        lines.append(f"错误: {error}")
+    return "\n".join(lines)
+
+
 # region 辅助类与函数
 class EventDeduplicator:
     """
@@ -705,6 +753,64 @@ async def reload_skill_metadata(request: Request) -> dict[str, Any]:
         "status": "ok",
         "scope": "skill_metadata",
         "result": result,
+    }
+
+
+@router.post("/notify")
+async def automation_notify(request: Request) -> dict[str, Any]:
+    """接收 MCP 自动化完成通知并转发到飞书会话。"""
+    _verify_automation_notify_request(request)
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json payload: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="notify payload must be object")
+
+    event = str(payload.get("event") or "").strip()
+    if event != "automation.completed":
+        raise HTTPException(status_code=400, detail="unsupported event")
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in {"success", "failed"}:
+        raise HTTPException(status_code=400, detail="invalid status")
+
+    job_type = str(payload.get("job_type") or "").strip().lower()
+    if job_type not in {"rule", "cron", "delay"}:
+        raise HTTPException(status_code=400, detail="invalid job_type")
+
+    receive_id, receive_id_type = _resolve_automation_notify_receiver(payload)
+    if not receive_id:
+        raise HTTPException(status_code=400, detail="notify_target is required")
+
+    settings = _get_settings()
+    text = _build_automation_notify_text(payload)
+    try:
+        await send_message(
+            settings=settings,
+            receive_id=receive_id,
+            msg_type="text",
+            content={"text": text},
+            receive_id_type=receive_id_type,
+        )
+    except Exception as exc:
+        logger.exception(
+            "automation notify forward failed",
+            extra={
+                "event_code": "webhook.notify.forward_failed",
+                "job_type": str(payload.get("job_type") or ""),
+                "job_id": str(payload.get("job_id") or ""),
+                "status": status,
+                "receive_id_type": receive_id_type,
+            },
+        )
+        raise HTTPException(status_code=502, detail=f"notify forward failed: {exc}") from exc
+
+    return {
+        "status": "ok",
+        "event": event,
+        "receive_id_type": receive_id_type,
     }
 
 

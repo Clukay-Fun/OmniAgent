@@ -180,6 +180,9 @@ class AutomationSettings(BaseModel):
     webhook_api_key: str = ""
     webhook_signature_secret: str = ""
     webhook_timestamp_tolerance_seconds: int = 300
+    notify_webhook_url: str = ""
+    notify_api_key: str = ""
+    notify_timeout_seconds: float = 5.0
     http_allowed_domains: list[str] = Field(default_factory=list)
     http_timeout_seconds: float = 10.0
     status_write_enabled: bool = False
@@ -326,6 +329,9 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             "automation",
             "webhook_timestamp_tolerance_seconds",
         ],
+        "AUTOMATION_NOTIFY_WEBHOOK_URL": ["automation", "notify_webhook_url"],
+        "AUTOMATION_NOTIFY_API_KEY": ["automation", "notify_api_key"],
+        "AUTOMATION_NOTIFY_TIMEOUT_SECONDS": ["automation", "notify_timeout_seconds"],
         "AUTOMATION_HTTP_ALLOWED_DOMAINS": ["automation", "http_allowed_domains"],
         "AUTOMATION_HTTP_TIMEOUT_SECONDS": ["automation", "http_timeout_seconds"],
         "AUTOMATION_STATUS_WRITE_ENABLED": ["automation", "status_write_enabled"],
