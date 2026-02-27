@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -57,11 +58,12 @@ class LLMSkillSelector:
         prompt = self._build_selection_prompt(skills=skills, user_message=user_message)
         start_time = time.perf_counter()
         try:
-            response = await asyncio.wait_for(
+            raw_response = await asyncio.wait_for(
                 self._llm.chat_json(prompt, timeout=self._timeout_seconds),
                 timeout=self._timeout_seconds,
             )
-            if not isinstance(response, dict):
+            response = self._normalize_response_payload(raw_response)
+            if response is None:
                 return None
 
             parsed = self._parse_response(response=response, available_skills=skills)
@@ -76,6 +78,43 @@ class LLMSkillSelector:
                 extra={"event_code": "router.llm_selection.timeout"},
             )
             return None
+
+    @staticmethod
+    def _normalize_response_payload(raw_response: Any) -> dict[str, Any] | None:
+        if isinstance(raw_response, dict):
+            return raw_response
+
+        if not isinstance(raw_response, str):
+            return None
+
+        text = raw_response.strip()
+        if not text:
+            return None
+
+        if text.startswith("```"):
+            parts = text.split("```")
+            if len(parts) >= 3:
+                text = parts[1].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+            return None
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                parsed = json.loads(text[start : end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+                return None
+            except json.JSONDecodeError:
+                return None
         except Exception as exc:
             logger.warning(
                 "LLM skill selection failed: %s",
