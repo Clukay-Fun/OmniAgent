@@ -39,6 +39,7 @@ from src.api.file_pipeline import (
 )
 from src.api.inbound_normalizer import normalize_content
 from src.config import get_settings
+from src.core.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
 from src.core.errors import PendingActionExpiredError, get_user_message as get_core_user_message
 from src.core.orchestrator import AgentOrchestrator
 from src.core.response.models import RenderedResponse
@@ -545,6 +546,54 @@ async def _emit_callback_result_message(callback_payload: dict[str, Any], result
     await send_reply(chat_id, msg_type, content)
 
 
+def _build_batch_progress_emitter(callback_payload: dict[str, Any]) -> BatchProgressEmitter | None:
+    chat_id = str(callback_payload.get("chat_id") or "").strip()
+    if not chat_id:
+        return None
+
+    message_id = str(callback_payload.get("message_id") or "").strip() or None
+
+    async def _emit(event: BatchProgressEvent) -> None:
+        if event.phase != BatchProgressPhase.START:
+            return
+        total = max(0, int(event.total or 0))
+        if total < 3:
+            return
+        await send_reply(
+            chat_id,
+            "text",
+            {"text": f"🔄 正在执行 {total} 条操作..."},
+            message_id,
+        )
+
+    return _emit
+
+
+async def _call_card_action_callback(
+    *,
+    user_id: str,
+    callback_action: str,
+    callback_value: dict[str, Any] | None,
+    batch_progress_emitter: BatchProgressEmitter | None,
+) -> dict[str, Any]:
+    try:
+        return await agent_core.handle_card_action_callback(
+            user_id=user_id,
+            callback_action=callback_action,
+            callback_value=callback_value,
+            batch_progress_emitter=batch_progress_emitter,
+        )
+    except TypeError as exc:
+        text = str(exc)
+        if "batch_progress_emitter" not in text:
+            raise
+        return await agent_core.handle_card_action_callback(
+            user_id=user_id,
+            callback_action=callback_action,
+            callback_value=callback_value,
+        )
+
+
 async def _handle_card_action_callback_async(callback_payload: dict[str, Any]) -> None:
     callback_action = str(callback_payload.get("callback_action") or "").strip()
     open_id = str(callback_payload.get("open_id") or "").strip()
@@ -557,12 +606,14 @@ async def _handle_card_action_callback_async(callback_payload: dict[str, Any]) -
         "status": "expired",
         "text": get_core_user_message(PendingActionExpiredError()),
     }
+    batch_progress_emitter = _build_batch_progress_emitter(callback_payload)
     for scoped_user_id in _build_callback_user_candidates(open_id, chat_id):
         try:
-            current = await agent_core.handle_card_action_callback(
+            current = await _call_card_action_callback(
                 user_id=scoped_user_id,
                 callback_action=callback_action,
                 callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
+                batch_progress_emitter=batch_progress_emitter,
             )
         except Exception:
             logger.exception(

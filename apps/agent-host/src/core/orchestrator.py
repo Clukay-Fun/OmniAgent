@@ -30,6 +30,7 @@ from src.utils.metrics import (
     set_token_budget,
     set_active_sessions,
 )
+from src.core.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
 from src.core.processing_status import ProcessingStatus, ProcessingStatusEmitter, ProcessingStatusEvent
 
 from src.core.session import SessionManager
@@ -1094,6 +1095,7 @@ class AgentOrchestrator:
         user_id: str,
         callback_action: str,
         callback_value: Mapping[str, Any] | None = None,
+        batch_progress_emitter: BatchProgressEmitter | None = None,
     ) -> dict[str, Any]:
         callback = str(callback_action or "").strip().lower()
         value = dict(callback_value) if isinstance(callback_value, Mapping) else {}
@@ -1168,6 +1170,7 @@ class AgentOrchestrator:
                 is_confirm=is_confirm,
                 is_cancel=is_cancel,
                 is_retry=is_retry,
+                batch_progress_emitter=batch_progress_emitter,
             )
 
         operation_payloads = self._resolve_pending_action_payloads(pending)
@@ -1237,6 +1240,7 @@ class AgentOrchestrator:
         is_confirm: bool,
         is_cancel: bool,
         is_retry: bool,
+        batch_progress_emitter: BatchProgressEmitter | None = None,
     ) -> dict[str, Any]:
         if is_cancel:
             if hasattr(self._state_manager, "cancel_pending_action"):
@@ -1268,10 +1272,31 @@ class AgentOrchestrator:
                 return self._expired_callback_response()
             self._reset_batch_retry_entries(operation_entries)
 
+        pending_to_execute = [item for item in operation_entries if item.status == OperationExecutionStatus.PENDING]
+        progress_enabled = batch_progress_emitter is not None and len(pending_to_execute) >= 3
+        if progress_enabled:
+            await self._emit_batch_progress(
+                emitter=batch_progress_emitter,
+                event=BatchProgressEvent(
+                    phase=BatchProgressPhase.START,
+                    user_id=user_id,
+                    total=len(pending_to_execute),
+                    metadata={
+                        "action_name": action_name,
+                        "is_retry": bool(is_retry),
+                    },
+                ),
+            )
+
         last_result: SkillResult | None = None
+        executed_total = 0
+        executed_succeeded = 0
+        executed_failed = 0
         for position, entry in enumerate(operation_entries):
             if entry.status != OperationExecutionStatus.PENDING:
                 continue
+
+            executed_total += 1
 
             operation_payload = dict(entry.payload)
             operation_action = self._resolve_operation_action_name(action_name, operation_payload)
@@ -1300,15 +1325,33 @@ class AgentOrchestrator:
                 entry.status = OperationExecutionStatus.SUCCEEDED
                 entry.error_code = None
                 entry.error_detail = None
+                executed_succeeded += 1
                 continue
 
             entry.status = OperationExecutionStatus.FAILED
             entry.error_code = self._extract_batch_operation_error_code(current)
             entry.error_detail = str(current.message or current.reply_text or "").strip() or None
+            executed_failed += 1
             for remaining in operation_entries[position + 1 :]:
                 if remaining.status == OperationExecutionStatus.PENDING:
                     remaining.status = OperationExecutionStatus.SKIPPED
             break
+
+        if progress_enabled:
+            await self._emit_batch_progress(
+                emitter=batch_progress_emitter,
+                event=BatchProgressEvent(
+                    phase=BatchProgressPhase.COMPLETE,
+                    user_id=user_id,
+                    total=executed_total,
+                    succeeded=executed_succeeded,
+                    failed=executed_failed,
+                    metadata={
+                        "action_name": action_name,
+                        "is_retry": bool(is_retry),
+                    },
+                ),
+            )
 
         batch_pending.operations = operation_entries
         if hasattr(pending, "operations"):
@@ -1519,6 +1562,28 @@ class AgentOrchestrator:
         if any(token in text for token in ["recordidnotfound", "record not found", "不存在", "未找到"]):
             return "update_record_deleted"
         return "unknown_error"
+
+    async def _emit_batch_progress(
+        self,
+        *,
+        emitter: BatchProgressEmitter | None,
+        event: BatchProgressEvent,
+    ) -> None:
+        if emitter is None:
+            return
+        try:
+            maybe_awaitable = emitter(event)
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+        except Exception:
+            logger.warning(
+                "批量进度消息发送失败",
+                extra={
+                    "event_code": "orchestrator.batch_progress.emit_failed",
+                    "phase": event.phase.value,
+                    "total": int(event.total),
+                },
+            )
 
     @staticmethod
     def _resolve_operation_action_name(action_name: str, operation_payload: Mapping[str, Any]) -> str:

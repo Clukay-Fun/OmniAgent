@@ -15,6 +15,8 @@ from typing import Any
 
 from croniter import croniter
 
+from src.automation.cron_store import CronJob
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +90,22 @@ class CronScheduler:
             except TimeoutError:
                 continue
 
+    async def _emit_completion_notification(self, *, job: CronJob, status: str, error_detail: str = "") -> None:
+        notify = getattr(self._service, "notify_cron_execution_result", None)
+        if not callable(notify):
+            return
+        try:
+            maybe_awaitable = notify(
+                job_id=str(job.job_id),
+                status=str(status),
+                payload=job.payload if isinstance(job.payload, dict) else {},
+                error_detail=str(error_detail or ""),
+            )
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+        except Exception as exc:
+            LOGGER.warning("cron completion notification failed: %s", exc)
+
     async def _poll_and_execute(self, now_ts: float | None = None) -> None:
         now_value = float(now_ts if now_ts is not None else time.time())
         self._store.activate_waiting(now_ts=now_value)
@@ -105,11 +123,17 @@ class CronScheduler:
                     max_consecutive_failures=1,
                     executed_at=job_now,
                 )
+                await self._emit_completion_notification(
+                    job=job,
+                    status="failed",
+                    error_detail=f"invalid cron expression: {exc}",
+                )
                 continue
 
             try:
                 await self._service.execute_cron_payload(job.payload)
                 self._store.mark_success(job.job_id, next_run_at=next_run_at, executed_at=job_now)
+                await self._emit_completion_notification(job=job, status="success")
             except Exception as exc:
                 self._store.mark_failure(
                     job.job_id,
@@ -117,4 +141,9 @@ class CronScheduler:
                     detail=str(exc),
                     max_consecutive_failures=self._max_consecutive_failures,
                     executed_at=job_now,
+                )
+                await self._emit_completion_notification(
+                    job=job,
+                    status="failed",
+                    error_detail=str(exc),
                 )

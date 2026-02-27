@@ -323,6 +323,11 @@ class WebhookSettings(BaseModel):
     chunk_assembler: WebhookChunkAssemblerSettings = Field(default_factory=WebhookChunkAssemblerSettings)
 
 
+class AutomationNotifySettings(BaseModel):
+    enabled: bool = False
+    api_key: str = ""
+
+
 class ReplyTemplateSettings(BaseModel):
     no_result: str = "未找到相关记录，请尝试调整查询条件。"
     error: str = "抱歉，处理请求时遇到问题：{message}"
@@ -427,6 +432,7 @@ class Settings(BaseModel):
     ocr: OCRSettings = Field(default_factory=OCRSettings)
     asr: ASRSettings = Field(default_factory=ASRSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
+    automation_notify: AutomationNotifySettings = Field(default_factory=AutomationNotifySettings)
     reply: ReplySettings = Field(default_factory=ReplySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
@@ -543,6 +549,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "CHUNK_ASSEMBLER_ENABLED": ["webhook", "chunk_assembler", "enabled"],
         "CHUNK_ASSEMBLER_WINDOW_SECONDS": ["webhook", "chunk_assembler", "window_seconds"],
         "CHUNK_ASSEMBLER_STALE_WINDOW_SECONDS": ["webhook", "chunk_assembler", "stale_window_seconds"],
+        "AUTOMATION_NOTIFY_ENABLED": ["automation_notify", "enabled"],
+        "AUTOMATION_NOTIFY_API_KEY": ["automation_notify", "api_key"],
         "MIDTERM_MEMORY_SQLITE_PATH": ["agent", "midterm_memory", "sqlite_path"],
         "MIDTERM_MEMORY_INJECT_TO_LLM": ["agent", "midterm_memory", "inject_to_llm"],
         "MIDTERM_MEMORY_LLM_RECENT_LIMIT": ["agent", "midterm_memory", "llm_recent_limit"],

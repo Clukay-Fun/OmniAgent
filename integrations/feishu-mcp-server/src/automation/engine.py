@@ -379,6 +379,7 @@ class AutomationEngine:
         event_kind: str = "",
         rule_id_filter: str | None = None,
         force_match: bool = False,
+        extra_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         rules = self._store.load_enabled_rules(table_id, app_token=app_token)
         results: list[dict[str, Any]] = []
@@ -417,7 +418,9 @@ class AutomationEngine:
 
         for rule in matched_rules:
             matched_count += 1
-            context = {
+            context = copy.deepcopy(extra_context) if isinstance(extra_context, dict) else {}
+            context.update(
+                {
                 "event_id": event_id,
                 "table_id": table_id,
                 "record_id": record_id,
@@ -427,7 +430,8 @@ class AutomationEngine:
                 "old_fields": copy.deepcopy(old_fields),
                 "diff": copy.deepcopy(diff),
                 "error": "",
-            }
+                }
+            )
             execution = await self._run_rule_pipeline(
                 rule,
                 context,

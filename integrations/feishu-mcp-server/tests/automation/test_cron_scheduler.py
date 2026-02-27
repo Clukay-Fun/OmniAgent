@@ -19,12 +19,31 @@ class _FakeService:
         self.cron_store = store
         self.should_fail = should_fail
         self.calls: list[dict[str, Any]] = []
+        self.notify_calls: list[dict[str, Any]] = []
 
     async def execute_cron_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         self.calls.append(dict(payload))
         if self.should_fail:
             raise RuntimeError("cron run failed")
         return [{"status": "ok"}]
+
+    async def notify_cron_execution_result(
+        self,
+        *,
+        job_id: str,
+        status: str,
+        payload: dict[str, Any],
+        error_detail: str = "",
+    ) -> dict[str, Any]:
+        self.notify_calls.append(
+            {
+                "job_id": job_id,
+                "status": status,
+                "payload": dict(payload),
+                "error_detail": error_detail,
+            }
+        )
+        return {"status": "sent"}
 
 
 def test_poll_and_execute_marks_job_waiting_with_next_run(tmp_path: Path) -> None:
@@ -134,3 +153,52 @@ def test_start_logs_warning_when_worker_count_is_multi(tmp_path: Path, caplog: A
         asyncio.run(_run())
 
     assert "multi-worker mode detected" in caplog.text
+
+
+def test_poll_and_execute_emits_completion_notification(tmp_path: Path) -> None:
+    store = CronStore(tmp_path / "cron_queue.jsonl")
+    store.schedule(
+        CronJob(
+            job_id="job-notify",
+            cron_expr="*/5 * * * *",
+            payload={
+                "action": {"type": "log.write", "message": "ok"},
+                "context": {"notify_target": {"chat_id": "oc_1"}},
+            },
+            status=ACTIVE,
+            next_run_at=60.0,
+        )
+    )
+    service = _FakeService(store)
+    scheduler = CronScheduler(service=service, enabled=True, interval_seconds=0.01)
+
+    asyncio.run(scheduler._poll_and_execute(now_ts=61.0))
+
+    assert len(service.notify_calls) == 1
+    assert service.notify_calls[0]["job_id"] == "job-notify"
+    assert service.notify_calls[0]["status"] == "success"
+
+
+def test_poll_and_execute_emits_failure_notification(tmp_path: Path) -> None:
+    store = CronStore(tmp_path / "cron_queue.jsonl")
+    store.schedule(
+        CronJob(
+            job_id="job-fail-notify",
+            cron_expr="*/5 * * * *",
+            payload={
+                "action": {"type": "log.write", "message": "ok"},
+                "context": {"notify_target": {"chat_id": "oc_1"}},
+            },
+            status=ACTIVE,
+            next_run_at=60.0,
+        )
+    )
+    service = _FakeService(store, should_fail=True)
+    scheduler = CronScheduler(service=service, enabled=True, interval_seconds=0.01)
+
+    asyncio.run(scheduler._poll_and_execute(now_ts=61.0))
+
+    assert len(service.notify_calls) == 1
+    assert service.notify_calls[0]["job_id"] == "job-fail-notify"
+    assert service.notify_calls[0]["status"] == "failed"
+    assert "cron run failed" in str(service.notify_calls[0]["error_detail"])

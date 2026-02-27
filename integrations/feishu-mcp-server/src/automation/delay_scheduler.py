@@ -80,6 +80,29 @@ class DelayScheduler:
             except TimeoutError:
                 continue
 
+    async def _emit_completion_notification(
+        self,
+        *,
+        task_id: str,
+        status: str,
+        payload: dict[str, Any],
+        error_detail: str = "",
+    ) -> None:
+        notify = getattr(self._service, "notify_delay_execution_result", None)
+        if not callable(notify):
+            return
+        try:
+            maybe_awaitable = notify(
+                task_id=str(task_id or ""),
+                status=str(status),
+                payload=payload if isinstance(payload, dict) else {},
+                error_detail=str(error_detail or ""),
+            )
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+        except Exception as exc:
+            LOGGER.warning("delay completion notification failed: %s", exc)
+
     async def _poll_and_execute(self, now_ts: float | None = None) -> None:
         now_value = float(now_ts if now_ts is not None else time.time())
         due_tasks = self._store.get_due_tasks(now_ts=now_value)
@@ -91,7 +114,18 @@ class DelayScheduler:
             try:
                 await self._service.execute_delayed_payload(task.payload)
                 self._store.mark_completed(task.task_id)
+                await self._emit_completion_notification(
+                    task_id=task.task_id,
+                    status="success",
+                    payload=task.payload,
+                )
             except Exception as exc:
                 self._store.mark_failed(task.task_id, str(exc))
+                await self._emit_completion_notification(
+                    task_id=task.task_id,
+                    status="failed",
+                    payload=task.payload,
+                    error_detail=str(exc),
+                )
 
         self._store.cleanup_old(now_ts=now_value, retention_seconds=self._cleanup_retention_seconds)

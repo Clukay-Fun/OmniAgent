@@ -263,6 +263,9 @@ automation:
   webhook_api_key: ${AUTOMATION_WEBHOOK_API_KEY:-}
   webhook_signature_secret: ${AUTOMATION_WEBHOOK_SIGNATURE_SECRET:-}
   webhook_timestamp_tolerance_seconds: ${AUTOMATION_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+  notify_webhook_url: ${AUTOMATION_NOTIFY_WEBHOOK_URL:-}
+  notify_api_key: ${AUTOMATION_NOTIFY_API_KEY:-}
+  notify_timeout_seconds: ${AUTOMATION_NOTIFY_TIMEOUT_SECONDS:-5}
   http_allowed_domains: []
   http_timeout_seconds: ${AUTOMATION_HTTP_TIMEOUT_SECONDS:-10}
   status_write_enabled: ${AUTOMATION_STATUS_WRITE_ENABLED:-false}

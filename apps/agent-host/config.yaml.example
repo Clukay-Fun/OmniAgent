@@ -288,6 +288,10 @@ webhook:
     max_segments: 5
     max_chars: 500
 
+automation_notify:
+  enabled: ${AUTOMATION_NOTIFY_ENABLED:-false}
+  api_key: ${AUTOMATION_NOTIFY_API_KEY:-}
+
 # ------------------------------------------------------------
 # 回复格式配置
 # ------------------------------------------------------------

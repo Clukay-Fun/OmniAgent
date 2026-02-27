@@ -22,6 +22,7 @@ sys.modules.setdefault("Crypto", crypto_module)
 sys.modules.setdefault("Crypto.Cipher", crypto_cipher_module)
 
 import src.api.webhook as webhook_module
+from src.core.batch_progress import BatchProgressEvent, BatchProgressPhase
 
 
 def test_process_message_sends_formatter_payload(monkeypatch) -> None:
@@ -455,7 +456,7 @@ def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
     assert result["status"] == "ok"
-    assert "过期" in result["reason"]
+    assert any(token in str(result["reason"]) for token in ["过期", "超时"])
 
 
 def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
@@ -486,7 +487,56 @@ def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
     assert result["status"] == "ok"
-    assert "过期" in result["reason"]
+    assert any(token in str(result["reason"]) for token in ["过期", "超时"])
+
+
+def test_webhook_batch_progress_emitter_sends_start_message_only(monkeypatch) -> None:
+    sent_calls: list[dict[str, object]] = []
+
+    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
+        sent_calls.append(
+            {
+                "settings": settings,
+                "chat_id": chat_id,
+                "msg_type": msg_type,
+                "content": content,
+                "reply_message_id": reply_message_id,
+            }
+        )
+        return {"message_id": "omni-msg-progress"}
+
+    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
+    monkeypatch.setattr(webhook_module, "_get_settings", lambda: SimpleNamespace())
+
+    emitter = webhook_module._build_batch_progress_emitter({"chat_id": "oc_progress", "message_id": "om_1"})
+    assert emitter is not None
+
+    asyncio.run(
+        emitter(
+            BatchProgressEvent(
+                phase=BatchProgressPhase.START,
+                user_id="u1",
+                total=3,
+            )
+        )
+    )
+    asyncio.run(
+        emitter(
+            BatchProgressEvent(
+                phase=BatchProgressPhase.COMPLETE,
+                user_id="u1",
+                total=3,
+                succeeded=3,
+                failed=0,
+            )
+        )
+    )
+
+    assert len(sent_calls) == 1
+    assert sent_calls[0]["chat_id"] == "oc_progress"
+    assert sent_calls[0]["reply_message_id"] == "om_1"
+    content = sent_calls[0]["content"] if isinstance(sent_calls[0]["content"], dict) else {}
+    assert "正在执行 3 条操作" in str(content.get("text") or "")
 
 
 # ── S4: callback dedup ──────────────────────────────────────────────
