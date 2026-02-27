@@ -71,7 +71,7 @@
       error_code: pending_action_expired
   expect:
     success: true
-    message_contains: "过期"
+    message_contains: "超时"
 
 - id: callback_dedup_short_circuit
   title: "重复 callback 被去重短路"

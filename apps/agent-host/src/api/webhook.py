@@ -37,6 +37,7 @@ from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_
 from src.api.event_router import FeishuEventRouter, get_enabled_types
 from src.api.inbound_normalizer import normalize_content
 from src.core.orchestrator import AgentOrchestrator
+from src.core.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
 from src.core.errors import (
     CallbackDuplicatedError,
     PendingActionExpiredError,
@@ -630,6 +631,57 @@ async def _emit_callback_result_message(callback_payload: dict[str, Any], result
             )
 
     await send_message(settings, chat_id, msg_type, content)
+
+
+def _build_batch_progress_emitter(callback_payload: dict[str, Any]) -> BatchProgressEmitter | None:
+    chat_id = str(callback_payload.get("chat_id") or "").strip()
+    if not chat_id:
+        return None
+
+    message_id = str(callback_payload.get("message_id") or "").strip() or None
+    settings = _get_settings()
+
+    async def _emit(event: BatchProgressEvent) -> None:
+        if event.phase != BatchProgressPhase.START:
+            return
+        total = max(0, int(event.total or 0))
+        if total < 3:
+            return
+        await send_message(
+            settings,
+            chat_id,
+            "text",
+            {"text": f"🔄 正在执行 {total} 条操作..."},
+            reply_message_id=message_id,
+        )
+
+    return _emit
+
+
+async def _call_card_action_callback(
+    *,
+    core: Any,
+    user_id: str,
+    callback_action: str,
+    callback_value: dict[str, Any] | None,
+    batch_progress_emitter: BatchProgressEmitter | None,
+) -> dict[str, Any]:
+    try:
+        return await core.handle_card_action_callback(
+            user_id=user_id,
+            callback_action=callback_action,
+            callback_value=callback_value,
+            batch_progress_emitter=batch_progress_emitter,
+        )
+    except TypeError as exc:
+        text = str(exc)
+        if "batch_progress_emitter" not in text:
+            raise
+        return await core.handle_card_action_callback(
+            user_id=user_id,
+            callback_action=callback_action,
+            callback_value=callback_value,
+        )
 # endregion
 
 
@@ -733,11 +785,14 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
             chat_type=str(callback_payload.get("chat_type") or ("p2p" if chat_id else "")),
             channel_type="feishu",
         )
+        batch_progress_emitter = _build_batch_progress_emitter(callback_payload)
         try:
-            result = await _get_agent_core().handle_card_action_callback(
+            result = await _call_card_action_callback(
+                core=_get_agent_core(),
                 user_id=user_id,
                 callback_action=cb_action,
                 callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
+                batch_progress_emitter=batch_progress_emitter,
             )
         except Exception:
             logger.exception(
