@@ -2622,6 +2622,33 @@ class AgentOrchestrator:
             "技能配置热重载完成",
             extra={"event_code": "orchestrator.config.reload_success"},
         )
+
+    def reload_skill_metadata(self) -> dict[str, Any]:
+        """手动重载 SKILL.md 元数据缓存。"""
+        report = self._router.reload_skill_metadata()
+        failed_items = [
+            {
+                "skill_name": item.skill_name,
+                "file_path": item.file_path,
+                "error": item.error,
+            }
+            for item in report.failed
+        ]
+        result = {
+            "loaded": list(report.loaded),
+            "failed": failed_items,
+            "loaded_count": len(report.loaded),
+            "failed_count": len(report.failed),
+        }
+        logger.info(
+            "技能元数据重载完成",
+            extra={
+                "event_code": "orchestrator.skill_metadata.reload",
+                "loaded_count": result["loaded_count"],
+                "failed_count": result["failed_count"],
+            },
+        )
+        return result
 # endregion
 
 

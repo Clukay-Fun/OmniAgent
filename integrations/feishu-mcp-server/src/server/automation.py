@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.automation import (
     DelayScheduler,
+    CronScheduler,
     AutomationPoller,
     AutomationService,
     AutomationValidationError,
@@ -31,6 +32,7 @@ _automation_service: AutomationService | None = None
 _automation_poller: AutomationPoller | None = None
 _schema_poller: SchemaPoller | None = None
 _delay_scheduler: DelayScheduler | None = None
+_cron_scheduler: CronScheduler | None = None
 
 
 def _resolve_scheduler_worker_count(settings: Settings) -> int:
@@ -101,6 +103,19 @@ def get_delay_scheduler(settings: Settings) -> DelayScheduler:
     return _delay_scheduler
 
 
+def get_cron_scheduler(settings: Settings) -> CronScheduler:
+    global _cron_scheduler
+    if _cron_scheduler is None:
+        _cron_scheduler = CronScheduler(
+            service=get_automation_service(settings),
+            enabled=bool(settings.automation.enabled and settings.automation.cron_scheduler_enabled),
+            interval_seconds=float(settings.automation.cron_poll_interval_seconds),
+            max_consecutive_failures=int(settings.automation.cron_max_consecutive_failures),
+            worker_count=_resolve_scheduler_worker_count(settings),
+        )
+    return _cron_scheduler
+
+
 async def start_automation_poller() -> None:
     settings = get_settings()
     if not settings.automation.enabled:
@@ -111,12 +126,15 @@ async def start_automation_poller() -> None:
     await schema_poller.start()
     delay_scheduler = get_delay_scheduler(settings)
     await delay_scheduler.start()
+    cron_scheduler = get_cron_scheduler(settings)
+    await cron_scheduler.start()
 
 
 async def stop_automation_poller() -> None:
     global _automation_poller
     global _schema_poller
     global _delay_scheduler
+    global _cron_scheduler
     if _automation_poller is None:
         pass
     else:
@@ -130,9 +148,15 @@ async def stop_automation_poller() -> None:
         _schema_poller = None
 
     if _delay_scheduler is None:
+        pass
+    else:
+        await _delay_scheduler.stop()
+        _delay_scheduler = None
+
+    if _cron_scheduler is None:
         return
-    await _delay_scheduler.stop()
-    _delay_scheduler = None
+    await _cron_scheduler.stop()
+    _cron_scheduler = None
 
 
 @router.post("/feishu/events")
@@ -310,6 +334,85 @@ async def automation_delay_cancel(task_id: str, request: Request) -> dict[str, A
 
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail=f"delay task not found: {task_id}")
+    return {
+        "status": "ok",
+        "result": result,
+    }
+
+
+@router.get("/automation/cron/jobs")
+async def automation_cron_jobs(
+    request: Request,
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    raw_body = await request.body()
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+    try:
+        service.verify_management_auth(headers, raw_body)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    try:
+        items = service.list_cron_jobs(status=status, limit=limit)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "status": "ok",
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.post("/automation/cron/{job_id}/cancel")
+async def automation_cron_cancel(job_id: str, request: Request) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    raw_body = await request.body()
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+
+    try:
+        service.verify_management_auth(headers, raw_body)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    try:
+        result = service.cancel_cron_job(job_id)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
+
+    return {
+        "status": "ok",
+        "result": result,
+    }
+
+
+@router.post("/automation/cron/{job_id}/resume")
+async def automation_cron_resume(job_id: str, request: Request) -> dict[str, Any]:
+    settings = get_settings()
+    service = get_automation_service(settings)
+    raw_body = await request.body()
+    headers = {str(key).lower(): str(value) for key, value in request.headers.items()}
+
+    try:
+        service.verify_management_auth(headers, raw_body)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    try:
+        result = service.resume_cron_job(job_id)
+    except AutomationValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
+
     return {
         "status": "ok",
         "result": result,

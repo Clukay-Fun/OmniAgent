@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from src.core.skills.base import BaseSkill
+from src.core.skills.metadata import SkillMetadataLoader
 from src.core.types import SkillContext, SkillResult
 from src.utils.metrics import record_chitchat_guard
 
@@ -261,13 +262,18 @@ class ChitchatSkill(BaseSkill):
     # region 配置加载 + 时间感知 + 随机选择
     # ============================================
     def _load_system_prompt(self) -> str:
-        """从 config/prompts.yaml 加载 System Prompt"""
+        """优先从 SKILL.md 加载，回退到 prompts.yaml。"""
         default_prompt = (
             "你是一个友好、智能的助理。请用简洁、自然的中文回答用户的问题。"
             "如果用户的问题涉及案件查询、开庭安排等，"
             "可以告诉他们使用相关功能，比如\"你可以问我'今天有什么庭'\"。"
         )
-        prompts_path = Path("config/prompts.yaml")
+
+        skill_prompt = self._load_system_prompt_from_skill_md()
+        if skill_prompt:
+            return skill_prompt
+
+        prompts_path = self._resolve_config_path("config/prompts.yaml")
         if not prompts_path.exists():
             return default_prompt
         try:
@@ -277,6 +283,26 @@ class ChitchatSkill(BaseSkill):
         except Exception as exc:
             logger.warning("Failed to load prompts.yaml for ChitchatSkill: %s", exc)
             return default_prompt
+
+    @staticmethod
+    def _resolve_config_path(relative_path: str) -> Path:
+        current_candidate = Path(relative_path)
+        if current_candidate.exists():
+            return current_candidate
+
+        app_root = Path(__file__).resolve().parents[3]
+        app_candidate = app_root / relative_path
+        if app_candidate.exists():
+            return app_candidate
+        return current_candidate
+
+    def _load_system_prompt_from_skill_md(self) -> str:
+        skills_dir = self._resolve_config_path("config/skills")
+        loader = SkillMetadataLoader(skills_dir=skills_dir)
+        metadata = loader.get_metadata("chitchat")
+        if not metadata:
+            return ""
+        return str(metadata.system_prompt or "").strip()
 
     def _load_responses(self) -> dict[str, list[str]]:
         """从 config/responses.yaml 加载回复模板，加载失败时用默认值"""
