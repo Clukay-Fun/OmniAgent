@@ -30,6 +30,7 @@
 - ✅ 多表联动能力上线（当前默认启用 `case_to_contract`）
 - ✅ 子表失败补录机制上线：主表成功保留，子表失败进入对话补录重试
 - ✅ 多表离线回归脚本：`python ../../tools/dev/verify_multitable_linker.py`
+- ✅ 卡片操作回调链路增强：支持批量操作进度跟踪与语义级 callback 去重
 
 ---
 
@@ -244,22 +245,22 @@ python run_server.py
 
 ### 5. 运行场景回归
 
-> 说明：`tests/` 目录默认按本地开发产物管理（仓库默认忽略），如需回归请在本地保留测试文件。
+说明：场景回归脚本位于仓库根目录 `tests/`（建议在仓库根目录执行；在本目录执行时需使用相对路径）。
 
 ```bash
-python tests/scenarios/runner.py
+python ../../tests/scenarios/runner.py
 ```
 
 包含 docs 投影校验（读取仓库根目录 `docs/scenarios/scenarios.yaml`）：
 
 ```bash
-python tests/scenarios/runner.py --docs-file ../../docs/scenarios/scenarios.yaml
+python ../../tests/scenarios/runner.py --docs-file ../../docs/scenarios/scenarios.yaml
 ```
 
 阈值门禁示例（适合 CI）：
 
 ```bash
-python tests/scenarios/runner.py \
+python ../../tests/scenarios/runner.py \
   --min-planner-pass 20 \
   --min-l0-pass 4 \
   --min-docs-pass 40 \
