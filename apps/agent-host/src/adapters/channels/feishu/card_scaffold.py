@@ -1,12 +1,24 @@
-from __future__ import annotations
-
-from typing import Any
-
+"""
+描述: 提供构建消息卡片和文本消息的工具函数
+主要功能:
+    - 构建包含元素的卡片消息
+    - 构建纯文本消息
+"""
 
 def build_card_payload(
     elements: list[dict[str, Any]],
     wrapper: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """
+    构建一个包含元素的卡片消息
+
+    功能:
+        - 过滤并验证输入的元素列表
+        - 根据提供的包装器数据构建卡片结构
+        - 设置默认配置并合并用户提供的配置
+        - 添加可选的头部、卡片链接、国际化元素和头部
+        - 处理并合并用户提供的主体数据
+    """
     safe_elements = [item for item in elements if isinstance(item, dict)]
     if not safe_elements:
         return None
@@ -41,6 +53,12 @@ def build_card_payload(
 
 
 def build_text_payload(text: str) -> dict[str, Any]:
+    """
+    构建一个纯文本消息
+
+    功能:
+        - 将输入的文本格式化为消息内容
+    """
     return {
         "msg_type": "text",
         "content": {"text": str(text or "")},

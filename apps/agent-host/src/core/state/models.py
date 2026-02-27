@@ -1,15 +1,26 @@
 """
-会话状态模型定义。
+描述: 定义会话状态模型。
+主要功能:
+    - 定义各种会话状态的数据类
+    - 提供状态检查和转换的方法
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from enum import Enum
 
 
 @dataclass
 class PendingDeleteState:
+    """
+    待删除记录的状态。
+
+    功能:
+        - 存储待删除记录的ID、摘要、表ID、创建时间和过期时间
+        - 提供检查记录是否过期的方法
+    """
     record_id: str
     record_summary: str
     table_id: str | None
@@ -22,6 +33,13 @@ class PendingDeleteState:
 
 @dataclass
 class PaginationState:
+    """
+    分页状态。
+
+    功能:
+        - 存储分页工具、参数、页码、总记录数、创建时间和过期时间
+        - 提供检查分页状态是否过期的方法
+    """
     tool: str
     params: dict[str, Any]
     page_token: str | None
@@ -36,6 +54,13 @@ class PaginationState:
 
 @dataclass
 class LastResultState:
+    """
+    最后一次查询结果的状态。
+
+    功能:
+        - 存储查询结果记录、记录ID、查询摘要、创建时间和过期时间
+        - 提供检查结果是否过期的方法
+    """
     records: list[dict[str, Any]]
     record_ids: list[str]
     query_summary: str
@@ -48,6 +73,13 @@ class LastResultState:
 
 @dataclass
 class ActiveRecordState:
+    """
+    活跃记录的状态。
+
+    功能:
+        - 存储记录ID、摘要、表ID、表名、记录内容、来源、创建时间和过期时间
+        - 提供检查记录是否过期的方法
+    """
     record_id: str
     record_summary: str
     table_id: str | None
@@ -63,15 +95,21 @@ class ActiveRecordState:
 
 @dataclass
 class MessageChunkState:
+    """
+    消息分块的状态。
+
+    功能:
+        - 存储消息分段、开始时间和最后更新时间
+    """
     segments: list[str] = field(default_factory=list)
     started_at: float = 0.0
     last_at: float = 0.0
 
 
-from enum import Enum
-
-
 class PendingActionStatus(str, Enum):
+    """
+    待处理操作的状态枚举。
+    """
     COLLECTING = "collecting"
     CONFIRMABLE = "confirmable"
     EXECUTED = "executed"
@@ -79,6 +117,9 @@ class PendingActionStatus(str, Enum):
 
 
 class OperationExecutionStatus(str, Enum):
+    """
+    操作执行状态枚举。
+    """
     PENDING = "pending"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -87,8 +128,13 @@ class OperationExecutionStatus(str, Enum):
 
 @dataclass
 class OperationEntry:
-    """Per-operation execution state for batch pending actions."""
+    """
+    每个操作的执行状态，用于批量待处理操作。
 
+    功能:
+        - 存储操作索引、负载、状态、错误代码、错误详情和执行时间
+        - 提供初始化后处理的方法
+    """
     index: int
     payload: dict[str, Any] = field(default_factory=dict)
     status: OperationExecutionStatus = OperationExecutionStatus.PENDING
@@ -151,6 +197,16 @@ _VALID_TRANSITIONS: dict[PendingActionStatus, set[PendingActionStatus]] = {
 
 @dataclass
 class PendingActionState:
+    """
+    待处理操作的状态。
+
+    功能:
+        - 存储操作、负载、操作条目列表、状态、创建时间和过期时间
+        - 提供初始化后处理的方法
+        - 提供迭代操作负载的方法
+        - 提供检查状态是否过期的方法
+        - 提供状态转换的方法
+    """
     action: str
     payload: dict[str, Any] = field(default_factory=dict)
     operations: list[OperationEntry] = field(default_factory=list)
@@ -228,7 +284,14 @@ class PendingActionState:
         return now >= self.expires_at
 
     def transition_to(self, target: PendingActionStatus, now: float | None = None) -> None:
-        """Transition status. Raises ValueError on invalid transition."""
+        """
+        转换状态。在无效转换时抛出 ValueError。
+
+        功能:
+            - 检查当前状态是否过期并进行相应的状态转换
+            - 检查目标状态是否为有效转换
+            - 更新状态
+        """
         import time as _time
         _now = now if now is not None else _time.time()
         if self.is_expired(_now) and self.status in {
@@ -245,6 +308,16 @@ class PendingActionState:
 
 @dataclass
 class ConversationState:
+    """
+    对话状态。
+
+    功能:
+        - 存储用户ID、创建时间、更新时间、过期时间、待删除状态、分页状态、最后一个结果状态、最后一个结果ID列表、活跃表ID、活跃表名、活跃记录、待处理操作状态、消息分块状态和额外信息
+        - 提供初始化后处理的方法
+        - 提供会话键的属性
+        - 提供检查状态是否过期的方法
+        - 提供从字典创建对话状态的方法
+    """
     user_id: str
     created_at: float
     updated_at: float
@@ -286,6 +359,13 @@ class ConversationState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConversationState:
+        """
+        从字典创建对话状态。
+
+        功能:
+            - 从字典中提取数据并创建对话状态实例
+            - 处理待处理操作和消息分块的状态
+        """
         payload = dict(data)
         chunk_data = payload.pop("message_chunk", None)
         pending_action_data = payload.get("pending_action")

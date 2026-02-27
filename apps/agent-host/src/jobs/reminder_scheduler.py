@@ -22,8 +22,18 @@ from src.config import Settings
 
 logger = logging.getLogger(__name__)
 
-
+# region ReminderScheduler 类定义
 class ReminderScheduler:
+    """
+    ReminderScheduler 类负责定时扫描到期提醒并发送飞书消息。
+
+    功能:
+        - 初始化调度器配置
+        - 启动和停止调度器
+        - 扫描到期提醒并推送
+        - 单个提醒的推送逻辑
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -35,6 +45,19 @@ class ReminderScheduler:
         batch_limit: int = 50,
         dispatcher: ReminderDispatcher | None = None,
     ) -> None:
+        """
+        初始化 ReminderScheduler 实例。
+
+        参数:
+            settings (Settings): 应用配置
+            db (PostgresClient): 数据库客户端
+            interval_seconds (int): 扫描间隔秒数
+            instance_id (str): 实例ID
+            lock_key (str): 锁键
+            lock_timeout_seconds (int): 锁超时秒数
+            batch_limit (int): 批量处理限制
+            dispatcher (ReminderDispatcher): 提醒分发器
+        """
         self._settings = settings
         self._db = db
         self._interval = interval_seconds
@@ -46,6 +69,13 @@ class ReminderScheduler:
         self._scheduler = AsyncIOScheduler()
 
     def start(self) -> None:
+        """
+        启动 ReminderScheduler 调度器。
+
+        功能:
+            - 添加定时任务
+            - 启动调度器
+        """
         self._scheduler.add_job(
             self._scan_and_push,
             "interval",
@@ -58,11 +88,26 @@ class ReminderScheduler:
         logger.info("Reminder scheduler started")
 
     async def stop(self) -> None:
+        """
+        停止 ReminderScheduler 调度器。
+
+        功能:
+            - 关闭调度器
+            - 关闭数据库连接
+        """
         self._scheduler.shutdown(wait=False)
         await self._db.close()
         logger.info("Reminder scheduler stopped")
 
     async def _scan_and_push(self) -> None:
+        """
+        扫描到期提醒并推送。
+
+        功能:
+            - 获取数据库连接锁
+            - 列出到期提醒
+            - 推送每个提醒
+        """
         async with self._db.advisory_lock(self._lock_key) as conn:
             if conn is None:
                 logger.debug("Reminder scan skipped: lock held")
@@ -81,6 +126,18 @@ class ReminderScheduler:
                 await self._push_single(reminder)
 
     async def _push_single(self, reminder: dict[str, Any]) -> None:
+        """
+        推送单个提醒。
+
+        参数:
+            reminder (dict[str, Any]): 提醒信息字典
+
+        功能:
+            - 提取提醒信息
+            - 构建消息内容
+            - 发送提醒
+            - 更新提醒状态
+        """
         reminder_id = reminder.get("id")
         user_id = reminder.get("user_id")
         chat_id = reminder.get("chat_id")
@@ -133,3 +190,4 @@ class ReminderScheduler:
             logger.error("Reminder push failed: %s", exc)
         finally:
             record_reminder_push(status)
+# endregion

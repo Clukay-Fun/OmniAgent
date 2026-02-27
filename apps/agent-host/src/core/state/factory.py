@@ -1,4 +1,9 @@
-"""StateStore 选择工厂。"""
+"""
+描述: StateStore 选择工厂。
+主要功能:
+    - 根据配置创建状态存储实例
+    - 支持 memory 和 redis 两种后端
+"""
 
 from __future__ import annotations
 
@@ -12,9 +17,16 @@ from src.utils.metrics import record_state_store_backend
 
 logger = logging.getLogger(__name__)
 
-
+# region 工厂函数
 def create_state_store(settings: Any) -> StateStore:
-    """根据配置创建状态存储，默认 memory。"""
+    """
+    根据配置创建状态存储，默认使用 memory 后端。
+
+    功能:
+        - 从配置中获取状态存储后端类型
+        - 根据后端类型创建相应的 StateStore 实例
+        - 如果配置的后端不可用，则回退到 memory 后端
+    """
     configured_backend = str(getattr(getattr(settings, "state_store", None), "backend", "memory") or "memory")
     backend = configured_backend.strip().lower() or "memory"
     if backend == "memory":
@@ -54,3 +66,4 @@ def create_state_store(settings: Any) -> StateStore:
         extra={"event_code": "state_store.factory.unknown_backend", "backend": backend},
     )
     return MemoryStateStore()
+# endregion

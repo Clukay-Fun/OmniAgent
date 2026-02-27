@@ -1,3 +1,11 @@
+"""
+描述: 该模块负责监控和管理成本，包括记录成本、触发警报和控制调用。
+主要功能:
+    - 记录不同技能的成本
+    - 根据设定的阈值触发成本警报
+    - 控制调用以防止超出预算
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -27,6 +35,17 @@ class CostMonitorConfig:
 
 
 class CostMonitor:
+    """
+    成本监控类，用于记录和管理成本，并根据设定的阈值触发警报。
+
+    功能:
+        - 初始化监控参数
+        - 记录成本
+        - 检查并触发成本警报
+        - 获取指定窗口内的成本最高的技能
+        - 检查是否允许新的调用
+    """
+
     def __init__(self, hourly_threshold: float, daily_threshold: float, circuit_breaker_enabled: bool) -> None:
         self._hourly_threshold = max(0.0, float(hourly_threshold))
         self._daily_threshold = max(0.0, float(daily_threshold))
@@ -36,6 +55,15 @@ class CostMonitor:
         self._alerted_day_keys: set[str] = set()
 
     def record_cost(self, skill: str, cost: float, ts: datetime | str | None = None) -> list[str]:
+        """
+        记录成本并检查是否触发警报。
+
+        功能:
+            - 标准化时间戳
+            - 过滤掉无效的成本记录
+            - 添加成本记录到队列
+            - 检查并触发小时和日成本警报
+        """
         value = max(0.0, float(cost or 0.0))
         entry_ts = self._normalize_ts(ts)
         if value <= 0:
@@ -65,6 +93,13 @@ class CostMonitor:
         return triggered
 
     def top_skills(self, window: str, now: datetime | None = None) -> list[tuple[str, float]]:
+        """
+        获取指定窗口内成本最高的三个技能。
+
+        功能:
+            - 计算指定窗口内的总成本
+            - 排序并返回成本最高的三个技能
+        """
         current = now or datetime.now()
         values: dict[str, float] = {}
         for entry in self._window_entries(window=window, now=current):
@@ -73,6 +108,13 @@ class CostMonitor:
         return [(name, round(cost, 6)) for name, cost in ranked[:3]]
 
     def check_call_allowed(self, operation: str, now: datetime | None = None) -> tuple[bool, str]:
+        """
+        检查是否允许新的调用。
+
+        功能:
+            - 检查成本是否超过每日阈值
+            - 根据成本熔断器设置决定是否允许新的调用
+        """
         current = now or datetime.now()
         self._prune(current)
         if not self._circuit_breaker_enabled:
@@ -95,9 +137,21 @@ class CostMonitor:
         return False, guidance
 
     def _window_total(self, window: str, now: datetime) -> float:
+        """
+        计算指定窗口内的总成本。
+
+        功能:
+            - 汇总指定窗口内的所有成本
+        """
         return round(sum(item.cost for item in self._window_entries(window=window, now=now)), 6)
 
     def _window_entries(self, window: str, now: datetime) -> list[_CostEntry]:
+        """
+        获取指定窗口内的成本记录。
+
+        功能:
+            - 根据窗口类型筛选成本记录
+        """
         if window == "hourly":
             threshold = now - timedelta(hours=1)
             return [item for item in self._entries if item.ts >= threshold and item.ts <= now]
@@ -107,6 +161,13 @@ class CostMonitor:
         return []
 
     def _prune(self, now: datetime) -> None:
+        """
+        清理过期的成本记录。
+
+        功能:
+            - 移除超过两天的成本记录
+            - 更新已触发警报的小时和日键
+        """
         threshold = now - timedelta(days=2)
         while self._entries and self._entries[0].ts < threshold:
             self._entries.popleft()
@@ -116,6 +177,12 @@ class CostMonitor:
         self._alerted_hour_keys = {key for key in self._alerted_hour_keys if key.startswith(current_hour_prefix)}
 
     def _log_alert(self, window: str, current_total: float, threshold: float, now: datetime) -> None:
+        """
+        记录成本警报日志。
+
+        功能:
+            - 记录警报信息到日志
+        """
         logger.warning(
             "成本阈值触发告警",
             extra={
@@ -128,6 +195,12 @@ class CostMonitor:
         )
 
     def _normalize_ts(self, ts: datetime | str | None) -> datetime:
+        """
+        标准化时间戳。
+
+        功能:
+            - 将输入的时间戳转换为 datetime 对象
+        """
         if isinstance(ts, datetime):
             return ts
         if isinstance(ts, str) and ts.strip():
@@ -142,6 +215,12 @@ _GLOBAL_COST_MONITOR: CostMonitor | None = None
 
 
 def configure_cost_monitor(config: CostMonitorConfig) -> CostMonitor:
+    """
+    配置全局成本监控器。
+
+    功能:
+        - 初始化全局成本监控器实例
+    """
     global _GLOBAL_COST_MONITOR
     _GLOBAL_COST_MONITOR = CostMonitor(
         hourly_threshold=float(config.hourly_threshold),
@@ -152,4 +231,10 @@ def configure_cost_monitor(config: CostMonitorConfig) -> CostMonitor:
 
 
 def get_cost_monitor() -> CostMonitor | None:
+    """
+    获取全局成本监控器实例。
+
+    功能:
+        - 返回全局成本监控器实例
+    """
     return _GLOBAL_COST_MONITOR

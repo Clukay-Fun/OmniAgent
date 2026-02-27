@@ -33,6 +33,14 @@ from src.utils.feishu_api import send_message
 
 
 def _read_bool_env(key: str, default: bool) -> bool:
+    """
+    从环境变量中读取布尔值
+
+    功能:
+        - 获取环境变量的值
+        - 如果值为 None，返回默认值
+        - 否则，检查值是否在 {"1", "true", "yes", "on"} 中，返回相应的布尔值
+    """
     value = os.getenv(key)
     if value is None:
         return default
@@ -40,6 +48,14 @@ def _read_bool_env(key: str, default: bool) -> bool:
 
 
 def _resolve_run_log_path() -> Path:
+    """
+    解析运行日志文件路径
+
+    功能:
+        - 从环境变量中获取配置的路径
+        - 如果路径为空，使用默认路径
+        - 返回绝对路径或相对于当前工作目录的路径
+    """
     configured = str(os.getenv("AUTOMATION_RUN_LOG_FILE", "")).strip()
     if configured:
         path = Path(configured)
@@ -50,6 +66,14 @@ def _resolve_run_log_path() -> Path:
 
 
 def _resolve_rules_path() -> Path:
+    """
+    解析自动化规则文件路径
+
+    功能:
+        - 从环境变量中获取配置的路径
+        - 如果路径为空，使用默认路径
+        - 返回绝对路径或相对于当前工作目录的路径
+    """
     configured = str(os.getenv("AUTOMATION_RULES_FILE", "")).strip()
     if configured:
         path = Path(configured)
@@ -60,6 +84,14 @@ def _resolve_rules_path() -> Path:
 
 
 def _resolve_dead_letter_path() -> Path:
+    """
+    解析死信队列文件路径
+
+    功能:
+        - 从环境变量中获取配置的路径
+        - 如果路径为空，使用默认路径
+        - 返回绝对路径或相对于当前工作目录的路径
+    """
     configured = str(os.getenv("AUTOMATION_DEAD_LETTER_FILE", "")).strip()
     if configured:
         path = Path(configured)
@@ -71,10 +103,23 @@ def _resolve_dead_letter_path() -> Path:
 
 @dataclass
 class AutomationStartupGate:
+    """
+    自动化启动门
+
+    功能:
+        - 管理自动化启动模式和基线准备状态
+        - 提供方法判断是否应阻塞自动化消费
+    """
     startup_mode: str = "auto"
     baseline_ready: bool = False
 
     def should_block(self) -> bool:
+        """
+        判断是否应阻塞自动化消费
+
+        功能:
+            - 根据启动模式和基线准备状态决定是否阻塞
+        """
         normalized_mode = self.startup_mode.strip().lower()
         if normalized_mode != "auto":
             return False
@@ -82,25 +127,64 @@ class AutomationStartupGate:
 
 
 class InMemoryAutomationQueue:
+    """
+    内存自动化队列
+
+    功能:
+        - 提供入队、出队、查看队列大小等操作
+    """
     def __init__(self) -> None:
         self._items: deque[dict[str, Any]] = deque()
 
     def enqueue(self, payload: dict[str, Any]) -> None:
+        """
+        将 payload 入队
+
+        功能:
+            - 将 payload 添加到队列末尾
+        """
         self._items.append(dict(payload))
 
     def pop_left(self) -> dict[str, Any] | None:
+        """
+        从队列头部弹出 payload
+
+        功能:
+            - 如果队列为空，返回 None
+            - 否则，返回并移除队列头部的 payload
+        """
         if not self._items:
             return None
         return self._items.popleft()
 
     def push_front(self, payload: dict[str, Any]) -> None:
+        """
+        将 payload 插入队列头部
+
+        功能:
+            - 将 payload 添加到队列头部
+        """
         self._items.appendleft(dict(payload))
 
     def size(self) -> int:
+        """
+        获取队列大小
+
+        功能:
+            - 返回队列中 payload 的数量
+        """
         return len(self._items)
 
 
 class AutomationConsumer:
+    """
+    自动化消费者
+
+    功能:
+        - 消费队列中的 payload
+        - 根据规则执行自动化操作
+        - 记录消费日志和指标
+    """
     def __init__(
         self,
         run_log_path: Path,
@@ -156,6 +240,14 @@ class AutomationConsumer:
         self._automation_enabled = _read_bool_env("AUTOMATION_ENABLED", True) if automation_enabled is None else automation_enabled
 
     def consume_available(self, queue: InMemoryAutomationQueue, max_items: int = 100) -> int:
+        """
+        消费队列中的可用 payload
+
+        功能:
+            - 从队列中弹出最多 max_items 个 payload
+            - 消费每个 payload
+            - 如果遇到启动保护阻塞，将 payload 重新入队并停止消费
+        """
         processed = 0
         while processed < max_items:
             payload = queue.pop_left()
@@ -170,6 +262,14 @@ class AutomationConsumer:
         return processed
 
     def _consume_single(self, payload: dict[str, Any]) -> str:
+        """
+        消费单个 payload
+
+        功能:
+            - 检查是否应阻塞消费
+            - 记录消费日志
+            - 执行自动化操作
+        """
         event_type = str(payload.get("event_type") or "unknown")
         event_id = str(payload.get("event_id") or "")
         if self._startup_gate.should_block():
@@ -236,6 +336,12 @@ class AutomationConsumer:
             return "failed"
 
     def _run_automation(self, payload: dict[str, Any]) -> None:
+        """
+        执行自动化操作
+
+        功能:
+            - 根据规则匹配和执行自动化操作
+        """
         if not self._automation_enabled:
             self._logger.info(
                 "automation rules skipped by switch",
@@ -271,12 +377,26 @@ class AutomationConsumer:
 
 
 class QueueAutomationEnqueuer:
+    """
+    队列自动化入队器
+
+    功能:
+        - 将事件 payload 入队
+        - 消费队列中的 payload
+    """
     def __init__(self, queue: InMemoryAutomationQueue, consumer: AutomationConsumer) -> None:
         self._queue = queue
         self._consumer = consumer
         self._logger = logging.getLogger(__name__)
 
     def enqueue_record_changed(self, event_payload: dict[str, Any]) -> bool:
+        """
+        将记录变更事件入队
+
+        功能:
+            - 将事件 payload 入队
+            - 消费队列中的 payload
+        """
         self._queue.enqueue(event_payload)
         self._logger.info(
             "automation payload enqueued",
@@ -292,6 +412,13 @@ class QueueAutomationEnqueuer:
 
 
 def create_default_automation_enqueuer() -> QueueAutomationEnqueuer:
+    """
+    创建默认的自动化入队器
+
+    功能:
+        - 初始化启动门、队列和消费者
+        - 返回 QueueAutomationEnqueuer 实例
+    """
     startup_mode = str(os.getenv("AUTOMATION_STARTUP_MODE", "auto") or "auto")
     baseline_ready = _read_bool_env("AUTOMATION_BASELINE_READY", False)
     startup_gate = AutomationStartupGate(startup_mode=startup_mode, baseline_ready=baseline_ready)

@@ -33,9 +33,7 @@ from src.jobs.reminder_scheduler import ReminderScheduler
 logger = logging.getLogger(__name__)
 
 
-# ============================================
 # region 初始化
-# ============================================
 load_dotenv()
 settings = get_settings()
 setup_logging(settings.logging)

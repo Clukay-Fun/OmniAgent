@@ -1,9 +1,8 @@
 """
-会话状态管理器。
-
-职责：
-- 管理短生命周期对话状态（删除确认、分页、最近结果）
-- 提供统一读写接口，便于后续替换为 Redis 实现
+描述: 会话状态管理器，负责管理短生命周期对话状态（删除确认、分页、最近结果）并提供统一读写接口。
+主要功能:
+    - 管理会话状态的创建、更新和删除
+    - 提供对会话中各种状态（如删除确认、分页、最近结果等）的访问和操作
 """
 
 from __future__ import annotations
@@ -26,12 +25,23 @@ from src.core.state.store import StateStore
 
 
 class ConversationStateManager:
-    """会话状态管理器（基于 StateStore）。"""
+    """会话状态管理器（基于 StateStore）。
+
+    功能:
+        - 提供对会话状态的统一读写接口
+        - 管理会话中各种状态（如删除确认、分页、最近结果等）的创建、更新和删除
+    """
 
     CHUNK_STALE_SECONDS = 9.0
 
     @staticmethod
     def _resolve_pending_action_status(action: str, payload: dict[str, Any]) -> PendingActionStatus:
+        """解析并确定 pending_action 的状态。
+
+        功能:
+            - 根据 action 和 payload 解析出具体的 PendingActionStatus
+            - 如果无法解析，则根据 action 类型和 payload 内容推断状态
+        """
         explicit = str(payload.get("status") or "").strip().lower()
         if explicit:
             try:
@@ -72,6 +82,11 @@ class ConversationStateManager:
         active_record_ttl_seconds: int = 1800,
         pending_action_ttl_seconds: int = 300,
     ) -> None:
+        """初始化 ConversationStateManager。
+
+        功能:
+            - 初始化 StateStore 和各种状态的过期时间
+        """
         self._store = store
         self._default_ttl = default_ttl_seconds
         self._pending_delete_ttl = pending_delete_ttl_seconds
@@ -81,12 +96,29 @@ class ConversationStateManager:
         self._pending_action_ttl = pending_action_ttl_seconds
 
     def active_count(self) -> int:
+        """获取当前活跃的会话数量。
+
+        功能:
+            - 返回当前活跃的会话数量
+        """
         return self._store.active_count()
 
     def cleanup_expired(self) -> None:
+        """清理过期的会话状态。
+
+        功能:
+            - 清理所有过期的会话状态
+        """
         self._store.cleanup_expired()
 
     def get_state(self, user_id: str) -> ConversationState:
+        """获取指定用户的会话状态。
+
+        功能:
+            - 获取指定用户的会话状态，如果状态不存在或已过期，则创建新的状态
+            - 清理子状态中过期的状态
+            - 更新会话状态的过期时间
+        """
         now = time.time()
         state = self._store.get(user_id)
         if state is None or state.is_expired(now):
@@ -138,14 +170,27 @@ class ConversationStateManager:
         return state
 
     def get_state_by_session_key(self, session_key: str) -> ConversationState:
-        """session_key 语义入口（兼容旧 get_state）。"""
+        """session_key 语义入口（兼容旧 get_state）。
+
+        功能:
+            - 通过 session_key 获取会话状态
+        """
         return self.get_state(session_key)
 
     def clear_user(self, user_id: str) -> None:
+        """清除指定用户的会话状态。
+
+        功能:
+            - 删除指定用户的会话状态
+        """
         self._store.delete(user_id)
 
     def clear_session(self, session_key: str) -> None:
-        """session_key 语义入口（兼容旧 clear_user）。"""
+        """session_key 语义入口（兼容旧 clear_user）。
+
+        功能:
+            - 通过 session_key 清除会话状态
+        """
         self.clear_user(session_key)
 
     def set_pending_delete(
@@ -155,6 +200,11 @@ class ConversationStateManager:
         record_summary: str,
         table_id: str | None = None,
     ) -> None:
+        """设置待删除记录的状态。
+
+        功能:
+            - 设置指定用户的待删除记录状态
+        """
         now = time.time()
         state = self.get_state(user_id)
         state.pending_delete = PendingDeleteState(
@@ -168,16 +218,31 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def get_pending_delete(self, user_id: str) -> PendingDeleteState | None:
+        """获取待删除记录的状态。
+
+        功能:
+            - 获取指定用户的待删除记录状态
+        """
         state = self.get_state(user_id)
         return state.pending_delete
 
     def clear_pending_delete(self, user_id: str) -> None:
+        """清除待删除记录的状态。
+
+        功能:
+            - 清除指定用户的待删除记录状态
+        """
         state = self.get_state(user_id)
         state.pending_delete = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
 
     def set_last_result(self, user_id: str, records: list[dict[str, Any]], query_summary: str) -> None:
+        """设置最近查询结果的状态。
+
+        功能:
+            - 设置指定用户的最近查询结果状态
+        """
         now = time.time()
         state = self.get_state(user_id)
         record_ids: list[str] = []
@@ -197,6 +262,11 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def get_last_result(self, user_id: str) -> LastResultState | None:
+        """获取最近查询结果的状态。
+
+        功能:
+            - 获取指定用户的最近查询结果状态
+        """
         state = self.get_state(user_id)
         return state.last_result
 
@@ -209,6 +279,11 @@ class ConversationStateManager:
         current_page: int,
         total: int | None,
     ) -> None:
+        """设置分页状态。
+
+        功能:
+            - 设置指定用户的分页状态
+        """
         now = time.time()
         state = self.get_state(user_id)
         state.pagination = PaginationState(
@@ -224,16 +299,31 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def get_pagination(self, user_id: str) -> PaginationState | None:
+        """获取分页状态。
+
+        功能:
+            - 获取指定用户的分页状态
+        """
         state = self.get_state(user_id)
         return state.pagination
 
     def clear_pagination(self, user_id: str) -> None:
+        """清除分页状态。
+
+        功能:
+            - 清除指定用户的分页状态
+        """
         state = self.get_state(user_id)
         state.pagination = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
 
     def get_last_result_payload(self, user_id: str) -> dict[str, Any] | None:
+        """获取最近查询结果的负载数据。
+
+        功能:
+            - 获取指定用户的最近查询结果负载数据
+        """
         last_result = self.get_last_result(user_id)
         if not last_result:
             return None
@@ -244,12 +334,22 @@ class ConversationStateManager:
         }
 
     def set_last_skill(self, user_id: str, skill_name: str) -> None:
+        """设置最近使用的技能名称。
+
+        功能:
+            - 设置指定用户的最近使用的技能名称
+        """
         state = self.get_state(user_id)
         state.extras["last_skill"] = skill_name
         state.updated_at = time.time()
         self._store.set(user_id, state)
 
     def get_last_skill(self, user_id: str) -> str | None:
+        """获取最近使用的技能名称。
+
+        功能:
+            - 获取指定用户的最近使用的技能名称
+        """
         state = self.get_state(user_id)
         value = state.extras.get("last_skill")
         if isinstance(value, str) and value.strip():
@@ -257,6 +357,11 @@ class ConversationStateManager:
         return None
 
     def set_reply_preferences(self, user_id: str, preferences: dict[str, str]) -> None:
+        """设置回复偏好设置。
+
+        功能:
+            - 设置指定用户的回复偏好设置
+        """
         state = self.get_state(user_id)
         current = state.extras.get("reply_preferences")
         merged = dict(current) if isinstance(current, dict) else {}
@@ -270,6 +375,11 @@ class ConversationStateManager:
             self._store.set(user_id, state)
 
     def get_reply_preferences(self, user_id: str) -> dict[str, str]:
+        """获取回复偏好设置。
+
+        功能:
+            - 获取指定用户的回复偏好设置
+        """
         state = self.get_state(user_id)
         raw = state.extras.get("reply_preferences")
         if not isinstance(raw, dict):
@@ -282,6 +392,11 @@ class ConversationStateManager:
         return result
 
     def set_active_table(self, user_id: str, table_id: str | None, table_name: str | None = None) -> None:
+        """设置当前激活的表格。
+
+        功能:
+            - 设置指定用户的当前激活的表格
+        """
         state = self.get_state(user_id)
         state.active_table_id = str(table_id).strip() if table_id else None
         state.active_table_name = str(table_name).strip() if table_name else None
@@ -289,6 +404,11 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def get_active_table(self, user_id: str) -> dict[str, str | None]:
+        """获取当前激活的表格。
+
+        功能:
+            - 获取指定用户的当前激活的表格
+        """
         state = self.get_state(user_id)
         return {
             "table_id": state.active_table_id,
@@ -296,6 +416,11 @@ class ConversationStateManager:
         }
 
     def clear_active_table(self, user_id: str) -> None:
+        """清除当前激活的表格。
+
+        功能:
+            - 清除指定用户的当前激活的表格
+        """
         state = self.get_state(user_id)
         state.active_table_id = None
         state.active_table_name = None
@@ -310,6 +435,11 @@ class ConversationStateManager:
         table_name: str | None = None,
         source: str = "unknown",
     ) -> None:
+        """设置当前激活的记录。
+
+        功能:
+            - 设置指定用户的当前激活的记录
+        """
         now = time.time()
         state = self.get_state(user_id)
         record_id = str(record.get("record_id") or "").strip()
@@ -344,12 +474,22 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def clear_active_record(self, user_id: str) -> None:
+        """清除当前激活的记录。
+
+        功能:
+            - 清除指定用户的当前激活的记录
+        """
         state = self.get_state(user_id)
         state.active_record = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
 
     def get_active_record(self, user_id: str) -> ActiveRecordState | None:
+        """获取当前激活的记录。
+
+        功能:
+            - 获取指定用户的当前激活的记录
+        """
         state = self.get_state(user_id)
         return state.active_record
 
@@ -359,6 +499,11 @@ class ConversationStateManager:
         now: float | None = None,
         enforce_stale: bool = True,
     ) -> MessageChunkState | None:
+        """获取消息块。
+
+        功能:
+            - 获取指定用户的消息块，如果 enforce_stale 为 True，则检查消息块是否过期
+        """
         state = self.get_state(user_id)
         chunk = state.message_chunk
         if not enforce_stale:
@@ -372,6 +517,11 @@ class ConversationStateManager:
         return chunk
 
     def set_message_chunk(self, user_id: str, chunk: MessageChunkState | None) -> None:
+        """设置消息块。
+
+        功能:
+            - 设置指定用户的消息块
+        """
         state = self.get_state(user_id)
         state.message_chunk = chunk
         state.updated_at = time.time()
@@ -385,6 +535,11 @@ class ConversationStateManager:
         operations: list[dict[str, Any] | OperationEntry] | None = None,
         ttl_seconds: int | None = None,
     ) -> None:
+        """设置待处理的操作。
+
+        功能:
+            - 设置指定用户的待处理操作
+        """
         now = time.time()
         state = self.get_state(user_id)
         normalized_operations: list[OperationEntry] = []
@@ -406,7 +561,11 @@ class ConversationStateManager:
         self._store.set(user_id, state)
 
     def update_pending_action_operations(self, user_id: str, pending: PendingActionState) -> PendingActionState | None:
-        """Persist per-operation status updates for the current pending action."""
+        """更新待处理操作的状态。
+
+        功能:
+            - 更新指定用户的待处理操作的状态
+        """
         state = self.get_state(user_id)
         current = state.pending_action
         if current is None:
@@ -423,17 +582,31 @@ class ConversationStateManager:
         return current
 
     def get_pending_action(self, user_id: str) -> PendingActionState | None:
+        """获取待处理的操作。
+
+        功能:
+            - 获取指定用户的待处理操作
+        """
         state = self.get_state(user_id)
         return state.pending_action
 
     def clear_pending_action(self, user_id: str) -> None:
+        """清除待处理的操作。
+
+        功能:
+            - 清除指定用户的待处理操作
+        """
         state = self.get_state(user_id)
         state.pending_action = None
         state.updated_at = time.time()
         self._store.set(user_id, state)
 
     def confirm_pending_action(self, user_id: str) -> PendingActionState | None:
-        """S2: 确认 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        """确认待处理的操作。
+
+        功能:
+            - 确认指定用户的待处理操作，使用状态机迁移
+        """
         state = self.get_state(user_id)
         pa = state.pending_action
         if pa is None:
@@ -448,7 +621,11 @@ class ConversationStateManager:
         return pa
 
     def cancel_pending_action(self, user_id: str) -> PendingActionState | None:
-        """S2: 取消 pending_action，用状态机迁移。返回迁移后的 state 或 None。"""
+        """取消待处理的操作。
+
+        功能:
+            - 取消指定用户的待处理操作，使用状态机迁移
+        """
         state = self.get_state(user_id)
         pa = state.pending_action
         if pa is None:

@@ -1,3 +1,10 @@
+"""
+描述: 该模块负责在飞书消息上根据处理状态添加或删除反应。
+主要功能:
+    - 根据处理状态事件在飞书消息上添加相应的反应。
+    - 管理和更新消息上的反应，确保同一时间只有一个反应存在。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -8,15 +15,21 @@ from src.utils.feishu_api import delete_message_reaction, set_message_reaction
 
 logger = logging.getLogger(__name__)
 
-
 _REACTION_BY_STATUS: dict[ProcessingStatus, str] = {
     ProcessingStatus.THINKING: "OK",
     ProcessingStatus.SEARCHING: "OK",
     ProcessingStatus.DONE: "OK",
 }
 
-
 class FeishuReactionStatusEmitter:
+    """
+    根据处理状态事件在飞书消息上添加或删除反应。
+
+    功能:
+        - 初始化时设置必要的参数。
+        - 根据处理状态事件更新飞书消息上的反应。
+    """
+
     def __init__(self, settings: Settings, message_id: str) -> None:
         self._settings = settings
         self._message_id = str(message_id or "").strip()
@@ -26,6 +39,17 @@ class FeishuReactionStatusEmitter:
         self._last_reaction_type: str = ""
 
     async def __call__(self, event: ProcessingStatusEvent) -> None:
+        """
+        根据处理状态事件更新飞书消息上的反应。
+
+        功能:
+            - 检查消息ID是否存在。
+            - 检查当前状态是否被禁用。
+            - 获取当前状态对应的反应类型。
+            - 如果当前状态的反应类型与上一次相同，则跳过。
+            - 撤回上一次的反应。
+            - 添加当前状态的反应。
+        """
         if not self._message_id:
             return
         if event.status in self._disabled_statuses:
@@ -92,11 +116,20 @@ class FeishuReactionStatusEmitter:
                 },
             )
 
-
+# region 工厂函数
 def create_reaction_status_emitter(settings: Settings, message_id: str) -> FeishuReactionStatusEmitter | None:
+    """
+    创建一个 FeishuReactionStatusEmitter 实例。
+
+    功能:
+        - 检查是否启用了反应功能。
+        - 检查消息ID是否存在。
+        - 返回一个 FeishuReactionStatusEmitter 实例或 None。
+    """
     if not bool(getattr(getattr(settings, "reply", None), "reaction_enabled", False)):
         return None
     normalized_message_id = str(message_id or "").strip()
     if not normalized_message_id:
         return None
     return FeishuReactionStatusEmitter(settings=settings, message_id=normalized_message_id)
+# endregion

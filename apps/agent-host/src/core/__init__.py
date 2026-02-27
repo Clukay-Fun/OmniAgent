@@ -1,3 +1,10 @@
-"""Core package for agent host runtime."""
+"""
+描述: 代理主机运行时的核心包
+主要功能:
+    - 提供代理主机运行时的核心功能
+"""
 
 __all__: list[str] = []
+
+# region 类外部的零散方法和初始化
+# endregion

@@ -1,10 +1,19 @@
-from __future__ import annotations
-
-from datetime import date, timedelta
-from typing import Any, Mapping
-
+"""
+描述: 该模块用于构建自动提醒项，根据不同的表和字段生成相应的提醒信息。
+主要功能:
+    - 根据表名和字段生成提醒项
+    - 解析日期字符串为日期对象
+"""
 
 def build_auto_reminder_items(table_name: str, fields: Mapping[str, Any]) -> list[dict[str, str]]:
+    """
+    根据表名和字段生成自动提醒项。
+
+    功能:
+        - 根据表名选择相应的提醒定义
+        - 遍历选定的提醒定义，解析字段中的日期
+        - 计算提醒日期并生成提醒项
+    """
     table = str(table_name or "")
     reminder_defs = {
         "案件": {
@@ -54,6 +63,14 @@ def build_auto_reminder_items(table_name: str, fields: Mapping[str, Any]) -> lis
 
 
 def _parse_date(value: Any) -> date | None:
+    """
+    解析日期字符串为日期对象。
+
+    功能:
+        - 去除字符串中的多余字符
+        - 将中文日期格式转换为ISO格式
+        - 尝试将字符串解析为日期对象
+    """
     text = str(value or "").strip().lstrip("：:")
     if not text:
         return None

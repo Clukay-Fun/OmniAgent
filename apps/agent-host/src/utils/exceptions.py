@@ -1,7 +1,13 @@
 """
-异常处理模块
-
-统一定义自定义异常类，便于精确捕获和处理
+描述: 统一定义自定义异常类，便于精确捕获和处理
+主要功能:
+    - 定义基础异常类 OmniAgentError
+    - 定义 Skill 相关异常类
+    - 定义 Intent 相关异常类
+    - 定义 LLM 相关异常类
+    - 定义 MCP 相关异常类
+    - 定义配置相关异常类
+    - 提供用户友好的错误消息
 """
 
 from __future__ import annotations
@@ -9,11 +15,16 @@ from __future__ import annotations
 from typing import Any
 
 
-# ============================================
 # region 基础异常
-# ============================================
 class OmniAgentError(Exception):
-    """OmniAgent 基础异常类"""
+    """
+    OmniAgent 基础异常类
+
+    功能:
+        - 初始化异常信息，包括消息、代码和详细信息
+        - 提供将异常信息转换为字典的方法
+        - 提供自定义的字符串表示方法
+    """
     
     def __init__(
         self,
@@ -36,14 +47,16 @@ class OmniAgentError(Exception):
     def __str__(self) -> str:
         return f"[{self.code}] {self.message}"
 # endregion
-# ============================================
 
 
-# ============================================
 # region Skill 相关异常
-# ============================================
 class SkillError(OmniAgentError):
-    """技能执行异常"""
+    """
+    技能执行异常
+
+    功能:
+        - 初始化技能执行异常，包含技能名称
+    """
     
     def __init__(
         self,
@@ -58,7 +71,12 @@ class SkillError(OmniAgentError):
 
 
 class SkillNotFoundError(SkillError):
-    """技能未找到"""
+    """
+    技能未找到
+
+    功能:
+        - 初始化技能未找到异常，包含技能名称
+    """
     
     def __init__(self, skill_name: str) -> None:
         super().__init__(
@@ -69,7 +87,12 @@ class SkillNotFoundError(SkillError):
 
 
 class SkillExecutionError(SkillError):
-    """技能执行失败"""
+    """
+    技能执行失败
+
+    功能:
+        - 初始化技能执行失败异常，包含技能名称和失败原因
+    """
     
     def __init__(
         self,
@@ -87,7 +110,12 @@ class SkillExecutionError(SkillError):
 
 
 class SkillTimeoutError(SkillError):
-    """技能执行超时"""
+    """
+    技能执行超时
+
+    功能:
+        - 初始化技能执行超时异常，包含技能名称和超时时间
+    """
 
     def __init__(self, skill_name: str, timeout_seconds: float) -> None:
         super().__init__(
@@ -97,14 +125,16 @@ class SkillTimeoutError(SkillError):
             details={"timeout_seconds": timeout_seconds},
         )
 # endregion
-# ============================================
 
 
-# ============================================
 # region Intent 相关异常
-# ============================================
 class IntentError(OmniAgentError):
-    """意图解析异常"""
+    """
+    意图解析异常
+
+    功能:
+        - 初始化意图解析异常
+    """
     
     def __init__(
         self,
@@ -116,7 +146,12 @@ class IntentError(OmniAgentError):
 
 
 class IntentParseError(IntentError):
-    """意图解析失败"""
+    """
+    意图解析失败
+
+    功能:
+        - 初始化意图解析失败异常，包含查询内容和失败原因
+    """
     
     def __init__(self, query: str, cause: str) -> None:
         super().__init__(
@@ -125,14 +160,16 @@ class IntentParseError(IntentError):
             details={"query": query, "cause": cause},
         )
 # endregion
-# ============================================
 
 
-# ============================================
 # region LLM 相关异常
-# ============================================
 class LLMError(OmniAgentError):
-    """LLM 调用异常"""
+    """
+    LLM 调用异常
+
+    功能:
+        - 初始化 LLM 调用异常
+    """
     
     def __init__(
         self,
@@ -144,7 +181,12 @@ class LLMError(OmniAgentError):
 
 
 class LLMTimeoutError(LLMError):
-    """LLM 调用超时"""
+    """
+    LLM 调用超时
+
+    功能:
+        - 初始化 LLM 调用超时异常，包含超时时间
+    """
     
     def __init__(self, timeout_seconds: float) -> None:
         super().__init__(
@@ -155,7 +197,12 @@ class LLMTimeoutError(LLMError):
 
 
 class LLMRateLimitError(LLMError):
-    """LLM 速率限制"""
+    """
+    LLM 速率限制
+
+    功能:
+        - 初始化 LLM 速率限制异常，包含重试时间
+    """
     
     def __init__(self, retry_after: float | None = None) -> None:
         super().__init__(
@@ -166,7 +213,12 @@ class LLMRateLimitError(LLMError):
 
 
 class LLMResponseError(LLMError):
-    """LLM 响应格式错误"""
+    """
+    LLM 响应格式错误
+
+    功能:
+        - 初始化 LLM 响应格式错误异常，包含失败原因
+    """
     
     def __init__(self, cause: str) -> None:
         super().__init__(
@@ -175,14 +227,16 @@ class LLMResponseError(LLMError):
             details={"cause": cause},
         )
 # endregion
-# ============================================
 
 
-# ============================================
 # region MCP 相关异常
-# ============================================
 class MCPError(OmniAgentError):
-    """MCP 调用异常"""
+    """
+    MCP 调用异常
+
+    功能:
+        - 初始化 MCP 调用异常
+    """
     
     def __init__(
         self,
@@ -194,7 +248,12 @@ class MCPError(OmniAgentError):
 
 
 class MCPConnectionError(MCPError):
-    """MCP 连接失败"""
+    """
+    MCP 连接失败
+
+    功能:
+        - 初始化 MCP 连接失败异常，包含 URL 和失败原因
+    """
     
     def __init__(self, url: str, cause: str) -> None:
         super().__init__(
@@ -205,7 +264,12 @@ class MCPConnectionError(MCPError):
 
 
 class MCPTimeoutError(MCPError):
-    """MCP 调用超时"""
+    """
+    MCP 调用超时
+
+    功能:
+        - 初始化 MCP 调用超时异常，包含工具名称和超时时间
+    """
     
     def __init__(self, tool_name: str, timeout_seconds: float) -> None:
         super().__init__(
@@ -216,7 +280,12 @@ class MCPTimeoutError(MCPError):
 
 
 class MCPToolError(MCPError):
-    """MCP 工具执行失败"""
+    """
+    MCP 工具执行失败
+
+    功能:
+        - 初始化 MCP 工具执行失败异常，包含工具名称和失败原因
+    """
     
     def __init__(self, tool_name: str, cause: str) -> None:
         super().__init__(
@@ -225,14 +294,16 @@ class MCPToolError(MCPError):
             details={"tool_name": tool_name, "cause": cause},
         )
 # endregion
-# ============================================
 
 
-# ============================================
 # region 配置相关异常
-# ============================================
 class ConfigError(OmniAgentError):
-    """配置错误"""
+    """
+    配置错误
+
+    功能:
+        - 初始化配置错误异常，包含配置键
+    """
     
     def __init__(
         self,
@@ -247,7 +318,12 @@ class ConfigError(OmniAgentError):
 
 
 class ConfigNotFoundError(ConfigError):
-    """配置文件不存在"""
+    """
+    配置文件不存在
+
+    功能:
+        - 初始化配置文件不存在异常，包含配置路径
+    """
     
     def __init__(self, config_path: str) -> None:
         super().__init__(
@@ -256,12 +332,9 @@ class ConfigNotFoundError(ConfigError):
         )
         self.code = "CONFIG_NOT_FOUND"
 # endregion
-# ============================================
 
 
-# ============================================
 # region 用户友好错误消息
-# ============================================
 USER_FRIENDLY_MESSAGES = {
     "SKILL_NOT_FOUND": "抱歉，我暂时无法处理这个请求。",
     "SKILL_EXECUTION_ERROR": "处理请求时遇到问题，请稍后重试。",
@@ -275,7 +348,11 @@ USER_FRIENDLY_MESSAGES = {
 
 
 def get_user_message(error: OmniAgentError) -> str:
-    """获取用户友好的错误消息"""
+    """
+    获取用户友好的错误消息
+
+    功能:
+        - 根据异常代码返回用户友好的错误消息
+    """
     return USER_FRIENDLY_MESSAGES.get(error.code, USER_FRIENDLY_MESSAGES["UNKNOWN_ERROR"])
 # endregion
-# ============================================

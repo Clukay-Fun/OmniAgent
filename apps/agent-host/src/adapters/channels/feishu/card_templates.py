@@ -1,3 +1,10 @@
+"""
+描述: 卡片模板渲染引擎
+主要功能:
+    - 提供结构化卡片渲染所需的数据拼接逻辑
+    - 提供各类展现状态和日期倒计时的文本格式化
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -24,6 +31,7 @@ _CASE_T3_STYLES = {"T3", "T3A", "T3B", "T3C"}
 _CASE_T5_STYLES = {"T5", "T5A", "T5B", "T5C"}
 
 
+# region Markdown 辅助方法
 def _markdown(content: str) -> dict[str, Any]:
     return {"tag": "markdown", "content": content}
 

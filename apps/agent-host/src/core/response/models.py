@@ -1,3 +1,10 @@
+"""
+描述: 该模块定义了用于处理和验证渲染响应的Pydantic模型。
+主要功能:
+    - 定义了Block、CardTemplateSpec和RenderedResponse三个核心模型。
+    - 提供了从外部数据构建RenderedResponse实例的方法。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal
@@ -16,6 +23,12 @@ BlockType = Literal[
 
 
 class Block(BaseModel):
+    """
+    表示一个内容块的模型。
+
+    功能:
+        - 定义了块的类型、内容、ID和元数据字段。
+    """
     type: BlockType
     content: Dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
@@ -23,6 +36,13 @@ class Block(BaseModel):
 
 
 class CardTemplateSpec(BaseModel):
+    """
+    表示卡片模板规范的模型。
+
+    功能:
+        - 定义了模板ID、版本和参数字段。
+        - 提供了验证模板ID和版本不为空的方法。
+    """
     template_id: str
     version: str = "v1"
     params: Dict[str, Any] = Field(default_factory=dict)
@@ -36,6 +56,15 @@ class CardTemplateSpec(BaseModel):
 
 
 class RenderedResponse(BaseModel):
+    """
+    表示渲染响应的模型。
+
+    功能:
+        - 定义了文本回退、内容块列表、元数据和卡片模板字段。
+        - 提供了验证文本回退不为空的方法。
+        - 提供了从外部数据构建RenderedResponse实例的方法。
+        - 提供了将实例转换为字典的方法。
+    """
     text_fallback: str
     blocks: List[Block] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
@@ -54,6 +83,14 @@ class RenderedResponse(BaseModel):
         outbound: dict[str, Any] | None,
         fallback_text: str,
     ) -> "RenderedResponse":
+        """
+        从外部数据构建RenderedResponse实例。
+
+        功能:
+            - 从外部数据中提取文本回退、内容块列表、元数据和卡片模板。
+            - 验证并处理提取的数据。
+            - 返回构建的RenderedResponse实例。
+        """
         text_fallback = str((outbound or {}).get("text_fallback") or fallback_text or "请稍后重试。")
 
         raw_blocks = (outbound or {}).get("blocks")
@@ -88,4 +125,10 @@ class RenderedResponse(BaseModel):
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """
+        将RenderedResponse实例转换为字典。
+
+        功能:
+            - 使用Pydantic的model_dump方法将实例转换为字典。
+        """
         return self.model_dump()

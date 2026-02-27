@@ -1,3 +1,10 @@
+"""
+描述: 自动化规则引擎核心逻辑
+主要功能:
+    - 加载并解析自动化规则 YAML 配置
+    - 匹配规则并执行相关动作
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -42,6 +49,7 @@ class AutomationRuleSet:
     watched_fields_by_table: dict[str, set[str]]
 
 
+# region 自动化规则加载器
 class AutomationRuleLoader:
     def __init__(self, logger: logging.Logger | None = None) -> None:
         self._logger = logger or logging.getLogger(__name__)

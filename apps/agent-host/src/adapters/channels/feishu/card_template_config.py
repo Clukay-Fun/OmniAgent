@@ -1,3 +1,11 @@
+"""
+描述: 该模块负责加载和解析卡片模板配置，包括内置模板和自定义YAML配置。
+主要功能:
+    - 加载内置模板配置
+    - 根据环境变量加载自定义YAML配置
+    - 提供模板版本解析和启用状态检查功能
+"""
+
 from __future__ import annotations
 
 import logging
@@ -8,9 +16,7 @@ from typing import Any
 
 import yaml
 
-
 logger = logging.getLogger(__name__)
-
 
 BUILTIN_TEMPLATE_DEFAULT_VERSIONS: dict[str, str] = {
     "query.list": "v2",
@@ -27,7 +33,6 @@ BUILTIN_TEMPLATE_DEFAULT_VERSIONS: dict[str, str] = {
     "delete.cancelled": "v1",
 }
 
-
 BUILTIN_TEMPLATE_ENABLED: dict[str, bool] = {
     "query.list.v1": True,
     "query.list.v2": True,
@@ -43,7 +48,6 @@ BUILTIN_TEMPLATE_ENABLED: dict[str, bool] = {
     "delete.success.v1": True,
     "delete.cancelled.v1": True,
 }
-
 
 BUILTIN_RENDER_TEMPLATES: dict[str, Any] = {
     "query_list_v2": {
@@ -219,22 +223,47 @@ BUILTIN_RENDER_TEMPLATES: dict[str, Any] = {
     },
 }
 
-
+# region 配置路径相关函数
 def _default_config_path() -> Path:
+    """
+    获取默认的配置文件路径
+
+    功能:
+        - 返回默认的配置文件路径
+    """
     return Path(__file__).resolve().parents[4] / "config" / "card_templates.yaml"
 
 
 def _yaml_enabled() -> bool:
+    """
+    检查是否启用 YAML 配置
+
+    功能:
+        - 从环境变量中读取配置，判断是否启用 YAML 配置
+    """
     raw = os.getenv("CARD_TEMPLATE_CONFIG_YAML_ENABLED", "true").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
 def _config_path() -> Path:
+    """
+    获取配置文件路径
+
+    功能:
+        - 从环境变量中读取自定义配置路径，如果没有则返回默认路径
+    """
     custom_path = os.getenv("CARD_TEMPLATE_CONFIG_PATH", "").strip()
     return Path(custom_path) if custom_path else _default_config_path()
+# endregion
 
-
+# region 配置数据规范化函数
 def _normalize_default_versions(raw: Any) -> dict[str, str]:
+    """
+    规范化默认版本配置
+
+    功能:
+        - 将原始数据转换为字典格式，确保键值对有效
+    """
     if not isinstance(raw, dict):
         return {}
     output: dict[str, str] = {}
@@ -247,6 +276,12 @@ def _normalize_default_versions(raw: Any) -> dict[str, str]:
 
 
 def _normalize_enabled(raw: Any) -> dict[str, bool]:
+    """
+    规范化启用状态配置
+
+    功能:
+        - 将原始数据转换为字典格式，确保键值对有效
+    """
     if not isinstance(raw, dict):
         return {}
     output: dict[str, bool] = {}
@@ -263,6 +298,12 @@ def _normalize_enabled(raw: Any) -> dict[str, bool]:
 
 
 def _normalize_render_templates(raw: Any) -> dict[str, Any]:
+    """
+    规范化渲染模板配置
+
+    功能:
+        - 将原始数据转换为字典格式，确保键值对有效
+    """
     if not isinstance(raw, dict):
         return {}
     output: dict[str, Any] = {}
@@ -271,9 +312,16 @@ def _normalize_render_templates(raw: Any) -> dict[str, Any]:
         if name and isinstance(value, dict):
             output[name] = value
     return output
+# endregion
 
-
+# region 配置加载和合并函数
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """
+    深度合并两个字典
+
+    功能:
+        - 递归合并两个字典，优先使用 override 中的值
+    """
     merged: dict[str, Any] = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -285,6 +333,14 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 @lru_cache(maxsize=1)
 def _load_template_config() -> tuple[dict[str, str], dict[str, bool], dict[str, Any]]:
+    """
+    加载模板配置
+
+    功能:
+        - 根据环境变量决定是否加载 YAML 配置
+        - 加载并规范化配置数据
+        - 深度合并内置配置和自定义配置
+    """
     if not _yaml_enabled():
         return BUILTIN_TEMPLATE_DEFAULT_VERSIONS, BUILTIN_TEMPLATE_ENABLED, BUILTIN_RENDER_TEMPLATES
 
@@ -315,13 +371,26 @@ def _load_template_config() -> tuple[dict[str, str], dict[str, bool], dict[str, 
     else:
         render_templates = _deep_merge(BUILTIN_RENDER_TEMPLATES, render_templates)
     return defaults, enabled, render_templates
+# endregion
 
-
+# region 配置缓存和解析函数
 def reset_template_config_cache() -> None:
+    """
+    重置模板配置缓存
+
+    功能:
+        - 清除缓存，重新加载配置
+    """
     _load_template_config.cache_clear()
 
 
 def resolve_template_version(template_id: str, version: str | None = None) -> str:
+    """
+    解析模板版本
+
+    功能:
+        - 根据传入的版本或默认版本返回最终版本号
+    """
     resolved = (version or "").strip()
     if resolved:
         return resolved
@@ -330,11 +399,23 @@ def resolve_template_version(template_id: str, version: str | None = None) -> st
 
 
 def is_template_enabled(template_id: str, version: str) -> bool:
+    """
+    检查模板是否启用
+
+    功能:
+        - 根据模板ID和版本检查模板是否启用
+    """
     _, enabled, _ = _load_template_config()
     return bool(enabled.get(f"{template_id}.{version}", False))
 
 
 def get_render_templates() -> dict[str, Any]:
+    """
+    获取渲染模板
+
+    功能:
+        - 返回合并后的渲染模板配置
+    """
     _, _, render_templates = _load_template_config()
     if not isinstance(render_templates, dict):
         return BUILTIN_RENDER_TEMPLATES
@@ -342,6 +423,12 @@ def get_render_templates() -> dict[str, Any]:
 
 
 def extract_template_spec(payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
+    """
+    提取模板规范
+
+    功能:
+        - 从 payload 中提取模板ID、版本和参数
+    """
     raw = payload.get("card_template")
     if not isinstance(raw, dict):
         return None
@@ -355,3 +442,4 @@ def extract_template_spec(payload: dict[str, Any]) -> tuple[str, str, dict[str, 
     if not isinstance(params, dict):
         params = {}
     return template_id, version, params
+# endregion

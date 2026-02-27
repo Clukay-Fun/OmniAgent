@@ -39,6 +39,15 @@ class ChunkAssembler:
         max_segments: int = 5,
         max_chars: int = 500,
     ) -> None:
+        """
+        初始化分片聚合器。
+
+        功能:
+            - 设置聚合器的启用状态
+            - 初始化会话状态管理器
+            - 设置窗口时间和过期时间
+            - 设置最大分段数和最大字符数
+        """
         self._enabled = bool(enabled)
         self._state_manager = state_manager
         self._window_seconds = max(float(window_seconds), 0.1)
@@ -48,7 +57,21 @@ class ChunkAssembler:
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def ingest(self, scope_key: str, text: str, now: float | None = None) -> ChunkDecision:
-        """写入单条文本并返回是否应进入处理链路。"""
+        """
+        写入单条文本并返回是否应进入处理链路。
+
+        功能:
+            - 检查文本是否为空
+            - 检查聚合器是否启用
+            - 获取当前时间戳
+            - 获取或创建会话锁
+            - 获取现有消息分片状态
+            - 处理快速直通情况
+            - 创建新的消息分片状态
+            - 应用保险丝限制
+            - 更新消息分片状态
+            - 返回聚合决策结果
+        """
         content = str(text or "").strip()
         if not content:
             return ChunkDecision(should_process=False, reason="empty")
@@ -109,7 +132,16 @@ class ChunkAssembler:
             return ChunkDecision(should_process=False, reason="buffering")
 
     async def drain(self, scope_key: str) -> ChunkDecision:
-        """主动冲刷指定作用域残留分片。"""
+        """
+        主动冲刷指定作用域残留分片。
+
+        功能:
+            - 获取或创建会话锁
+            - 获取现有消息分片状态
+            - 清除消息分片状态
+            - 应用保险丝限制
+            - 返回聚合决策结果
+        """
         key = str(scope_key or "").strip() or "default"
         lock = self._get_lock(key)
         async with lock:
@@ -126,6 +158,14 @@ class ChunkAssembler:
             return ChunkDecision(should_process=True, text=merged, reason="manual_drain")
 
     def _get_lock(self, key: str) -> asyncio.Lock:
+        """
+        获取或创建指定键的锁。
+
+        功能:
+            - 检查锁是否存在
+            - 创建并存储新锁
+            - 返回锁
+        """
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -133,16 +173,39 @@ class ChunkAssembler:
         return lock
 
     def _cleanup_lock_if_idle(self, key: str, now: float | None = None) -> None:
+        """
+        如果会话为空，则清理指定键的锁。
+
+        功能:
+            - 检查会话状态
+            - 清理锁
+        """
         if self._state_manager.get_message_chunk(key, now=now, enforce_stale=False) is None:
             self._locks.pop(key, None)
 
     def _is_fast_path(self, text: str) -> bool:
+        """
+        检查文本是否符合快速直通条件。
+
+        功能:
+            - 去除文本首尾空白
+            - 检查文本是否以快速直通后缀结尾
+        """
         stripped = text.strip()
         if not stripped:
             return False
         return stripped.endswith(self._FAST_PATH_SUFFIXES)
 
     def _apply_fuse(self, segments: list[str]) -> tuple[str, bool]:
+        """
+        应用保险丝限制。
+
+        功能:
+            - 限制分段数量
+            - 合并分段
+            - 检查合并后的文本长度是否超过限制
+            - 返回合并后的文本和是否触发保险丝
+        """
         limited_segments = list(segments[: self._max_segments])
         merged = "\n".join(seg for seg in limited_segments if seg)
         fuse_hit = len(segments) >= self._max_segments
@@ -152,6 +215,14 @@ class ChunkAssembler:
         return merged, fuse_hit
 
     def _split_back(self, merged: str) -> list[str]:
+        """
+        将合并后的文本拆分为分段。
+
+        功能:
+            - 拆分文本
+            - 过滤空分段
+            - 返回分段列表
+        """
         if not merged:
             return []
         return [part for part in merged.split("\n") if part]

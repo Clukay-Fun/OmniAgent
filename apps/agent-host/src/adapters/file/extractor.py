@@ -1,3 +1,10 @@
+"""
+描述: 提供外部文件提取功能，支持OCR和ASR服务
+主要功能:
+    - 根据文件类型选择合适的OCR或ASR服务进行文件内容提取
+    - 处理请求重试、错误记录和成本监控
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -43,6 +50,15 @@ class _ProviderError(Exception):
 
 
 class ExternalFileExtractor:
+    """
+    外部文件提取器类，负责处理文件内容的提取工作
+
+    功能:
+        - 初始化提取器设置和相关服务提供者
+        - 提供文件内容提取的主要接口
+        - 处理请求重试、错误记录和成本监控
+    """
+
     def __init__(
         self,
         settings: FileExtractorSettings,
@@ -50,6 +66,13 @@ class ExternalFileExtractor:
         ocr_settings: OCRSettings | None = None,
         asr_settings: ASRSettings | None = None,
     ) -> None:
+        """
+        初始化外部文件提取器
+
+        功能:
+            - 设置提取器的基本配置
+            - 初始化OCR和ASR服务提供者
+        """
         self._settings = settings
         self._timeout_seconds = max(2, int(timeout_seconds))
         self._ocr = ocr_settings or OCRSettings()
@@ -58,6 +81,15 @@ class ExternalFileExtractor:
         self._asr_provider = ASRProvider()
 
     async def extract(self, request: ExtractorRequest) -> ExtractorResult:
+        """
+        提取文件内容
+
+        功能:
+            - 选择合适的OCR或ASR服务
+            - 检查成本监控状态
+            - 发送请求并处理响应
+            - 记录操作时间和错误信息
+        """
         provider, mode = self._select_provider(request)
         cost_monitor = get_cost_monitor()
         if cost_monitor is not None:
@@ -184,6 +216,13 @@ class ExternalFileExtractor:
         api_key: str,
         mode: str,
     ) -> str:
+        """
+        发送请求并处理重试逻辑
+
+        功能:
+            - 尝试发送请求并处理超时和错误
+            - 根据错误类型决定是否重试
+        """
         last_error: Exception | None = None
         attempt = 0
         max_retries = 2
@@ -244,6 +283,14 @@ class ExternalFileExtractor:
         api_key: str,
         mode: str,
     ) -> str:
+        """
+        发送单次请求并处理响应
+
+        功能:
+            - 构建请求头和负载
+            - 发送HTTP请求并处理响应
+            - 解析响应内容并处理错误
+        """
         headers = self._build_headers(api_key=api_key, mode=mode)
         payload = self._build_payload(request, mode=mode, provider=provider)
         endpoint = self._resolve_endpoint(provider=provider, api_base=api_base, mode=mode)
@@ -271,6 +318,12 @@ class ExternalFileExtractor:
         raise _ProviderError(error_type="extractor_empty_content", retryable=False)
 
     def _build_payload(self, request: ExtractorRequest, mode: str, provider: str = "") -> dict[str, Any]:
+        """
+        构建请求负载
+
+        功能:
+            - 根据请求和模式构建请求负载
+        """
         payload: dict[str, Any] = {}
         if provider == "mineru" and mode not in ("ocr", "asr"):
             # Official MinerU v4 Extract API format
@@ -292,6 +345,12 @@ class ExternalFileExtractor:
         return payload
 
     def _resolve_endpoint(self, provider: str, api_base: str, mode: str) -> str:
+        """
+        解析请求端点
+
+        功能:
+            - 根据提供者和模式解析请求端点
+        """
         source = self._settings
         if mode == "ocr":
             source = self._ocr
@@ -305,6 +364,12 @@ class ExternalFileExtractor:
         return f"{api_base.rstrip('/')}{normalized_path}"
 
     def _build_headers(self, api_key: str, mode: str) -> dict[str, str]:
+        """
+        构建请求头
+
+        功能:
+            - 根据API密钥和模式构建请求头
+        """
         source = self._settings
         if mode == "ocr":
             source = self._ocr
@@ -327,6 +392,12 @@ class ExternalFileExtractor:
         return headers
 
     def _extract_markdown(self, payload: Any) -> str:
+        """
+        从响应中提取Markdown内容
+
+        功能:
+            - 递归解析响应内容以提取Markdown文本
+        """
         if isinstance(payload, str):
             return payload.strip()
         if isinstance(payload, list):
@@ -375,6 +446,12 @@ class ExternalFileExtractor:
         return ""
 
     def _safe_json(self, response: httpx.Response) -> Any:
+        """
+        安全解析JSON响应
+
+        功能:
+            - 尝试解析响应为JSON，处理解析错误
+        """
         try:
             return response.json()
         except Exception:
@@ -387,6 +464,12 @@ class ExternalFileExtractor:
                 return {"_malformed_response": True, "raw_text": text}
 
     def _map_http_error(self, response: httpx.Response, payload: Any) -> str:
+        """
+        映射HTTP错误到内部错误类型
+
+        功能:
+            - 根据响应状态码和负载映射错误类型
+        """
         status = int(response.status_code)
         if isinstance(payload, dict) and bool(payload.get("_malformed_response")):
             return "extractor_malformed_response"
@@ -417,6 +500,12 @@ class ExternalFileExtractor:
         return "extractor_http_error"
 
     def _parse_retry_after_seconds(self, response: httpx.Response) -> float:
+        """
+        解析重试时间
+
+        功能:
+            - 从响应头中解析重试时间
+        """
         raw_value = ""
         try:
             raw_value = str(response.headers.get("Retry-After") or "").strip()
@@ -430,6 +519,12 @@ class ExternalFileExtractor:
             return 0.0
 
     def _extract_provider_error_code(self, payload: Any) -> str:
+        """
+        提取提供者错误代码
+
+        功能:
+            - 从响应负载中提取错误代码
+        """
         if not isinstance(payload, dict):
             return ""
         candidates = (
@@ -448,12 +543,24 @@ class ExternalFileExtractor:
         return ""
 
     def _normalize_provider(self, provider: str | None) -> str:
+        """
+        规范化提供者名称
+
+        功能:
+            - 将提供者名称转换为标准格式
+        """
         normalized = str(provider or "none").strip().lower()
         if normalized not in {"none", "mineru", "llm"}:
             return "none"
         return normalized
 
     def _select_provider(self, request: ExtractorRequest) -> tuple[str, str]:
+        """
+        选择合适的提供者
+
+        功能:
+            - 根据请求类型选择合适的OCR或ASR提供者
+        """
         message_type = str(getattr(request, "message_type", "") or "").strip().lower()
         if message_type == "audio" and bool(getattr(self._asr, "enabled", False)):
             provider = self._normalize_provider(getattr(self._asr, "provider", "none"))

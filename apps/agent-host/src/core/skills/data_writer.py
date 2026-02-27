@@ -1,3 +1,12 @@
+"""
+描述: 提供一个数据写入器接口及其具体实现，用于与MCP客户端进行交互以创建、更新和删除记录。
+主要功能:
+    - 定义数据写入结果的数据类
+    - 定义数据写入器的协议
+    - 实现具体的MCP数据写入器
+    - 提供构建默认数据写入器的函数
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,6 +15,16 @@ from typing import Any, Protocol
 
 @dataclass
 class WriteResult:
+    """
+    表示数据写入操作的结果
+
+    功能:
+        - 存储操作是否成功
+        - 存储错误信息（如果有的话）
+        - 存储记录ID（如果有的话）
+        - 存储记录URL（如果有的话）
+        - 存储记录的字段信息
+    """
     success: bool
     error: str | None = None
     record_id: str | None = None
@@ -14,6 +33,14 @@ class WriteResult:
 
 
 class DataWriter(Protocol):
+    """
+    数据写入器协议，定义了创建、更新和删除记录的方法
+
+    功能:
+        - 创建记录
+        - 更新记录
+        - 删除记录
+    """
     async def create(
         self,
         table_id: str | None,
@@ -44,6 +71,16 @@ class DataWriter(Protocol):
 
 
 class MCPDataWriter:
+    """
+    具体的MCP数据写入器实现
+
+    功能:
+        - 初始化MCP客户端和工具名称
+        - 创建记录
+        - 更新记录
+        - 删除记录
+        - 将MCP调用结果转换为WriteResult对象
+    """
     def __init__(
         self,
         mcp_client: Any,
@@ -64,6 +101,14 @@ class MCPDataWriter:
         *,
         idempotency_key: str | None = None,
     ) -> WriteResult:
+        """
+        创建记录
+
+        功能:
+            - 构建请求参数
+            - 调用MCP客户端创建记录
+            - 处理异常并返回WriteResult对象
+        """
         params: dict[str, Any] = {"fields": fields}
         if table_id:
             params["table_id"] = table_id
@@ -83,6 +128,14 @@ class MCPDataWriter:
         *,
         idempotency_key: str | None = None,
     ) -> WriteResult:
+        """
+        更新记录
+
+        功能:
+            - 构建请求参数
+            - 调用MCP客户端更新记录
+            - 处理异常并返回WriteResult对象
+        """
         params: dict[str, Any] = {
             "record_id": record_id,
             "fields": fields,
@@ -104,6 +157,14 @@ class MCPDataWriter:
         *,
         idempotency_key: str | None = None,
     ) -> WriteResult:
+        """
+        删除记录
+
+        功能:
+            - 构建请求参数
+            - 调用MCP客户端删除记录
+            - 处理异常并返回WriteResult对象
+        """
         params: dict[str, Any] = {"record_id": record_id}
         if table_id:
             params["table_id"] = table_id
@@ -123,6 +184,14 @@ class MCPDataWriter:
         return write_result
 
     def _to_write_result(self, result: Any, *, fallback_fields: dict[str, Any]) -> WriteResult:
+        """
+        将MCP调用结果转换为WriteResult对象
+
+        功能:
+            - 检查结果是否为字典
+            - 提取成功状态、错误信息、记录ID、记录URL和字段信息
+            - 返回WriteResult对象
+        """
         if not isinstance(result, dict):
             return WriteResult(success=False, error="写入失败", fields=fallback_fields)
         success = bool(result.get("success"))
@@ -141,7 +210,15 @@ class MCPDataWriter:
         )
 
 
+# region 工具函数
 def build_default_data_writer(mcp_client: Any) -> DataWriter:
+    """
+    构建默认的数据写入器
+
+    功能:
+        - 定义工具名称前缀
+        - 返回MCPDataWriter实例
+    """
     tool_prefix = "".join(["fei", "shu"])
     return MCPDataWriter(
         mcp_client,
@@ -149,3 +226,4 @@ def build_default_data_writer(mcp_client: Any) -> DataWriter:
         update_tool_name=f"{tool_prefix}.v1.bitable.record.update",
         delete_tool_name=f"{tool_prefix}.v1.bitable.record.delete",
     )
+# endregion

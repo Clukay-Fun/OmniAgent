@@ -1,3 +1,11 @@
+"""
+描述: 提供基于大模型的实体和意图提取功能。
+主要功能:
+    - 从用户输入中提取精确匹配的字段和值。
+    - 从用户关于“新建记录”的描述中提取结构化的字段和值。
+    - 提取用户想要更新的字段及目标值。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -13,8 +21,15 @@ class EntityExtractor:
     """
 
     def __init__(self, llm_client: Any) -> None:
+        """
+        初始化 EntityExtractor 类。
+
+        参数:
+            llm_client: 大模型客户端实例
+        """
         self._llm = llm_client
 
+    # region 提取精确匹配字段
     async def extract_exact_match_field(
         self, query: str, available_fields: Optional[list[str]] = None
     ) -> Optional[dict[str, str]]:
@@ -60,7 +75,9 @@ class EntityExtractor:
         except Exception as exc:
             logger.warning("EntityExtractor.extract_exact_match_field failed: %s", exc)
             return None
+    # endregion
 
+    # region 解析新建记录字段
     async def parse_create_fields(
         self,
         query: str,
@@ -116,7 +133,9 @@ class EntityExtractor:
         except Exception as exc:
             logger.warning("EntityExtractor.parse_create_fields failed: %s", exc)
             return {}
+    # endregion
 
+    # region 解析更新字段
     async def parse_update_fields(
         self, query: str, available_fields: Optional[list[str]] = None
     ) -> dict[str, Any]:
@@ -151,3 +170,4 @@ class EntityExtractor:
         except Exception as exc:
             logger.warning("EntityExtractor.parse_update_fields failed: %s", exc)
             return {}
+    # endregion

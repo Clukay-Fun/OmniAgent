@@ -1,7 +1,8 @@
 """
-Planner Prompt 构建器。
-
-从场景规则配置生成结构化规则提示。
+描述: Planner Prompt 构建器。
+主要功能:
+    - 加载目录下所有场景规则文件
+    - 根据规则构建 Planner system prompt
 """
 
 from __future__ import annotations
@@ -12,8 +13,16 @@ from typing import Any
 import yaml
 
 
+# region 规则文件加载
 def load_scenario_rules(scenarios_dir: str) -> list[dict[str, Any]]:
-    """加载目录下所有场景规则文件。"""
+    """
+    加载目录下所有场景规则文件。
+
+    功能:
+        - 检查目录是否存在且为目录
+        - 遍历目录下所有 .yaml 文件
+        - 加载每个文件的规则并添加到规则列表中
+    """
     path = Path(scenarios_dir)
     if not path.exists() or not path.is_dir():
         return []
@@ -32,10 +41,21 @@ def load_scenario_rules(scenarios_dir: str) -> list[dict[str, Any]]:
                 if isinstance(item, dict):
                     rules.append(item)
     return rules
+# endregion
 
 
+# region Planner system prompt 构建
 def build_planner_system_prompt(rules: list[dict[str, Any]]) -> str:
-    """根据规则构建 Planner system prompt。"""
+    """
+    根据规则构建 Planner system prompt。
+
+    功能:
+        - 定义 prompt 的头部信息
+        - 根据传入的规则生成规则行
+        - 如果没有传入规则，则使用默认规则
+        - 定义输出的 JSON Schema
+        - 将所有部分组合成最终的 prompt
+    """
     header = (
         "你是 OmniAgent 的意图规划器。"
         "你的任务是把用户输入转成结构化 JSON: intent/tool/params/confidence。"
@@ -84,3 +104,4 @@ def build_planner_system_prompt(rules: list[dict[str, Any]]) -> str:
             "要求：confidence 在 [0,1]；若无法确定 intent，输出 intent=clarify_needed 且给出 clarify_question。",
         ]
     )
+# endregion

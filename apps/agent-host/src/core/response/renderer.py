@@ -1,3 +1,10 @@
+"""
+描述: 响应渲染器
+主要功能:
+    - 针对不同技能的执行结果，组装输出文本和卡片参数
+    - 各种查询场景与状态类的消息映射
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,6 +22,7 @@ DEFAULT_TEMPLATES: Dict[str, str] = {
 }
 
 
+# region 响应渲染引擎
 class ResponseRenderer:
     def __init__(
         self,

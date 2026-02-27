@@ -1,3 +1,11 @@
+"""
+描述: 提供数据过滤、分组和汇总的功能
+主要功能:
+    - 数据过滤
+    - 数据分组
+    - 数据汇总
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,10 +18,25 @@ Record = dict[str, Any]
 
 
 def _safe_text(value: Any) -> str:
+    """
+    将输入值转换为安全的文本字符串
+
+    功能:
+        - 如果输入值为 None 或空字符串，则返回空字符串
+        - 去除字符串两端的空白字符
+    """
     return str(value or "").strip()
 
 
 def parse_date_value(value: Any) -> date | None:
+    """
+    解析日期值
+
+    功能:
+        - 将输入值转换为标准日期格式
+        - 支持多种日期格式的转换
+        - 如果解析失败，返回 None
+    """
     text = _safe_text(value)
     if not text:
         return None
@@ -35,6 +58,13 @@ def parse_date_value(value: Any) -> date | None:
 
 
 def _resolve_date_ref(token: str) -> date:
+    """
+    解析日期引用
+
+    功能:
+        - 根据输入的日期引用字符串返回相应的日期
+        - 支持相对日期和固定日期的解析
+    """
     today = date.today()
     cleaned = token.strip().lower()
     if cleaned.startswith("today+"):
@@ -57,15 +87,42 @@ def _resolve_date_ref(token: str) -> date:
 
 @dataclass
 class FilterCondition:
+    """
+    过滤条件的数据类
+
+    功能:
+        - 存储单个过滤条件的字段、操作符和值
+    """
     field: str
     op: str
     value: Any
 
 
 class FilterEngine:
+    """
+    过滤引擎类
+
+    功能:
+        - 执行数据过滤
+        - 解析过滤字符串
+        - 解析过滤条件
+        - 解析值
+        - 匹配条件
+        - 比较值
+        - 获取排序键
+    """
     _OPS: tuple[str, ...] = (">=", "<=", "!=", "=", ">", "<", "contains", "in_range")
 
     def execute(self, records: list[Record], filter_str: str, context: Mapping[str, Any] | None = None) -> list[Record]:
+        """
+        执行过滤操作
+
+        功能:
+            - 解析过滤字符串
+            - 过滤记录
+            - 对结果进行排序
+            - 限制结果数量
+        """
         if not filter_str:
             return list(records)
         conditions, sort_rule, limit = self.parse_filter(filter_str, context or {})
@@ -85,6 +142,15 @@ class FilterEngine:
         filter_str: str,
         context: Mapping[str, Any],
     ) -> tuple[list[FilterCondition], tuple[str, str] | None, int | None]:
+        """
+        解析过滤字符串
+
+        功能:
+            - 分割过滤字符串
+            - 解析排序规则
+            - 解析限制数量
+            - 解析过滤条件
+        """
         parts = [part.strip() for part in filter_str.split(",") if part.strip()]
         conditions: list[FilterCondition] = []
         sort_rule: tuple[str, str] | None = None
@@ -111,6 +177,14 @@ class FilterEngine:
         return conditions, sort_rule, limit
 
     def parse_condition(self, condition_str: str, context: Mapping[str, Any]) -> FilterCondition | None:
+        """
+        解析单个过滤条件
+
+        功能:
+            - 根据操作符分割条件字符串
+            - 解析字段和值
+            - 返回 FilterCondition 对象
+        """
         for op in self._OPS:
             token = f" {op} "
             if token in condition_str:
@@ -128,6 +202,14 @@ class FilterEngine:
         return None
 
     def resolve_value(self, raw: str, context: Mapping[str, Any]) -> Any:
+        """
+        解析值
+
+        功能:
+            - 解析上下文中的值
+            - 解析日期引用
+            - 返回解析后的值
+        """
         value = raw.strip()
         if value.startswith("{") and value.endswith("}"):
             return context.get(value[1:-1], "")
@@ -144,9 +226,21 @@ class FilterEngine:
         return value
 
     def match_all(self, record: Record, conditions: list[FilterCondition]) -> bool:
+        """
+        匹配所有条件
+
+        功能:
+            - 检查记录是否满足所有过滤条件
+        """
         return all(self.match_condition(record, cond) for cond in conditions)
 
     def match_condition(self, record: Record, condition: FilterCondition) -> bool:
+        """
+        匹配单个条件
+
+        功能:
+            - 根据操作符比较记录中的值和条件值
+        """
         value = record.get(condition.field)
         op = condition.op
         target = condition.value
@@ -170,6 +264,12 @@ class FilterEngine:
         return self._cmp(_safe_text(value), _safe_text(target), op)
 
     def _cmp(self, left: Any, right: Any, op: str) -> bool:
+        """
+        比较两个值
+
+        功能:
+            - 根据操作符比较两个值
+        """
         if op == "=":
             return left == right
         if op == "!=":
@@ -185,6 +285,12 @@ class FilterEngine:
         return False
 
     def _sort_key(self, value: Any) -> Any:
+        """
+        获取排序键
+
+        功能:
+            - 将值转换为排序键
+        """
         as_date = parse_date_value(value)
         if as_date is not None:
             return (0, as_date)
@@ -195,7 +301,22 @@ class FilterEngine:
 
 
 class GroupEngine:
+    """
+    分组引擎类
+
+    功能:
+        - 执行数据分组
+        - 按值分组
+        - 按日期分组
+        - 匹配日期条件
+    """
     def execute(self, records: list[Record], group_config: Mapping[str, Any]) -> list[tuple[str, list[Record]]]:
+        """
+        执行分组操作
+
+        功能:
+            - 根据配置分组记录
+        """
         field = _safe_text(group_config.get("field"))
         buckets_raw = group_config.get("buckets")
         order_raw = group_config.get("order")
@@ -214,6 +335,12 @@ class GroupEngine:
         order: list[Any],
         icons: Mapping[str, Any],
     ) -> list[tuple[str, list[Record]]]:
+        """
+        按值分组
+
+        功能:
+            - 根据字段值对记录进行分组
+        """
         groups: dict[str, list[Record]] = {}
         labels: list[str] = []
         for raw in order:
@@ -234,6 +361,12 @@ class GroupEngine:
         return [(label, groups.get(label, [])) for label in labels]
 
     def group_by_date_bucket(self, records: list[Record], field: str, buckets: list[Any]) -> list[tuple[str, list[Record]]]:
+        """
+        按日期分组
+
+        功能:
+            - 根据日期条件对记录进行分组
+        """
         pairs: list[tuple[str, list[Record]]] = []
         for bucket_raw in buckets:
             if not isinstance(bucket_raw, Mapping):
@@ -259,6 +392,12 @@ class GroupEngine:
         return pairs
 
     def _match_date_condition(self, value: Any, condition: str) -> bool:
+        """
+        匹配日期条件
+
+        功能:
+            - 根据条件检查日期值是否匹配
+        """
         parsed = parse_date_value(value)
         if parsed is None:
             return False
@@ -281,10 +420,30 @@ class GroupEngine:
 
 
 class SummaryEngine:
+    """
+    汇总引擎类
+
+    功能:
+        - 执行数据汇总
+        - 计算变量
+        - 计算自动变量
+    """
     def __init__(self, filter_engine: FilterEngine) -> None:
+        """
+        初始化汇总引擎
+
+        功能:
+            - 初始化过滤引擎
+        """
         self._filter = filter_engine
 
     def execute(self, records: list[Record], summary_config: Mapping[str, Any]) -> str:
+        """
+        执行汇总操作
+
+        功能:
+            - 根据配置生成汇总字符串
+        """
         template = _safe_text(summary_config.get("template"))
         if not template:
             return ""
@@ -299,6 +458,12 @@ class SummaryEngine:
         return template
 
     def _compute_variable(self, records: list[Record], config: Any) -> Any:
+        """
+        计算变量
+
+        功能:
+            - 根据配置计算变量值
+        """
         if not isinstance(config, Mapping):
             return 0
         kind = _safe_text(config.get("type") or "count")
@@ -325,6 +490,12 @@ class SummaryEngine:
         return 0
 
     def _auto_variables(self, records: list[Record]) -> dict[str, Any]:
+        """
+        计算自动变量
+
+        功能:
+            - 计算一些预定义的自动变量
+        """
         total = len(records)
         today = date.today()
         overdue = 0
@@ -357,7 +528,21 @@ class SummaryEngine:
 
 
 class SectionEngine:
+    """
+    部分引擎类
+
+    功能:
+        - 执行部分操作
+        - 渲染表格
+        - 替换上下文
+    """
     def __init__(self, filter_engine: FilterEngine) -> None:
+        """
+        初始化部分引擎
+
+        功能:
+            - 初始化过滤引擎
+        """
         self._filter = filter_engine
 
     def execute(
@@ -367,6 +552,12 @@ class SectionEngine:
         context: Mapping[str, Any],
         render_item: Callable[[Record, list[Mapping[str, Any]]], list[str]],
     ) -> list[dict[str, Any]]:
+        """
+        执行部分操作
+
+        功能:
+            - 根据配置生成部分数据
+        """
         rendered: list[dict[str, Any]] = []
         for section in sections_config:
             if not isinstance(section, Mapping):
@@ -395,6 +586,12 @@ class SectionEngine:
         return rendered
 
     def _render_table(self, records: list[Record], section: Mapping[str, Any]) -> dict[str, Any] | None:
+        """
+        渲染表格
+
+        功能:
+            - 根据配置渲染表格数据
+        """
         if _safe_text(section.get("format")) != "compact_table":
             return None
         columns_raw = section.get("columns")
@@ -414,6 +611,12 @@ class SectionEngine:
         return {"headers": columns, "rows": rows}
 
     def _replace_context(self, text: str, context: Mapping[str, Any]) -> str:
+        """
+        替换上下文
+
+        功能:
+            - 在文本中替换上下文变量
+        """
         out = text
         for key, value in context.items():
             out = out.replace("{" + str(key) + "}", str(value))

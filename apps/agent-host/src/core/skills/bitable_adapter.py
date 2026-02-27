@@ -18,22 +18,38 @@ from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
-
 def _normalize_text(value: str) -> str:
+    """
+    规范化文本，去除多余空格、特殊字符并转换为小写。
+
+    功能:
+        - 去除字符串前后的空格
+        - 将字符串转换为小写
+        - 使用正则表达式去除特殊字符
+    """
     text = str(value or "").strip().lower()
     return re.sub(r"[\s\-_()（）\[\]【】、,，.:：/\\]+", "", text)
 
-
 @dataclass
 class TableContext:
+    """
+    表格上下文数据类，包含表ID、表名、应用令牌和来源信息。
+    """
     table_id: str | None = None
     table_name: str | None = None
     app_token: str | None = None
     source: str = "unknown"
 
-
 class BitableAdapter:
-    """CRUD 技能共享的表/字段动态适配器。"""
+    """
+    CRUD 技能共享的表/字段动态适配器。
+
+    功能:
+        - 提供表格和字段的动态解析和适配功能
+        - 支持从查询、上下文、额外信息中解析表格上下文
+        - 提供字段名的动态适配功能
+        - 提供表格字段的缓存和查询功能
+    """
 
     _FIELD_CANDIDATES: dict[str, list[str]] = {
         "律师": ["主办律师", "协办律师"],
@@ -70,6 +86,16 @@ class BitableAdapter:
     }
 
     def __init__(self, mcp_client: Any, skills_config: dict[str, Any] | None = None) -> None:
+        """
+        初始化 BitableAdapter。
+
+        功能:
+            - 初始化 MCP 客户端和技能配置
+            - 解析默认应用令牌
+            - 构建表别名查找表
+            - 初始化字段候选名称的规范化查找表
+            - 初始化表格缓存和字段模式缓存
+        """
         self._mcp = mcp_client
         self._skills_config = skills_config or {}
         self._default_app_token = self._resolve_default_app_token()
@@ -87,6 +113,12 @@ class BitableAdapter:
         self._schema_ttl_seconds = 300
 
     def _resolve_default_app_token(self) -> str | None:
+        """
+        解析默认应用令牌。
+
+        功能:
+            - 从环境变量中解析默认应用令牌
+        """
         for key in ("BITABLE_APP_TOKEN", "FEISHU_BITABLE_APP_TOKEN", "APP_TOKEN"):
             value = str(os.getenv(key) or "").strip()
             if value:
@@ -94,6 +126,12 @@ class BitableAdapter:
         return None
 
     def _apply_default_app_token(self, context: TableContext) -> TableContext:
+        """
+        应用默认应用令牌到表格上下文。
+
+        功能:
+            - 如果上下文中没有应用令牌，则应用默认应用令牌
+        """
         if context.app_token:
             return context
         if self._default_app_token:
@@ -101,6 +139,12 @@ class BitableAdapter:
         return context
 
     def _build_alias_lookup(self, table_aliases: dict[str, Any]) -> dict[str, str]:
+        """
+        构建表别名查找表。
+
+        功能:
+            - 从表别名配置中构建规范化名称到表名的查找表
+        """
         lookup: dict[str, str] = {}
         for table_name, aliases in table_aliases.items():
             names = [str(table_name)]
@@ -118,6 +162,12 @@ class BitableAdapter:
         extra: dict[str, Any] | None,
         last_result: dict[str, Any] | None,
     ) -> TableContext:
+        """
+        解析表格上下文。
+
+        功能:
+            - 从额外信息、上次结果和查询中解析表格上下文
+        """
         extra = extra or {}
 
         explicit = self._extract_from_extra(extra)
@@ -143,6 +193,13 @@ class BitableAdapter:
         fields: dict[str, Any],
         table_id: str | None,
     ) -> tuple[dict[str, Any], list[str], list[str]]:
+        """
+        为指定表格适配字段。
+
+        功能:
+            - 根据表格ID适配字段名称
+            - 返回适配后的字段、未解析的字段和可用字段
+        """
         if not fields:
             return {}, [], []
         if not table_id:
@@ -170,6 +227,12 @@ class BitableAdapter:
         return adapted, unresolved, available_fields
 
     async def get_table_fields(self, table_id: str) -> list[str]:
+        """
+        获取指定表格的字段列表。
+
+        功能:
+            - 从缓存中获取字段列表，如果缓存过期则从API获取
+        """
         now = time.time()
         cached = self._schema_cache.get(table_id)
         if cached and now - cached[0] < self._schema_ttl_seconds:
@@ -193,7 +256,12 @@ class BitableAdapter:
             return []
 
     async def get_fields(self, table_id: str) -> list[str]:
-        """Backward-compatible alias for get_table_fields."""
+        """
+        向后兼容的 get_table_fields 别名。
+
+        功能:
+            - 调用 get_table_fields 方法
+        """
         return await self.get_table_fields(table_id)
 
     async def search_exact_records(
@@ -203,6 +271,12 @@ class BitableAdapter:
         value: Any,
         table_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        """
+        搜索精确匹配的记录。
+
+        功能:
+            - 调用 API 搜索精确匹配的记录
+        """
         params: dict[str, Any] = {
             "field": field,
             "value": value,
@@ -226,6 +300,12 @@ class BitableAdapter:
         available_fields: list[str],
         table_name: str | None,
     ) -> str:
+        """
+        构建字段未找到的消息。
+
+        功能:
+            - 根据未解析的字段和可用字段构建消息
+        """
         missing = "、".join(unresolved[:5])
         samples = "、".join(available_fields[:10])
         table_label = f"表「{table_name}」" if table_name else "当前表"
@@ -234,6 +314,12 @@ class BitableAdapter:
         return f"{table_label}中找不到字段：{missing}。"
 
     def extract_table_id_from_record(self, record: dict[str, Any] | None) -> str | None:
+        """
+        从记录中提取表格ID。
+
+        功能:
+            - 从记录中提取 table_id 或从 record_url 中解析 table_id
+        """
         if not isinstance(record, dict):
             return None
         direct_table_id = str(record.get("table_id") or "").strip()
@@ -251,6 +337,12 @@ class BitableAdapter:
             return None
 
     async def _list_tables(self, refresh: bool = False) -> list[dict[str, str]]:
+        """
+        列出所有表格。
+
+        功能:
+            - 从缓存中获取表格列表，如果缓存过期或需要刷新则从API获取
+        """
         now = time.time()
         if not refresh and self._tables_cache and now - self._tables_cache_at < self._tables_ttl_seconds:
             return self._tables_cache
@@ -276,6 +368,12 @@ class BitableAdapter:
             return self._tables_cache
 
     def _extract_from_extra(self, extra: dict[str, Any]) -> TableContext:
+        """
+        从额外信息中提取表格上下文。
+
+        功能:
+            - 从 extra 中提取 table_id, table_name, app_token
+        """
         table_id = str(extra.get("table_id") or extra.get("active_table_id") or "").strip() or None
         table_name = str(extra.get("table_name") or extra.get("active_table_name") or "").strip() or None
         app_token = str(extra.get("app_token") or extra.get("active_app_token") or "").strip() or None
@@ -314,6 +412,12 @@ class BitableAdapter:
         return TableContext(table_id=table_id, table_name=table_name, app_token=app_token, source="extra")
 
     def _extract_from_last_result(self, last_result: dict[str, Any] | None) -> TableContext:
+        """
+        从上次结果中提取表格上下文。
+
+        功能:
+            - 从 last_result 中提取 table_id, table_name, app_token
+        """
         if not isinstance(last_result, dict):
             return TableContext()
 
@@ -356,6 +460,12 @@ class BitableAdapter:
         return TableContext(table_id=table_id, table_name=table_name, app_token=app_token, source="last_result")
 
     async def _fill_table_name(self, context: TableContext) -> TableContext:
+        """
+        填充表格名称。
+
+        功能:
+            - 根据 table_id 或 table_name 填充缺失的信息
+        """
         if not context.table_id and not context.table_name:
             return context
 
@@ -378,6 +488,12 @@ class BitableAdapter:
         return context
 
     def _match_table_by_query(self, query: str, tables: list[dict[str, str]]) -> TableContext | None:
+        """
+        根据查询匹配表格。
+
+        功能:
+            - 根据查询字符串匹配表格
+        """
         if not query or not tables:
             return None
 
@@ -406,6 +522,12 @@ class BitableAdapter:
         available_fields: list[str],
         normalized_lookup: dict[str, str],
     ) -> str | None:
+        """
+        映射字段名称。
+
+        功能:
+            - 根据可用字段和规范化查找表映射字段名称
+        """
         # Step 1: exact match in schema
         if input_name in available_fields:
             return input_name
@@ -471,6 +593,12 @@ class BitableAdapter:
         return None
 
     def _candidate_field_names(self, input_name: str) -> list[str]:
+        """
+        获取字段名称的候选列表。
+
+        功能:
+            - 根据输入名称获取字段名称的候选列表
+        """
         candidates: list[str] = [input_name]
         normalized = _normalize_text(input_name)
         if normalized in self._field_candidates_by_norm:

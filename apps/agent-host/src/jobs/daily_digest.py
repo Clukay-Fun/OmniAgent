@@ -1,3 +1,10 @@
+"""
+描述: 该模块负责每日摘要的调度和推送
+主要功能:
+    - 初始化调度器并设置每日摘要的推送时间
+    - 构建和推送每日摘要内容
+"""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -14,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 class DailyDigestScheduler:
+    """
+    每日摘要调度器
+
+    功能:
+        - 初始化调度器并设置每日摘要的推送时间
+        - 构建和推送每日摘要内容
+    """
+
     def __init__(
         self,
         mcp_client: MCPClient,
@@ -22,6 +37,13 @@ class DailyDigestScheduler:
         timezone: str = "Asia/Shanghai",
         dispatcher: ReminderDispatcher | None = None,
     ) -> None:
+        """
+        初始化每日摘要调度器
+
+        功能:
+            - 初始化 MCP 客户端、提醒聊天ID、调度时间、时区和分发器
+            - 创建异步IO调度器
+        """
         self._mcp = mcp_client
         self._reminder_chat_id = str(reminder_chat_id or "").strip()
         self._schedule = str(schedule or "09:00").strip() or "09:00"
@@ -30,6 +52,14 @@ class DailyDigestScheduler:
         self._scheduler = AsyncIOScheduler(timezone=self._timezone)
 
     def start(self) -> None:
+        """
+        启动调度器
+
+        功能:
+            - 解析调度时间
+            - 添加每日摘要推送任务到调度器
+            - 启动调度器
+        """
         hour, minute = self._parse_schedule(self._schedule)
         self._scheduler.add_job(
             self._push_daily_digest,
@@ -42,9 +72,23 @@ class DailyDigestScheduler:
         self._scheduler.start()
 
     async def stop(self) -> None:
+        """
+        停止调度器
+
+        功能:
+            - 关闭调度器
+        """
         self._scheduler.shutdown(wait=False)
 
     async def _push_daily_digest(self) -> None:
+        """
+        推送每日摘要
+
+        功能:
+            - 检查提醒聊天ID和分发器是否有效
+            - 构建每日摘要内容
+            - 使用分发器推送摘要内容
+        """
         if not self._reminder_chat_id or self._dispatcher is None:
             return
         today = date.today()
@@ -82,6 +126,13 @@ class DailyDigestScheduler:
         )
 
     async def _build_today_due_section(self, today: date) -> str:
+        """
+        构建今日到期部分
+
+        功能:
+            - 调用 MCP 客户端获取今日到期的记录数量
+            - 返回格式化的字符串
+        """
         day = today.isoformat()
         result = await self._mcp.call_tool(
             "feishu.v1.bitable.search_date_range",
@@ -91,6 +142,14 @@ class DailyDigestScheduler:
         return f"- 今日到期: {count}"
 
     async def _build_week_new_section(self, today: date) -> str:
+        """
+        构建本周新增部分
+
+        功能:
+            - 计算本周的开始和结束日期
+            - 调用 MCP 客户端获取本周新增的记录数量
+            - 返回格式化的字符串
+        """
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
         result = await self._mcp.call_tool(
@@ -106,6 +165,13 @@ class DailyDigestScheduler:
         return f"- 本周新增: {count}"
 
     async def _build_pending_section(self) -> str:
+        """
+        构建待处理部分
+
+        功能:
+            - 调用 MCP 客户端获取待处理的记录数量
+            - 返回格式化的字符串
+        """
         result = await self._mcp.call_tool(
             "feishu.v1.bitable.search_keyword",
             {"keyword": "待处理", "limit": 50, "ignore_default_view": True},
@@ -114,6 +180,13 @@ class DailyDigestScheduler:
         return f"- 待处理: {count}"
 
     async def _safe_section(self, fn: Any, *args: Any) -> str:
+        """
+        安全调用构建摘要部分的方法
+
+        功能:
+            - 尝试调用传入的方法并返回结果
+            - 捕获异常并记录警告信息
+        """
         try:
             return await fn(*args)
         except Exception:
@@ -121,6 +194,13 @@ class DailyDigestScheduler:
             return ""
 
     def _parse_schedule(self, schedule: str) -> tuple[int, int]:
+        """
+        解析调度时间
+
+        功能:
+            - 解析传入的调度时间字符串
+            - 返回小时和分钟的整数元组
+        """
         raw = str(schedule or "09:00")
         if ":" not in raw:
             return 9, 0

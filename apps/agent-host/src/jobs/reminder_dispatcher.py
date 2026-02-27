@@ -21,6 +21,21 @@ from src.utils.metrics import record_reminder_dispatch
 
 @dataclass
 class ReminderDispatchPayload:
+    """
+    Reminder 发送任务的数据结构
+
+    属性:
+        - source: 提醒来源
+        - business_id: 业务ID
+        - trigger_date: 触发日期
+        - offset: 偏移量
+        - receive_id: 接收者ID
+        - receive_id_type: 接收者ID类型
+        - content: 消息内容
+        - msg_type: 消息类型，默认为 "text"
+        - target_conversation_id: 目标会话ID
+        - credential_source: 凭证来源，默认为 "default"
+    """
     source: str
     business_id: str
     trigger_date: date | datetime | str
@@ -35,17 +50,38 @@ class ReminderDispatchPayload:
 
 @dataclass
 class ReminderDispatchResult:
+    """
+    Reminder 发送结果的数据结构
+
+    属性:
+        - status: 发送状态
+        - dedupe_key: 幂等键
+    """
     status: str
     dedupe_key: str
 
 
 class ReminderDedupeStore(Protocol):
+    """
+    幂等键存储接口
+
+    方法:
+        - contains: 检查幂等键是否存在
+        - add: 添加幂等键
+    """
     def contains(self, dedupe_key: str) -> bool: ...
 
     def add(self, dedupe_key: str) -> None: ...
 
 
 class InMemoryReminderDedupeStore:
+    """
+    内存中的幂等键存储实现
+
+    方法:
+        - contains: 检查幂等键是否存在
+        - add: 添加幂等键
+    """
     def __init__(self) -> None:
         self._keys: set[str] = set()
 
@@ -57,18 +93,43 @@ class InMemoryReminderDedupeStore:
 
 
 class ReminderDispatcher:
+    """
+    Reminder 分发器
+
+    功能:
+        - 构建幂等键
+        - 分发 Reminder
+        - 处理幂等键存储
+    """
     def __init__(
         self,
         settings: Settings,
         dedupe_store: ReminderDedupeStore | None = None,
         sender: Any | None = None,
     ) -> None:
+        """
+        初始化 ReminderDispatcher
+
+        参数:
+            - settings: 配置设置
+            - dedupe_store: 幂等键存储实例
+            - sender: 发送消息的函数
+        """
         self._settings = settings
         self._dedupe_store = dedupe_store or InMemoryReminderDedupeStore()
         self._sender = sender or send_message
         self._logger = logging.getLogger(__name__)
 
     def build_dedupe_key(self, payload: ReminderDispatchPayload) -> str:
+        """
+        构建幂等键
+
+        参数:
+            - payload: Reminder 发送任务的数据结构
+
+        返回:
+            - 幂等键字符串
+        """
         source = str(payload.source or "unknown").strip() or "unknown"
         business_id = str(payload.business_id or "").strip()
         trigger_date = self._normalize_trigger_date(payload.trigger_date)
@@ -76,6 +137,15 @@ class ReminderDispatcher:
         return f"{source}:{business_id}:{trigger_date}:{offset}"
 
     async def dispatch(self, payload: ReminderDispatchPayload) -> ReminderDispatchResult:
+        """
+        分发 Reminder
+
+        参数:
+            - payload: Reminder 发送任务的数据结构
+
+        返回:
+            - Reminder 发送结果的数据结构
+        """
         dedupe_key = self.build_dedupe_key(payload)
 
         try:
@@ -155,6 +225,15 @@ class ReminderDispatcher:
         return ReminderDispatchResult(status="dispatched", dedupe_key=dedupe_key)
 
     def _normalize_trigger_date(self, value: date | datetime | str) -> str:
+        """
+        触发日期标准化
+
+        参数:
+            - value: 触发日期，可以是 date, datetime 或 str 类型
+
+        返回:
+            - 标准化后的日期字符串
+        """
         if isinstance(value, datetime):
             return value.date().isoformat()
         if isinstance(value, date):
@@ -162,6 +241,15 @@ class ReminderDispatcher:
         return str(value or "").strip()
 
     def _resolve_receive_target(self, payload: ReminderDispatchPayload) -> tuple[str, str]:
+        """
+        解析接收目标
+
+        参数:
+            - payload: Reminder 发送任务的数据结构
+
+        返回:
+            - 解析后的接收者ID和接收者ID类型
+        """
         mapped = map_target_conversation_id(payload.target_conversation_id)
         if mapped is not None:
             return mapped

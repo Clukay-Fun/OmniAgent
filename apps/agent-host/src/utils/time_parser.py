@@ -1,5 +1,8 @@
 """
-Time range parser.
+描述: 时间范围解析器。
+主要功能:
+    - 解析自然语言中的时间范围
+    - 提取日期和时间信息
 """
 
 from __future__ import annotations
@@ -12,6 +15,15 @@ from typing import Optional
 
 @dataclass
 class TimeRange:
+    """
+    表示一个时间范围。
+
+    属性:
+        - date_from: 起始日期
+        - date_to: 结束日期
+        - time_from: 起始时间（可选）
+        - time_to: 结束时间（可选）
+    """
     date_from: str
     date_to: str
     time_from: str | None = None
@@ -19,16 +31,39 @@ class TimeRange:
 
 
 def _format_day(value: date) -> str:
+    """
+    将日期格式化为 ISO 格式的字符串。
+
+    功能:
+        - 接受一个 date 对象
+        - 返回 ISO 格式的日期字符串
+    """
     return value.isoformat()
 
 
 def _week_range(target: date) -> TimeRange:
+    """
+    计算给定日期所在周的范围。
+
+    功能:
+        - 找到目标日期所在周的周一
+        - 计算该周的周日
+        - 返回一个 TimeRange 对象
+    """
     start = target - timedelta(days=target.weekday())
     end = start + timedelta(days=6)
     return TimeRange(_format_day(start), _format_day(end))
 
 
 def _month_range(target: date) -> TimeRange:
+    """
+    计算给定日期所在月的范围。
+
+    功能:
+        - 找到目标日期所在月的第一天
+        - 计算该月的最后一天
+        - 返回一个 TimeRange 对象
+    """
     start = target.replace(day=1)
     next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
     end = next_month - timedelta(days=1)
@@ -36,6 +71,14 @@ def _month_range(target: date) -> TimeRange:
 
 
 def _month_range_by_year_month(year: int, month: int) -> Optional[TimeRange]:
+    """
+    根据年份和月份计算该月的范围。
+
+    功能:
+        - 验证年份和月份的有效性
+        - 计算该月的第一天和最后一天
+        - 返回一个 TimeRange 对象或 None
+    """
     start = _safe_date(year, month, 1)
     if start is None:
         return None
@@ -48,10 +91,24 @@ def _month_range_by_year_month(year: int, month: int) -> Optional[TimeRange]:
 
 
 def _format_hm(hour: int, minute: int) -> str:
+    """
+    将小时和分钟格式化为 HH:MM 格式的字符串。
+
+    功能:
+        - 接受小时和分钟
+        - 返回格式化后的字符串
+    """
     return f"{hour:02d}:{minute:02d}"
 
 
 def _adjust_hour(hour: int, period: str) -> int:
+    """
+    根据时间段调整小时。
+
+    功能:
+        - 根据时间段（如“下午”、“晚上”）调整小时
+        - 返回调整后的小时
+    """
     p = period or ""
     if p in {"下午", "傍晚", "晚上", "今晚", "明晚"} and 1 <= hour <= 11:
         return hour + 12
@@ -66,6 +123,13 @@ def _adjust_hour(hour: int, period: str) -> int:
 
 
 def _extract_relative_day(text: str, today: date) -> date | None:
+    """
+    从文本中提取相对日期。
+
+    功能:
+        - 支持“今天”、“明天”、“后天”等相对日期
+        - 返回对应的日期对象或 None
+    """
     week_map = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
     m = re.search(r"(下周|本周|这周|周)([一二三四五六日天])", text)
     if m:
@@ -92,6 +156,13 @@ def _extract_relative_day(text: str, today: date) -> date | None:
 
 
 def _parse_day_count(token: str) -> int | None:
+    """
+    解析天数字符串为整数。
+
+    功能:
+        - 支持中文数字和阿拉伯数字
+        - 返回解析后的天数或 None
+    """
     raw = str(token or "").strip()
     if not raw:
         return None
@@ -122,6 +193,13 @@ def _parse_day_count(token: str) -> int | None:
 
 
 def _extract_future_days_range(text: str, today: date) -> TimeRange | None:
+    """
+    从文本中提取未来几天的范围。
+
+    功能:
+        - 支持“未来几天”、“接下来几天”等表达
+        - 返回对应的 TimeRange 对象或 None
+    """
     matched = re.search(r"(?:未来|接下来)\s*([一二两三四五六七八九十\d]{1,3})\s*天", text)
     if not matched:
         return None
@@ -132,6 +210,13 @@ def _extract_future_days_range(text: str, today: date) -> TimeRange | None:
 
 
 def _extract_after_days(text: str, today: date) -> date | None:
+    """
+    从文本中提取几天后的日期。
+
+    功能:
+        - 支持“过几天”、“再过几天”等表达
+        - 返回对应的日期对象或 None
+    """
     patterns = (
         r"(?:过|再过|还有)\s*([一二两三四五六七八九十\d]{1,3})\s*天",
         r"([一二两三四五六七八九十\d]{1,3})\s*天后",
@@ -148,6 +233,13 @@ def _extract_after_days(text: str, today: date) -> date | None:
 
 
 def _extract_month_range(text: str, today: date) -> TimeRange | None:
+    """
+    从文本中提取月份范围。
+
+    功能:
+        - 支持“上个月”、“下个月”、“这个月”等表达
+        - 返回对应的 TimeRange 对象或 None
+    """
     if "上个月" in text:
         prev_month_end = today.replace(day=1) - timedelta(days=1)
         return _month_range(prev_month_end)
@@ -179,6 +271,13 @@ def _extract_month_range(text: str, today: date) -> TimeRange | None:
 
 
 def _extract_time_window(text: str) -> tuple[str | None, str | None]:
+    """
+    从文本中提取时间段。
+
+    功能:
+        - 支持具体时刻和时间段的提取
+        - 返回时间段的起始和结束时间
+    """
     # 先识别具体时刻
     m = re.search(r"(凌晨|早上|上午|中午|下午|傍晚|晚上|今晚|明晚|今早|明早)?\s*(\d{1,2})[:：](\d{1,2})", text)
     if m:
@@ -223,6 +322,13 @@ def _extract_time_window(text: str) -> tuple[str | None, str | None]:
 
 
 def _normalize_text(text: str) -> str:
+    """
+    规范化文本中的特殊字符。
+
+    功能:
+        - 替换常见的全角字符为半角字符
+        - 返回规范化后的文本
+    """
     normalized = str(text or "")
     replacements = {
         "／": "/",
@@ -239,6 +345,13 @@ def _normalize_text(text: str) -> str:
 
 
 def _safe_date(year: int, month: int, day: int) -> Optional[date]:
+    """
+    安全地创建一个日期对象。
+
+    功能:
+        - 尝试创建日期对象
+        - 如果失败则返回 None
+    """
     try:
         return date(year, month, day)
     except ValueError:
@@ -246,7 +359,13 @@ def _safe_date(year: int, month: int, day: int) -> Optional[date]:
 
 
 def _extract_explicit_dates(text: str, today: date) -> list[date]:
-    """提取文本中的显式日期（支持 YYYY/MM/DD, YYYY-MM-DD, YYYY年M月D日, M/D, M月D日）。"""
+    """
+    提取文本中的显式日期。
+
+    功能:
+        - 支持多种日期格式（如 YYYY/MM/DD, YYYY-MM-DD, YYYY年M月D日, M/D, M月D日）
+        - 返回提取的日期列表
+    """
     ymd_pattern = re.compile(r"(?<!\d)(\d{4})\s*(?:年|[\-/\.])\s*(\d{1,2})\s*(?:月|[\-/\.])\s*(\d{1,2})\s*(?:日|号)?")
     md_pattern = re.compile(r"(?<!\d)(\d{1,2})\s*(?:月|[\-/\.])\s*(\d{1,2})\s*(?:日|号)?(?!\d)")
 
@@ -275,6 +394,13 @@ def _extract_explicit_dates(text: str, today: date) -> list[date]:
 
 
 def parse_time_range(text: str) -> Optional[TimeRange]:
+    """
+    解析时间范围。
+
+    功能:
+        - 处理各种时间范围的表达
+        - 返回解析后的时间范围对象或 None
+    """
     today = date.today()
     normalized = _normalize_text(text)
     time_from, time_to = _extract_time_window(normalized)

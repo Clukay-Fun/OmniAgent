@@ -1,3 +1,10 @@
+"""
+描述: 提供用于渲染C1/C2/C3确认卡片块的帮助类
+主要功能:
+    - 根据不同的操作类型构建确认信息
+    - 解析和处理日期字段以生成自动提醒
+"""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -8,9 +15,22 @@ from src.adapters.channels.feishu.smart_engine import SmartEngine
 
 
 class ActionEngine:
-    """Render helper for C1/C2/C3 confirmation card blocks."""
+    """
+    Render helper for C1/C2/C3 confirmation card blocks.
+
+    功能:
+        - 初始化智能引擎实例
+        - 根据操作类型构建确认信息
+        - 解析和处理日期字段以生成自动提醒
+    """
 
     def __init__(self, smart_engine: SmartEngine | None = None) -> None:
+        """
+        初始化ActionEngine实例
+
+        功能:
+            - 如果未提供智能引擎实例，则创建一个新的SmartEngine实例
+        """
         self._smart = smart_engine or SmartEngine()
 
     def build_confirm_lines(
@@ -21,6 +41,13 @@ class ActionEngine:
         table_name: str,
         payload: Mapping[str, Any],
     ) -> tuple[str | None, list[str]]:
+        """
+        根据操作类型构建确认信息行
+
+        功能:
+            - 根据操作类型（如create_record, update_record等）构建确认信息
+            - 返回确认标题和详细信息行
+        """
         normalized = str(action or "").strip()
         lines: list[str] = [str(message or "").strip()]
         if table_name:
@@ -42,6 +69,14 @@ class ActionEngine:
         return None, lines
 
     def _build_create_lines(self, payload: Mapping[str, Any]) -> list[str]:
+        """
+        构建新增记录的详细信息行
+
+        功能:
+            - 从payload中提取字段信息
+            - 根据DSL模板构建详细信息行
+            - 检查并添加缺少的字段信息
+        """
         lines: list[str] = []
         fields_raw = payload.get("fields")
         fields = fields_raw if isinstance(fields_raw, Mapping) else {}
@@ -64,6 +99,13 @@ class ActionEngine:
         return lines
 
     def _build_create_lines_from_detail_dsl(self, *, table_name: str, fields: Mapping[str, Any]) -> list[str]:
+        """
+        根据DSL模板构建新增记录的详细信息行
+
+        功能:
+            - 解析DSL模板并提取相关字段信息
+            - 构建详细信息行
+        """
         domain = self._resolve_domain(table_name)
         style = {"case": "T1", "contracts": "HT-T1", "bidding": "ZB-T1"}.get(domain, "")
         if not style:
@@ -128,6 +170,12 @@ class ActionEngine:
         key: str,
         fields: Mapping[str, Any],
     ) -> str:
+        """
+        根据字段键解析值
+
+        功能:
+            - 从query_cfg中提取字段键并解析值
+        """
         field_keys_raw = query_cfg.get("field_keys", {}).get(domain, {})
         field_keys = field_keys_raw if isinstance(field_keys_raw, Mapping) else {}
         candidates_raw = field_keys.get(key)
@@ -141,6 +189,12 @@ class ActionEngine:
         return ""
 
     def _resolve_domain(self, table_name: str) -> str:
+        """
+        解析数据表名称以确定领域
+
+        功能:
+            - 根据数据表名称中的关键词确定领域
+        """
         combined = str(table_name or "").replace(" ", "")
         if "合同" in combined:
             return "contracts"
@@ -151,6 +205,13 @@ class ActionEngine:
         return "case"
 
     def _build_update_lines(self, payload: Mapping[str, Any]) -> list[str]:
+        """
+        构建更新记录的详细信息行
+
+        功能:
+            - 从payload中提取变更明细
+            - 构建详细信息行
+        """
         lines: list[str] = []
         diff_raw = payload.get("diff")
         diff = diff_raw if isinstance(diff_raw, list) else []
@@ -189,6 +250,13 @@ class ActionEngine:
         return lines
 
     def _build_delete_lines(self, payload: Mapping[str, Any]) -> list[str]:
+        """
+        构建删除记录的详细信息行
+
+        功能:
+            - 从payload中提取记录ID
+            - 构建详细信息行并添加警告信息
+        """
         lines: list[str] = []
         record_id = str(payload.get("record_id") or "").strip()
         if record_id:
@@ -197,6 +265,13 @@ class ActionEngine:
         return lines
 
     def _build_close_lines(self, payload: Mapping[str, Any]) -> list[str]:
+        """
+        构建关闭记录的详细信息行
+
+        功能:
+            - 从payload中提取状态变更信息
+            - 构建详细信息行并添加操作后影响
+        """
         lines: list[str] = []
         status_field = str(payload.get("close_status_field") or "状态").strip() or "状态"
         before = str(payload.get("close_status_from") or "").strip() or "(空)"
@@ -212,6 +287,13 @@ class ActionEngine:
         return lines
 
     def _build_reminder_lines(self, payload: Mapping[str, Any]) -> list[str]:
+        """
+        构建提醒的详细信息行
+
+        功能:
+            - 从payload中提取提醒信息
+            - 构建详细信息行
+        """
         lines: list[str] = []
         reminders_raw = payload.get("reminders")
         reminders = reminders_raw if isinstance(reminders_raw, list) else []
@@ -228,6 +310,12 @@ class ActionEngine:
         return lines
 
     def build_auto_reminders(self, table_name: str, fields: Mapping[str, Any]) -> list[str]:
+        """
+        构建自动提醒
+
+        功能:
+            - 根据数据表名称和字段信息构建自动提醒
+        """
         table = str(table_name or "")
         reminder_defs = {
             "案件": {
@@ -268,6 +356,12 @@ class ActionEngine:
         return reminders
 
     def build_auto_reminder_items(self, table_name: str, fields: Mapping[str, Any]) -> list[dict[str, str]]:
+        """
+        构建自动提醒项
+
+        功能:
+            - 根据数据表名称和字段信息构建自动提醒项
+        """
         table = str(table_name or "")
         reminder_defs = {
             "案件": {
@@ -315,6 +409,12 @@ class ActionEngine:
         return items
 
     def _parse_date(self, value: Any) -> date | None:
+        """
+        解析日期字符串为date对象
+
+        功能:
+            - 尝试将输入字符串解析为date对象
+        """
         text = str(value or "").strip().lstrip("：:")
         if not text:
             return None

@@ -59,7 +59,14 @@ def normalize_content(
     max_file_bytes: int = 5 * 1024 * 1024,
     metrics_enabled: bool = True,
 ) -> NormalizedInput:
-    """将飞书消息 content 标准化为文本输入。"""
+    """
+    将飞书消息 content 标准化为文本输入。
+
+    功能:
+        - 根据消息类型提取文本或处理附件
+        - 控制文本段落数量和字符数
+        - 记录文件处理的指标
+    """
     normalized_type = str(message_type or "").strip().lower()
     segments: list[str]
 
@@ -135,6 +142,12 @@ def normalize_content(
 
 
 def _extract_text(content: str) -> str:
+    """
+    从 JSON 内容中提取文本。
+
+    功能:
+        - 解析 JSON 并提取文本字段
+    """
     if not content:
         return ""
     try:
@@ -147,6 +160,12 @@ def _extract_text(content: str) -> str:
 
 
 def _extract_post_texts(content: str) -> list[str]:
+    """
+    从 JSON 内容中提取帖子文本。
+
+    功能:
+        - 解析 JSON 并提取帖子中的文本内容
+    """
     if not content:
         return []
     try:
@@ -185,6 +204,13 @@ def _extract_post_texts(content: str) -> list[str]:
 
 
 def _extract_attachment(content: str, max_file_bytes: int, message_type: str) -> list[NormalizedAttachment]:
+    """
+    从 JSON 内容中提取附件信息。
+
+    功能:
+        - 解析 JSON 并提取附件元数据
+        - 检查文件大小和类型是否符合要求
+    """
     if not content:
         return []
 
@@ -240,6 +266,13 @@ def _extract_attachment(content: str, max_file_bytes: int, message_type: str) ->
 
 
 def _resolve_file_type(file_name: str, payload: dict[str, object]) -> str:
+    """
+    解析文件类型。
+
+    功能:
+        - 从 payload 中提取文件类型
+        - 根据文件名推断文件类型
+    """
     explicit_type = str(payload.get("file_type") or payload.get("fileType") or "").strip().lower()
     if explicit_type:
         return explicit_type

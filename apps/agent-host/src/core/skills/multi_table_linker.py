@@ -1,10 +1,9 @@
 """
-多表联动服务。
-
-提供：
-- 父表 Create/Update/Delete 后的子表联动写入
-- 子表联动失败时的可修复任务描述
-- 基于当前 active_record 的跨表查询联动参数重写
+描述: 多表联动服务
+主要功能:
+    - 父表 Create/Update/Delete 后的子表联动写入
+    - 子表联动失败时的可修复任务描述
+    - 基于当前 active_record 的跨表查询联动参数重写
 """
 
 from __future__ import annotations
@@ -32,8 +31,15 @@ def _as_list(value: Any) -> list[str]:
     return []
 
 
+# region 多表联动引擎
 class MultiTableLinker:
-    """轻量联动引擎。"""
+    """
+    轻量联动引擎。
+    
+    功能:
+        - 验证多表关联关系
+        - 在父表操作后级联更新/创建子表内容
+    """
 
     _REFERENCE_TOKENS = ("这个", "这条", "那条", "上一条", "刚才", "刚刚", "第")
 

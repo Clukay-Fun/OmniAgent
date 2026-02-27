@@ -1,7 +1,8 @@
 """
-L0 规则硬约束引擎。
-
-仅处理精确触发与状态检查，不做语义理解。
+描述: L0 规则硬约束引擎。
+主要功能:
+    - 处理精确触发与状态检查
+    - 不做语义理解
 """
 
 from __future__ import annotations
@@ -18,6 +19,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class L0Decision:
+    """
+    L0 规则引擎的决策结果。
+
+    功能:
+        - 表示是否已处理请求
+        - 包含回复内容
+        - 强制执行的技能
+        - 强制的上一个结果
+        - 额外的强制参数
+        - 意图提示
+    """
     handled: bool = False
     reply: dict[str, Any] | None = None
     force_skill: str | None = None
@@ -27,7 +39,13 @@ class L0Decision:
 
 
 class L0RuleEngine:
-    """L0 规则引擎。"""
+    """
+    L0 规则引擎。
+
+    功能:
+        - 初始化规则引擎
+        - 评估用户输入并返回决策结果
+    """
 
     _EMPTY_SET = {"", "...", "。。。", "???", "？？？", ".", "。", "?", "？"}
 
@@ -37,6 +55,14 @@ class L0RuleEngine:
         l0_rules: dict[str, Any] | None = None,
         skills_config: dict[str, Any] | None = None,
     ) -> None:
+        """
+        初始化 L0 规则引擎。
+
+        功能:
+            - 设置状态管理器
+            - 加载规则和技能配置
+            - 初始化确认短语、取消短语、下一页触发词等
+        """
         self._state = state_manager
         self._rules = l0_rules or {}
         self._skills_config = skills_config or {}
@@ -87,6 +113,20 @@ class L0RuleEngine:
         }
 
     def evaluate(self, user_id: str, text: str) -> L0Decision:
+        """
+        评估用户输入并返回决策结果。
+
+        功能:
+            - 清理过期状态
+            - 处理空消息与纯符号
+            - 拦截批量删除操作
+            - 处理删除确认状态
+            - 处理通用待办动作状态
+            - 处理分页请求
+            - 预判闲聊
+            - 处理第N个记录请求
+            - 处理指代 + 动作请求
+        """
         query = (text or "").strip()
         normalized = self._normalize_text(query)
 
@@ -258,10 +298,26 @@ class L0RuleEngine:
         return L0Decision(handled=False)
 
     def _normalize_text(self, text: str) -> str:
+        """
+        规范化文本。
+
+        功能:
+            - 去除首尾空白字符
+            - 转换为小写
+            - 去除特定标点符号
+        """
         normalized = (text or "").strip().lower()
         return normalized.strip("，。！？!?,. ")
 
     def _is_empty_like(self, text: str) -> bool:
+        """
+        判断文本是否为空或仅包含无意义字符。
+
+        功能:
+            - 检查文本是否在空集合中
+            - 检查文本是否为空
+            - 检查文本是否不包含中文、数字、字母
+        """
         if text in self._EMPTY_SET:
             return True
         if not text:
@@ -274,6 +330,13 @@ class L0RuleEngine:
         return not has_meaningful
 
     def _extract_ordinal_index(self, text: str) -> int | None:
+        """
+        提取文本中的序号。
+
+        功能:
+            - 使用正则表达式查找序号
+            - 将中文数字转换为阿拉伯数字
+        """
         m = re.search(r"第\s*([一二三四五六七八九十\d]+)\s*个", text)
         if not m:
             return None
@@ -304,6 +367,13 @@ class L0RuleEngine:
         return None
 
     def _detect_action_skill(self, query: str) -> str | None:
+        """
+        检测并返回相应的技能。
+
+        功能:
+            - 检查文本中是否包含删除触发词
+            - 检查文本中是否包含更新触发词
+        """
         text = (query or "").strip()
         if not text:
             return None
@@ -314,6 +384,13 @@ class L0RuleEngine:
         return None
 
     def _has_reference_token(self, query: str) -> bool:
+        """
+        检查文本中是否包含指代词。
+
+        功能:
+            - 检查文本中是否包含序号
+            - 检查文本中是否包含指代词
+        """
         text = (query or "").strip()
         if not text:
             return False
@@ -322,6 +399,12 @@ class L0RuleEngine:
         return any(token in text for token in self._reference_tokens)
 
     def _map_pending_action_skill(self, action: str) -> str | None:
+        """
+        映射待办动作到相应的技能。
+
+        功能:
+            - 根据动作类型返回相应的技能
+        """
         mapping = {
             "create_record": "CreateSkill",
             "update_record": "UpdateSkill",
@@ -335,6 +418,14 @@ class L0RuleEngine:
         return mapping.get(key)
 
     def _should_continue_pending_action(self, query: str, action: str | None = None) -> bool:
+        """
+        判断是否应继续待办动作。
+
+        功能:
+            - 检查文本中是否包含确认或取消触发词
+            - 检查文本中是否包含更新提示
+            - 检查文本中是否包含序号或字段提示
+        """
         text = (query or "").strip()
         if not text:
             return False
@@ -367,6 +458,14 @@ class L0RuleEngine:
         return any(("\u4e00" <= ch <= "\u9fff") or ch.isalnum() for ch in text)
 
     def _is_chitchat_like(self, query: str) -> bool:
+        """
+        判断文本是否为闲聊内容。
+
+        功能:
+            - 检查文本中是否包含领域提示词
+            - 检查文本中是否包含闲聊关键词
+            - 检查文本长度和特定短语
+        """
         text = (query or "").strip()
         if not text:
             return False

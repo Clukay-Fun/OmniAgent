@@ -1,3 +1,10 @@
+"""
+描述: 行为执行服务
+主要功能:
+    - 统一处理多维子表或单表的增删改动作
+    - 封装 C1/C2/C3 逻辑
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,8 +30,15 @@ class ActionExecutionOutcome:
     data: dict[str, Any]
 
 
+# region 执行服务
 class ActionExecutionService:
-    """Unified write execution for C1/C2/C3 actions."""
+    """
+    统一写入执行服务
+
+    功能:
+        - 执行针对不同数据表的统一创建、更新、删除操作
+        - 执行前后相关的联动或后置提示
+    """
 
     _BUILTIN_CONFIG: dict[str, Any] = {
         "table_type_alias": {

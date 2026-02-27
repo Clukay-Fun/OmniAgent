@@ -1,8 +1,8 @@
-"""LLM-based skill selector.
-
-This module builds a constrained routing prompt from SKILL.md metadata and asks
-LLM to choose one skill. It is fail-safe by design: timeout, parse errors,
-unknown skill names, or low-confidence outputs all return ``None``.
+"""
+描述: 基于LLM的技能选择器模块。
+主要功能:
+    - 根据SKILL.md元数据构建受限路由提示，并请求LLM选择一个技能。
+    - 设计上具有容错性：超时、解析错误、未知技能名称或低置信度输出均返回None。
 """
 
 from __future__ import annotations
@@ -20,17 +20,29 @@ from src.utils.exceptions import LLMTimeoutError
 
 logger = logging.getLogger(__name__)
 
-
+# region 数据类定义
 @dataclass
 class LLMSelectionResult:
+    """
+    LLM选择结果的数据类。
+
+    功能:
+        - 存储选择的技能名称、置信度、推理理由和延迟时间。
+    """
     skill_name: str
     confidence: float
     reasoning: str
     latency_ms: float
+# endregion
 
-
+# region 类定义
 class LLMSkillSelector:
-    """Select one skill name via LLM based on skill metadata."""
+    """
+    基于LLM的技能选择器。
+
+    功能:
+        - 根据技能元数据选择一个技能名称。
+    """
 
     def __init__(
         self,
@@ -39,6 +51,12 @@ class LLMSkillSelector:
         timeout_seconds: float = 5.0,
         confidence_threshold: float = 0.6,
     ) -> None:
+        """
+        初始化LLMSkillSelector。
+
+        功能:
+            - 初始化LLM客户端、元数据加载器、超时时间和置信度阈值。
+        """
         self._llm = llm_client
         self._metadata = metadata_loader
         self._timeout_seconds = max(0.1, float(timeout_seconds))
@@ -49,6 +67,15 @@ class LLMSkillSelector:
         user_message: str,
         context: Any | None = None,
     ) -> LLMSelectionResult | None:
+        """
+        根据用户消息选择一个技能。
+
+        功能:
+            - 获取所有可用技能。
+            - 构建选择提示。
+            - 请求LLM并处理响应。
+            - 解析响应并返回选择结果。
+        """
         del context
 
         skills = self._metadata.get_all_for_routing()
@@ -81,6 +108,13 @@ class LLMSkillSelector:
 
     @staticmethod
     def _normalize_response_payload(raw_response: Any) -> dict[str, Any] | None:
+        """
+        规范化LLM响应负载。
+
+        功能:
+            - 将响应转换为字典格式。
+            - 处理JSON解析错误。
+        """
         if isinstance(raw_response, dict):
             return raw_response
 
@@ -125,6 +159,13 @@ class LLMSkillSelector:
 
     @staticmethod
     def _build_selection_prompt(skills: list[dict[str, str]], user_message: str) -> str:
+        """
+        构建技能选择提示。
+
+        功能:
+            - 格式化技能描述。
+            - 构建提示字符串。
+        """
         skill_descriptions = "\n".join(
             f"- {item.get('name', '')}: {item.get('description', '')}（触发条件：{item.get('trigger_conditions', '')}）"
             for item in skills
@@ -146,6 +187,14 @@ class LLMSkillSelector:
         response: dict[str, Any],
         available_skills: list[dict[str, str]],
     ) -> LLMSelectionResult | None:
+        """
+        解析LLM响应。
+
+        功能:
+            - 提取技能名称、置信度和推理理由。
+            - 验证技能名称的有效性。
+            - 检查置信度是否达到阈值。
+        """
         skill_name = str(response.get("skill_name") or "").strip()
         if not skill_name:
             return None
@@ -186,3 +235,4 @@ class LLMSkillSelector:
             reasoning=reasoning,
             latency_ms=0.0,
         )
+# endregion

@@ -1,10 +1,9 @@
 """
-L1 Planner 引擎。
-
-职责：
-- 单次 LLM 规划 intent/tool/params
-- 输出 schema 校验
-- LLM 失败时规则降级
+描述: L1 Planner 引擎
+主要功能:
+    - 单次 LLM 规划 intent/tool/params
+    - 输出 schema 校验
+    - LLM 失败时规则降级
 """
 
 from __future__ import annotations
@@ -22,8 +21,15 @@ from src.core.planner.schema import PlannerOutput
 logger = logging.getLogger(__name__)
 
 
+# region 规划引擎控制器
 class PlannerEngine:
-    """L1 Planner。"""
+    """
+    L1 Planner 引擎
+
+    功能:
+        - 结合提示词和系统规划，发起 LLM 调用获取用户意图和动作。
+        - 从返回结果中解析成结构化模型，失败时提供正则规则降级处理。
+    """
 
     def __init__(
         self,

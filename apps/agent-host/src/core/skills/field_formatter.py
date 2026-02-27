@@ -1,3 +1,10 @@
+"""
+描述: 提供字段值格式化的功能，根据字段元数据将不同类型的值格式化为统一的文本表示。
+主要功能:
+    - 根据字段类型格式化字段值
+    - 处理文本、数字、日期、选择、人员、布尔值和附件等多种字段类型
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,18 +26,42 @@ _FIELD_TYPE_ATTACHMENT = {17}
 
 @dataclass(frozen=True)
 class FieldFormatResult:
+    """
+    字段格式化结果的数据类
+
+    属性:
+        - text: 格式化后的文本
+        - field_type: 字段类型
+        - status: 格式化状态
+    """
     text: str
     field_type: str
     status: str
 
 
+# region 辅助函数
 def _safe_text(value: Any) -> str:
+    """
+    安全地将任意值转换为字符串
+
+    功能:
+        - 如果值为None，返回空字符串
+        - 否则，返回值的字符串表示
+    """
     if value is None:
         return ""
     return str(value)
 
 
 def _to_decimal(value: Any) -> Decimal | None:
+    """
+    将任意值转换为Decimal类型
+
+    功能:
+        - 处理布尔值、整数、浮点数和Decimal类型
+        - 处理字符串形式的数字，支持逗号分隔
+        - 如果转换失败，返回None
+    """
     if isinstance(value, bool):
         return Decimal(int(value))
     if isinstance(value, (int, float, Decimal)):
@@ -48,6 +79,14 @@ def _to_decimal(value: Any) -> Decimal | None:
 
 
 def _format_number(value: Any) -> tuple[str, str]:
+    """
+    格式化数字值
+
+    功能:
+        - 将值转换为Decimal类型
+        - 如果转换失败，返回原始值和"malformed"状态
+        - 格式化为整数或带两位小数的字符串
+    """
     number = _to_decimal(value)
     if number is None:
         return _safe_text(value), "malformed"
@@ -59,6 +98,14 @@ def _format_number(value: Any) -> tuple[str, str]:
 
 
 def _format_currency(value: Any) -> tuple[str, str]:
+    """
+    格式化货币值
+
+    功能:
+        - 将值转换为Decimal类型
+        - 如果转换失败，返回原始值和"malformed"状态
+        - 格式化为带货币符号的字符串
+    """
     number = _to_decimal(value)
     if number is None:
         return _safe_text(value), "malformed"
@@ -66,6 +113,14 @@ def _format_currency(value: Any) -> tuple[str, str]:
 
 
 def _parse_datetime(value: Any) -> datetime | None:
+    """
+    解析日期时间值
+
+    功能:
+        - 处理datetime对象、时间戳和ISO格式的字符串
+        - 支持毫秒级和秒级时间戳
+        - 如果解析失败，返回None
+    """
     if isinstance(value, datetime):
         return value
     if isinstance(value, (int, float)):
@@ -95,6 +150,14 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 
 def _format_datetime(value: Any) -> tuple[str, str]:
+    """
+    格式化日期时间值
+
+    功能:
+        - 解析日期时间值
+        - 如果解析失败，返回原始值和"malformed"状态
+        - 格式化为本地时间的字符串
+    """
     dt = _parse_datetime(value)
     if dt is None:
         return _safe_text(value), "malformed"
@@ -103,6 +166,14 @@ def _format_datetime(value: Any) -> tuple[str, str]:
 
 
 def _format_select(value: Any) -> str:
+    """
+    格式化选择值
+
+    功能:
+        - 处理字典和列表类型的选择值
+        - 提取标签、名称、文本或值字段
+        - 如果值为空，返回空字符串
+    """
     if isinstance(value, dict):
         for key in ("label", "name", "text", "value"):
             candidate = value.get(key)
@@ -117,6 +188,14 @@ def _format_select(value: Any) -> str:
 
 
 def _format_multi_select(value: Any) -> tuple[str, str]:
+    """
+    格式化多选值
+
+    功能:
+        - 使用_format_select函数处理多选值
+        - 如果格式化成功，返回格式化后的文本和"success"状态
+        - 否则，返回原始值和"malformed"状态
+    """
     text = _format_select(value)
     if text:
         return text, "success"
@@ -124,6 +203,15 @@ def _format_multi_select(value: Any) -> tuple[str, str]:
 
 
 def _format_person(value: Any) -> tuple[str, str]:
+    """
+    格式化人员值
+
+    功能:
+        - 处理字典和列表类型的人员值
+        - 提取用户名称或ID
+        - 如果值为空，返回空字符串和"malformed"状态
+        - 如果值为有效的用户名称，返回格式化后的字符串和"success"状态
+    """
     if isinstance(value, dict):
         nested_users = value.get("users") or value.get("value")
         if isinstance(nested_users, list):
@@ -147,6 +235,14 @@ def _format_person(value: Any) -> tuple[str, str]:
 
 
 def _format_bool(value: Any) -> tuple[str, str]:
+    """
+    格式化布尔值
+
+    功能:
+        - 处理布尔类型和字符串形式的布尔值
+        - 支持多种表示方式（如"1", "true", "yes", "y", "on"）
+        - 如果值为空或无效，返回原始值和"malformed"状态
+    """
     if isinstance(value, bool):
         return ("OK 是" if value else "OK 否"), "success"
     normalized = _safe_text(value).strip().lower()
@@ -158,6 +254,15 @@ def _format_bool(value: Any) -> tuple[str, str]:
 
 
 def _format_attachment(value: Any) -> tuple[str, str]:
+    """
+    格式化附件值
+
+    功能:
+        - 处理列表和字典类型的附件值
+        - 提取文件名
+        - 如果值为空，返回空字符串和"malformed"状态
+        - 如果值为有效的文件名，返回格式化后的字符串和"success"状态
+    """
     def _extract_name(item: Any) -> str:
         if isinstance(item, dict):
             return _safe_text(item.get("name") or item.get("file_name") or item.get("filename"))
@@ -179,9 +284,18 @@ def _format_attachment(value: Any) -> tuple[str, str]:
     if not name:
         return _safe_text(value), "malformed"
     return f"OK {name}", "success"
+# endregion
 
 
+# region 字段类型解析
 def _is_currency(field_meta: dict[str, Any] | None) -> bool:
+    """
+    判断字段是否为货币类型
+
+    功能:
+        - 检查字段元数据中的类型名称、标签、标题和名称字段
+        - 如果包含"currency", "货币", "金额", "price", "fee"等关键词，返回True
+    """
     if not isinstance(field_meta, dict):
         return False
     candidates = [
@@ -194,6 +308,14 @@ def _is_currency(field_meta: dict[str, Any] | None) -> bool:
 
 
 def _resolve_kind(field_meta: dict[str, Any] | None) -> str:
+    """
+    解析字段类型
+
+    功能:
+        - 根据字段元数据中的类型字段确定字段类型
+        - 支持文本、数字、日期、选择、人员、布尔值和附件等多种类型
+        - 如果无法确定类型，返回"unknown"
+    """
     if not isinstance(field_meta, dict):
         return "unknown"
     raw_type = _safe_text(field_meta.get("type")).strip()
@@ -221,9 +343,18 @@ def _resolve_kind(field_meta: dict[str, Any] | None) -> str:
     if field_type in _FIELD_TYPE_ATTACHMENT:
         return "attachment"
     return "unknown"
+# endregion
 
 
 def format_field_value(value: Any, field_meta: dict[str, Any] | None = None) -> FieldFormatResult:
+    """
+    格式化字段值
+
+    功能:
+        - 根据字段元数据确定字段类型
+        - 使用相应的格式化函数处理字段值
+        - 返回格式化结果的数据类
+    """
     kind = _resolve_kind(field_meta)
     if kind == "text":
         return FieldFormatResult(text=_safe_text(value), field_type=kind, status="success")

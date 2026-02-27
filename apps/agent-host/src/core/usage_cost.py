@@ -1,3 +1,10 @@
+"""
+描述: 该模块负责加载模型定价信息并计算使用成本。
+主要功能:
+    - 加载模型定价信息
+    - 计算模型使用成本
+"""
+
 from __future__ import annotations
 
 import json
@@ -14,12 +21,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ModelPricing:
+    """
+    模型定价数据类
+
+    功能:
+        - 存储每个模型的输入、输出和总token定价
+    """
     input_per_token: float = 0.0
     output_per_token: float = 0.0
     total_per_token: float = 0.0
 
 
 def load_model_pricing(model_pricing_path: str = "", model_pricing_json: str = "") -> dict[str, ModelPricing]:
+    """
+    加载模型定价信息
+
+    功能:
+        - 从JSON字符串或文件路径加载模型定价信息
+        - 解析JSON或YAML格式的数据
+        - 返回模型定价字典
+    """
     data: dict[str, Any] = {}
     inline = str(model_pricing_json or "").strip()
     if inline:
@@ -69,6 +90,13 @@ def compute_usage_cost(
     token_count: int,
     pricing_map: dict[str, ModelPricing],
 ) -> tuple[float, bool, str]:
+    """
+    计算模型使用成本
+
+    功能:
+        - 根据模型名称和token数量计算使用成本
+        - 返回计算结果、错误标志和错误信息
+    """
     pricing = pricing_map.get(str(model or "").strip())
     if pricing is None:
         return 0.0, True, "unknown_model_pricing"
@@ -96,6 +124,14 @@ def compute_usage_cost(
 
 
 def _parse_model_pricing(payload: Any) -> ModelPricing | None:
+    """
+    解析模型定价信息
+
+    功能:
+        - 从字典中提取定价信息
+        - 处理不同单位的定价信息
+        - 返回ModelPricing对象或None
+    """
     if not isinstance(payload, dict):
         return None
 
@@ -124,6 +160,13 @@ def _parse_model_pricing(payload: Any) -> ModelPricing | None:
 
 
 def _to_float(value: Any) -> float:
+    """
+    将任意值转换为浮点数
+
+    功能:
+        - 尝试将输入值转换为浮点数
+        - 如果转换失败或值为负数，则返回0.0
+    """
     try:
         parsed = float(value)
     except Exception:
