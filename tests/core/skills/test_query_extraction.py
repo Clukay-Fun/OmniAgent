@@ -183,6 +183,7 @@ def test_format_case_result_adds_query_navigation_pending_action_when_enabled() 
     callbacks = pending.get("payload", {}).get("callbacks", {})
     assert callbacks["query_list_next_page"]["kind"] == "pagination"
     assert callbacks["query_list_today_hearing"]["query"] == "今天开庭"
+    assert "当前仅展示前 2 条，还有 6 条未展示" in result.reply_text
 
 
 def test_format_case_result_uses_markdown_list_and_status_badge() -> None:

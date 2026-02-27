@@ -1351,7 +1351,7 @@ class QuerySkill(BaseSkill):
         if notice:
             parts = [notice, "", title]
         if pagination and pagination.get("has_more"):
-            parts.append("回复“下一页”查看更多。")
+            parts.append(self._build_truncation_hint(displayed_count=count, total=total))
         reply_text = "\n\n".join(parts + items)
         
         # 构建卡片
@@ -1462,6 +1462,16 @@ class QuerySkill(BaseSkill):
                 "callbacks": callbacks,
             },
         }
+
+    def _build_truncation_hint(self, displayed_count: int, total: Any) -> str:
+        shown = max(0, int(displayed_count))
+        if isinstance(total, int) and total > shown:
+            remaining = total - shown
+            return (
+                f"*(注: 为避免刷屏，当前仅展示前 {shown} 条，还有 {remaining} 条未展示。"
+                "可点击下方【下一页】查看)*"
+            )
+        return "*(注: 为避免刷屏，当前结果较多。可点击下方【下一页】继续查看)*"
 
     def _clean_text_value(self, value: Any) -> str:
         text = str(value or "")

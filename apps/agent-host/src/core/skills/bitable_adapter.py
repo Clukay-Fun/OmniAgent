@@ -395,30 +395,59 @@ class BitableAdapter:
         available_fields: list[str],
         normalized_lookup: dict[str, str],
     ) -> str | None:
+        # Step 1: exact match in schema
         if input_name in available_fields:
             return input_name
 
-        normalized = _normalize_text(input_name)
-        if normalized and normalized in normalized_lookup:
-            return normalized_lookup[normalized]
-
-        for candidate in self._candidate_field_names(input_name):
+        # Keep historical alias candidates, but only for exact-like checks
+        candidates = self._candidate_field_names(input_name)
+        for candidate in candidates:
             if candidate in available_fields:
                 return candidate
-            candidate_norm = _normalize_text(candidate)
-            if candidate_norm in normalized_lookup:
-                return normalized_lookup[candidate_norm]
 
-        fuzzy = []
+        # Step 2: exact match after removing spaces
+        compact_lookup: dict[str, list[str]] = {}
+        for field in available_fields:
+            compact = re.sub(r"\s+", "", str(field))
+            if not compact:
+                continue
+            compact_lookup.setdefault(compact, []).append(field)
+
+        for candidate in candidates:
+            compact_candidate = re.sub(r"\s+", "", str(candidate))
+            if not compact_candidate:
+                continue
+            compact_matches = compact_lookup.get(compact_candidate, [])
+            if len(compact_matches) == 1:
+                return compact_matches[0]
+            if len(compact_matches) >= 2:
+                return None
+
+        normalized = _normalize_text(input_name)
+        if not normalized:
+            return None
+
+        # Step 3: suffix match ("状态" -> "任务状态"), only unique match is accepted
+        suffix_matches: list[str] = []
         for field in available_fields:
             fn = _normalize_text(field)
-            if not normalized or not fn:
-                continue
-            if normalized in fn or fn in normalized:
-                fuzzy.append(field)
-        if len(fuzzy) == 1:
-            return fuzzy[0]
+            if fn and fn.endswith(normalized):
+                suffix_matches.append(field)
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
+        if len(suffix_matches) >= 2:
+            return None
 
+        # Step 4: contains match ("相关" -> "相关人"), only unique match is accepted
+        contains_matches: list[str] = []
+        for field in available_fields:
+            fn = _normalize_text(field)
+            if fn and normalized in fn:
+                contains_matches.append(field)
+        if len(contains_matches) == 1:
+            return contains_matches[0]
+
+        # Step 5: multiple candidates are treated as ambiguous; require user clarification
         return None
 
     def _candidate_field_names(self, input_name: str) -> list[str]:

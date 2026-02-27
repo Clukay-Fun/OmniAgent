@@ -990,10 +990,16 @@ class UpdateSkill(BaseSkill):
         close_semantic: str = "default",
         reply_text: str | None = None,
     ) -> SkillResult:
+        complete_preview_fields = self._ensure_preview_fields_cover_diff(
+            preview_fields=preview_fields,
+            fields=fields,
+            source_fields=source_fields,
+            diff_items=diff_items,
+        )
         if action_name == "close_record":
             pending_data = self._action_service.build_pending_close_action_data(
                 record_id=record_id,
-                fields=preview_fields,
+                fields=complete_preview_fields,
                 source_fields=source_fields,
                 diff_items=diff_items,
                 table_id=table_id,
@@ -1010,7 +1016,7 @@ class UpdateSkill(BaseSkill):
                 action_name=action_name,
                 record_id=record_id,
                 fields=fields,
-                preview_fields=preview_fields,
+                preview_fields=complete_preview_fields,
                 source_fields=source_fields,
                 diff_items=diff_items,
                 table_id=table_id,
@@ -1029,6 +1035,32 @@ class UpdateSkill(BaseSkill):
             reply_text=reply_text or self._build_update_confirm_reply(diff_items, ttl_seconds),
         )
 
+    def _ensure_preview_fields_cover_diff(
+        self,
+        *,
+        preview_fields: dict[str, Any],
+        fields: dict[str, Any],
+        source_fields: dict[str, Any],
+        diff_items: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = dict(preview_fields)
+        for item in diff_items:
+            if not isinstance(item, dict):
+                continue
+            field_name = str(item.get("field") or "").strip()
+            if not field_name:
+                continue
+            if field_name in merged:
+                continue
+            if field_name in fields:
+                merged[field_name] = fields.get(field_name)
+                continue
+            if field_name in source_fields:
+                merged[field_name] = source_fields.get(field_name)
+                continue
+            merged[field_name] = item.get("new")
+        return merged
+
     def _build_update_confirm_reply(self, diff_items: list[dict[str, str]], ttl_seconds: int) -> str:
         lines = ["请确认以下更新（旧值 -> 新值）："]
         for item in diff_items:
@@ -1038,13 +1070,16 @@ class UpdateSkill(BaseSkill):
             mode = str(item.get("mode") or "").strip().lower()
             if mode == "append":
                 delta = str(item.get("delta") or "").strip()
-                lines.append(f"- {field}: 追加模式")
+                lines.append(f"- {field}")
+                lines.append("  模式: 追加")
                 lines.append(f"  旧值: {old}")
                 if delta:
                     lines.append(f"  新增: {delta}")
                 lines.append(f"  追加后: {new}")
             else:
-                lines.append(f"- {field}: {old} -> {new}")
+                lines.append(f"- {field}")
+                lines.append(f"  旧值: {old}")
+                lines.append(f"  新值: {new}")
         lines.append(f"请在 {ttl_seconds} 秒内回复“确认”继续，回复“取消”终止。")
         return "\n".join(lines)
 
