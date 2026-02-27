@@ -339,6 +339,7 @@ class AgentOrchestrator:
         self._router = SkillRouter(
             skills_config=self._skills_config,
             max_hops=max_hops,
+            llm_client=getattr(self, "_task_llm", self._llm),
         )
         
         # 初始化上下文管理器
@@ -2604,6 +2605,7 @@ class AgentOrchestrator:
         self._router = SkillRouter(
             skills_config=self._skills_config,
             max_hops=max_hops,
+            llm_client=getattr(self, "_task_llm", self._llm),
         )
 
         self._llm_timeout = float(self._skills_config.get("intent", {}).get("llm_timeout", 10))

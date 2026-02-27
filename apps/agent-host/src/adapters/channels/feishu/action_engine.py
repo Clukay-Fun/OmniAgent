@@ -158,7 +158,7 @@ class ActionEngine:
             return lines
 
         lines.append("- 变更明细:")
-        for item in diff[:16]:
+        for item in diff:
             if not isinstance(item, Mapping):
                 continue
             field = str(item.get("field") or "字段").strip()
@@ -167,13 +167,16 @@ class ActionEngine:
             mode = str(item.get("mode") or "").strip().lower()
             if mode == "append":
                 delta = str(item.get("delta") or "").strip()
-                lines.append(f"  - {field}: 追加模式")
+                lines.append(f"  - {field}")
+                lines.append("    模式: 追加")
                 lines.append(f"    旧值: {old}")
                 if delta:
                     lines.append(f"    新增: {delta}")
                 lines.append(f"    追加后: {new}")
             else:
-                lines.append(f"  - {field}: {old} -> {new}")
+                lines.append(f"  - {field}")
+                lines.append(f"    旧值: {old}")
+                lines.append(f"    新值: {new}")
             if "进展" in field:
                 suggestions = self._smart.analyze_progress_for_suggestions(new, table_type="case")
                 for suggestion in suggestions:

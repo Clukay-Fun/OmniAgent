@@ -622,6 +622,56 @@ def test_update_skill_append_preview_matches_final_write() -> None:
     assert writer.update_calls[0]["fields"]["进展"] == progress_diff.get("new")
 
 
+def test_update_skill_pending_payload_keeps_all_ten_field_diffs() -> None:
+    writer = _FakeWriter()
+    skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    source_fields = {f"字段{idx}": f"旧值{idx}" for idx in range(1, 11)}
+    target_fields = {f"字段{idx}": f"新值{idx}" for idx in range(1, 11)}
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="请更新这些字段",
+                user_id="u1",
+                extra={
+                    "active_record": {
+                        "record_id": "rec_999",
+                        "fields": source_fields,
+                        "fields_text": source_fields,
+                    },
+                    "planner_plan": {
+                        "tool": "record.update",
+                        "params": {
+                            "record_id": "rec_999",
+                            "fields": target_fields,
+                        },
+                    },
+                },
+            )
+        )
+    )
+
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    payload = pending_action.get("payload") or {}
+    diff = payload.get("diff") or []
+    preview_fields = payload.get("preview_fields") or {}
+
+    assert len(diff) == 10
+    for idx in range(1, 11):
+        field = f"字段{idx}"
+        expected_old = f"旧值{idx}"
+        expected_new = f"新值{idx}"
+        item = next((it for it in diff if isinstance(it, dict) and it.get("field") == field), None)
+        assert isinstance(item, dict)
+        assert item.get("old") == expected_old
+        assert item.get("new") == expected_new
+        assert preview_fields.get(field) == expected_new
+
+
 def test_update_skill_query_close_default_creates_close_pending() -> None:
     writer = _FakeWriter()
     skill = UpdateSkill(mcp_client=object(), skills_config={}, data_writer=writer)

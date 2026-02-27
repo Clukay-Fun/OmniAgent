@@ -183,6 +183,33 @@ def test_format_case_result_adds_query_navigation_pending_action_when_enabled() 
     callbacks = pending.get("payload", {}).get("callbacks", {})
     assert callbacks["query_list_next_page"]["kind"] == "pagination"
     assert callbacks["query_list_today_hearing"]["query"] == "今天开庭"
+    assert "当前仅展示前 2 条，还有 6 条未展示" in result.reply_text
+
+
+def test_format_case_result_uses_markdown_list_and_status_badge() -> None:
+    skill = _build_skill()
+    result = skill._format_case_result(
+        records=[
+            {
+                "record_id": "rec_1",
+                "record_url": "https://example.com/1",
+                "fields_text": {
+                    "委托人及联系方式": "张三",
+                    "对方当事人": "李四",
+                    "案由": "合同纠纷",
+                    "案号": "A-1",
+                    "审理法院": "广州中院",
+                    "程序阶段": "一审",
+                    "案件状态": "进行中",
+                },
+            }
+        ],
+        pagination={"has_more": False, "page_token": "", "current_page": 1, "total": 1},
+    )
+
+    assert "- **1. 张三 vs 李四**｜合同纠纷" in result.reply_text
+    assert "**状态**：🟡 进行中" in result.reply_text
+    assert "[查看详情](https://example.com/1)" in result.reply_text
 
 
 def test_build_params_structured_party_query_maps_to_target_fields() -> None:

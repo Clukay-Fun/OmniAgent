@@ -3,6 +3,12 @@
 defaults:
   timeout_seconds: 10
 
+routing:
+  mode: "rule"
+  llm_selection_timeout: 5.0
+  llm_confidence_threshold: 0.6
+  shadow_max_pending: 10
+
 skills:
   query:
     timeout_seconds: 15

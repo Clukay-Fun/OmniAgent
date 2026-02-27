@@ -61,9 +61,35 @@ def test_action_engine_append_mode_shows_boundary() -> None:
         },
     )
     text = "\n".join(lines)
-    assert "追加模式" in text
+    assert "模式: 追加" in text
     assert "新增:" in text
     assert "追加后:" in text
+
+
+def test_action_engine_update_lines_keep_all_ten_field_pairs() -> None:
+    engine = ActionEngine(SmartEngine())
+    diff = []
+    for idx in range(1, 11):
+        diff.append(
+            {
+                "field": f"字段{idx}",
+                "old": f"旧值{idx}",
+                "new": f"新值{idx}",
+            }
+        )
+
+    _, lines = engine.build_confirm_lines(
+        action="update_record",
+        message="请确认修改",
+        table_name="案件项目总库",
+        payload={"diff": diff},
+    )
+
+    text = "\n".join(lines)
+    for idx in range(1, 11):
+        assert f"字段{idx}" in text
+        assert f"旧值: 旧值{idx}" in text
+        assert f"新值: 新值{idx}" in text
 
 
 def test_action_engine_builds_auto_reminders_for_case_dates() -> None:

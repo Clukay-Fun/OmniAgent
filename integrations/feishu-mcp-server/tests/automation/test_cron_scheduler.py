@@ -84,6 +84,42 @@ def test_poll_and_execute_pauses_after_consecutive_failures(tmp_path: Path) -> N
     assert second.pause_reason and "consecutive failures" in second.pause_reason
 
 
+def test_poll_and_execute_pauses_at_default_threshold_three(tmp_path: Path) -> None:
+    store = CronStore(tmp_path / "cron_queue.jsonl")
+    store.schedule(
+        CronJob(
+            job_id="job-default",
+            cron_expr="* * * * *",
+            payload={"action": {"type": "log.write", "message": "ok"}},
+            status=ACTIVE,
+            next_run_at=60.0,
+        )
+    )
+    service = _FakeService(store, should_fail=True)
+    scheduler = CronScheduler(service=service, enabled=True, interval_seconds=0.01)
+
+    asyncio.run(scheduler._poll_and_execute(now_ts=60.0))
+    first = store.get_job("job-default")
+    assert first is not None
+    assert first.status == WAITING
+    assert first.consecutive_failures == 1
+    assert not first.pause_reason
+
+    asyncio.run(scheduler._poll_and_execute(now_ts=float(first.next_run_at)))
+    second = store.get_job("job-default")
+    assert second is not None
+    assert second.status == WAITING
+    assert second.consecutive_failures == 2
+    assert not second.pause_reason
+
+    asyncio.run(scheduler._poll_and_execute(now_ts=float(second.next_run_at)))
+    third = store.get_job("job-default")
+    assert third is not None
+    assert third.status == PAUSED
+    assert third.consecutive_failures == 3
+    assert third.last_error == "cron run failed"
+
+
 def test_start_logs_warning_when_worker_count_is_multi(tmp_path: Path, caplog: Any) -> None:
     store = CronStore(tmp_path / "cron_queue.jsonl")
     service = _FakeService(store)

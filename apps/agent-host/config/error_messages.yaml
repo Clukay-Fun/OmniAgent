@@ -3,13 +3,13 @@
 # renderer 通过 get_user_message() 使用
 
 pending_action_expired:
-  user_message: "操作已过期，请重试"
+  user_message: "本次确认已超时，请重新发起操作后再确认。"
 
 pending_action_not_found:
   user_message: "未找到对应的待确认操作"
 
 locator_triplet_missing:
-  user_message: "写入参数缺失，请重试"
+  user_message: "我还缺少定位信息，请提供表格名和目标记录（如案号或项目ID）后再试。"
 
 callback_duplicated:
   user_message: "该操作已处理，无需重复点击"
@@ -99,4 +99,4 @@ batch_cancelled:
   user_message: "好的，已取消批量操作。"
 
 unknown_error:
-  user_message: "操作失败，请稍后重试"
+  user_message: "抱歉，刚刚处理失败了。请稍后重试；若连续失败，请补充更具体信息后再试。"
