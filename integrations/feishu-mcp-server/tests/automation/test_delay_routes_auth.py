@@ -91,3 +91,19 @@ def test_delay_cancel_route_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
         asyncio.run(automation_server.automation_delay_cancel("missing", request=_FakeRequest()))
 
     assert getattr(excinfo.value, "status_code", None) == 404
+
+
+def test_delay_cancel_route_returns_ok_when_authorized(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _FakeService(auth_ok=True)
+    monkeypatch.setattr(automation_server, "get_settings", lambda: object())
+    monkeypatch.setattr(automation_server, "get_automation_service", lambda _settings: service)
+
+    response = asyncio.run(
+        automation_server.automation_delay_cancel(
+            "task-1",
+            request=_FakeRequest(headers={"x-automation-key": "k"}),
+        )
+    )
+
+    assert response["status"] == "ok"
+    assert response["result"]["status"] == "cancelled"

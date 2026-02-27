@@ -144,6 +144,31 @@ def test_delay_action_rejects_too_large_seconds(tmp_path: Path) -> None:
     assert "exceeds max" in str(excinfo.value)
 
 
+def test_delay_action_rejects_negative_seconds(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    store = DelayStore(tmp_path / "delay_queue.jsonl")
+    executor = ActionExecutor(settings=settings, client=_FakeClient(), delay_store=store)
+
+    with pytest.raises(ActionExecutionError) as excinfo:
+        asyncio.run(
+            executor.run_actions(
+                actions=[
+                    {
+                        "type": "delay",
+                        "delay_seconds": -1,
+                        "then": {"type": "log.write", "message": "later"},
+                    }
+                ],
+                context={"rule_id": "rule-1"},
+                app_token="app_1",
+                table_id="tbl_1",
+                record_id="rec_1",
+            )
+        )
+
+    assert "must be >= 0" in str(excinfo.value)
+
+
 def test_http_request_rejects_non_allowlisted_domain(tmp_path: Path) -> None:
     settings = _build_settings(tmp_path, http_allowed_domains=["allowed.example.com"])
     executor = ActionExecutor(settings=settings, client=_FakeClient())

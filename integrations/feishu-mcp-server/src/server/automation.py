@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -30,6 +31,25 @@ _automation_service: AutomationService | None = None
 _automation_poller: AutomationPoller | None = None
 _schema_poller: SchemaPoller | None = None
 _delay_scheduler: DelayScheduler | None = None
+
+
+def _resolve_scheduler_worker_count(settings: Settings) -> int:
+    configured_workers = int(settings.server.workers or 0)
+    if configured_workers > 1:
+        return configured_workers
+
+    env_workers_raw = str(os.getenv("WEB_CONCURRENCY") or "").strip()
+    if env_workers_raw:
+        try:
+            env_workers = int(env_workers_raw)
+        except ValueError:
+            env_workers = 0
+        if env_workers > 0 and configured_workers <= 1:
+            return env_workers
+
+    if configured_workers > 0:
+        return configured_workers
+    return 1
 
 
 def get_feishu_client(settings: Settings) -> FeishuClient:
@@ -76,6 +96,7 @@ def get_delay_scheduler(settings: Settings) -> DelayScheduler:
             enabled=bool(settings.automation.enabled and settings.automation.delay_scheduler_enabled),
             interval_seconds=float(settings.automation.delay_scheduler_interval_seconds),
             cleanup_retention_seconds=float(settings.automation.delay_task_retention_seconds),
+            worker_count=_resolve_scheduler_worker_count(settings),
         )
     return _delay_scheduler
 

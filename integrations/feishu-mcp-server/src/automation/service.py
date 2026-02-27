@@ -264,43 +264,53 @@ class AutomationService:
             )
 
         header_map = {str(key).lower(): str(value) for key, value in headers.items()}
+        key_ok = False
+        signature_ok = False
 
         if configured_key:
             provided_key = str(header_map.get("x-automation-key") or "").strip()
-            if not provided_key or not hmac.compare_digest(provided_key, configured_key):
-                raise AutomationValidationError("invalid webhook api key")
+            if provided_key and hmac.compare_digest(provided_key, configured_key):
+                key_ok = True
 
         if signature_secret:
             timestamp_text = str(header_map.get("x-automation-timestamp") or "").strip()
             signature_text = str(header_map.get("x-automation-signature") or "").strip()
-            if not timestamp_text or not signature_text:
-                raise AutomationValidationError(
-                    "missing webhook signature headers: x-automation-timestamp / x-automation-signature"
-                )
+            if timestamp_text and signature_text:
+                try:
+                    timestamp = int(timestamp_text)
+                except ValueError as exc:
+                    raise AutomationValidationError("invalid x-automation-timestamp") from exc
 
-            try:
-                timestamp = int(timestamp_text)
-            except ValueError as exc:
-                raise AutomationValidationError("invalid x-automation-timestamp") from exc
+                now = int(time.time())
+                tolerance = max(1, int(self._settings.automation.webhook_timestamp_tolerance_seconds or 300))
+                if abs(now - timestamp) > tolerance:
+                    raise AutomationValidationError("webhook signature timestamp expired")
 
-            now = int(time.time())
-            tolerance = max(1, int(self._settings.automation.webhook_timestamp_tolerance_seconds or 300))
-            if abs(now - timestamp) > tolerance:
-                raise AutomationValidationError("webhook signature timestamp expired")
+                normalized_signature = signature_text
+                if normalized_signature.lower().startswith("sha256="):
+                    normalized_signature = normalized_signature.split("=", 1)[1].strip()
 
-            normalized_signature = signature_text
-            if normalized_signature.lower().startswith("sha256="):
-                normalized_signature = normalized_signature.split("=", 1)[1].strip()
+                signed_payload = f"{timestamp}".encode("utf-8") + b"." + raw_body
+                expected_signature = hmac.new(
+                    signature_secret.encode("utf-8"),
+                    signed_payload,
+                    hashlib.sha256,
+                ).hexdigest()
 
-            signed_payload = f"{timestamp}".encode("utf-8") + b"." + raw_body
-            expected_signature = hmac.new(
-                signature_secret.encode("utf-8"),
-                signed_payload,
-                hashlib.sha256,
-            ).hexdigest()
+                if hmac.compare_digest(normalized_signature, expected_signature):
+                    signature_ok = True
 
-            if not hmac.compare_digest(normalized_signature, expected_signature):
-                raise AutomationValidationError("invalid webhook signature")
+        if configured_key and signature_secret:
+            if not key_ok and not signature_ok:
+                raise AutomationValidationError("invalid webhook api key or signature")
+            return
+
+        if configured_key and not key_ok:
+            raise AutomationValidationError("invalid webhook api key")
+        if signature_secret and not signature_ok:
+            raise AutomationValidationError(
+                "missing or invalid webhook signature headers: x-automation-timestamp / x-automation-signature"
+            )
 
     def _verify_webhook_auth(self, headers: dict[str, str], raw_body: bytes) -> None:
         self._verify_shared_auth(headers, raw_body, require_webhook_enabled=True)

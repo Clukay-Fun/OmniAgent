@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
@@ -35,6 +38,16 @@ def _build_service(tmp_path: Path) -> AutomationService:
     )
     settings = Settings(automation=automation)
     return AutomationService(settings, _FakeClient())
+
+
+def _build_signed_headers(secret: str, raw_body: bytes) -> dict[str, str]:
+    timestamp = int(time.time())
+    payload = f"{timestamp}".encode("utf-8") + b"." + raw_body
+    signature = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return {
+        "x-automation-timestamp": str(timestamp),
+        "x-automation-signature": signature,
+    }
 
 
 def test_list_delay_tasks_filters_and_limits(tmp_path: Path) -> None:
@@ -119,3 +132,28 @@ def test_scheduler_recovers_due_tasks_after_service_restart(tmp_path: Path) -> N
     tasks = service_after_restart.delay_store.list_tasks()
     assert len(tasks) == 1
     assert tasks[0].status == "completed"
+
+
+def test_verify_management_auth_accepts_api_key_or_signature(tmp_path: Path) -> None:
+    service = _build_service(tmp_path)
+    service._settings.automation.webhook_api_key = "key-123"
+    service._settings.automation.webhook_signature_secret = "sig-123"
+    raw_body = b'{"k":"v"}'
+
+    service.verify_management_auth({"x-automation-key": "key-123"}, raw_body)
+    service.verify_management_auth(_build_signed_headers("sig-123", raw_body), raw_body)
+
+
+def test_verify_management_auth_rejects_when_key_and_signature_both_invalid(tmp_path: Path) -> None:
+    service = _build_service(tmp_path)
+    service._settings.automation.webhook_api_key = "key-123"
+    service._settings.automation.webhook_signature_secret = "sig-123"
+    raw_body = b'{"k":"v"}'
+
+    bad_headers = {
+        "x-automation-key": "wrong",
+        "x-automation-timestamp": str(int(time.time())),
+        "x-automation-signature": "bad",
+    }
+    with pytest.raises(AutomationValidationError, match="api key or signature"):
+        service.verify_management_auth(bad_headers, raw_body)
