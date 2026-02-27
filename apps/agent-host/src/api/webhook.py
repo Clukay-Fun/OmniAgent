@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import json
 import time
 import logging
@@ -397,10 +398,40 @@ class _AgentCoreProxy:
         if hasattr(core, 'reload_config'):
             core.reload_config(config_path)
 
+    def reload_skill_metadata(self) -> dict[str, Any]:
+        """手动重载 Skill 元数据。"""
+        core = _get_agent_core()
+        if hasattr(core, "reload_skill_metadata"):
+            return core.reload_skill_metadata()
+        return {
+            "loaded": [],
+            "failed": [
+                {
+                    "skill_name": "*",
+                    "file_path": "",
+                    "error": "reload_skill_metadata not supported",
+                }
+            ],
+            "loaded_count": 0,
+            "failed_count": 1,
+        }
+
 
 agent_core = _AgentCoreProxy()
 # endregion
 # ============================================
+
+
+def _verify_reload_request(request: Request) -> None:
+    """校验 /reload 运维请求。"""
+    settings = _get_settings()
+    expected_token = str(getattr(settings.feishu, "verification_token", "") or "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="reload auth is not configured")
+
+    provided_token = str(request.headers.get("x-reload-token") or "").strip()
+    if not provided_token or not hmac.compare_digest(provided_token, expected_token):
+        raise HTTPException(status_code=401, detail="invalid reload token")
 
 
 # region 辅助类与函数
@@ -603,6 +634,26 @@ async def _emit_callback_result_message(callback_payload: dict[str, Any], result
 
 
 # region Webhook 路由处理
+
+
+@router.post("/reload")
+async def reload_skill_metadata(request: Request) -> dict[str, Any]:
+    """手动重载 SKILL.md 元数据缓存。"""
+    _verify_reload_request(request)
+    try:
+        result = agent_core.reload_skill_metadata()
+    except Exception as exc:
+        logger.exception(
+            "skill metadata reload failed",
+            extra={"event_code": "webhook.reload.skill_metadata.failed"},
+        )
+        raise HTTPException(status_code=500, detail=f"skill metadata reload failed: {exc}") from exc
+
+    return {
+        "status": "ok",
+        "scope": "skill_metadata",
+        "result": result,
+    }
 
 
 @router.get("/feishu/webhook")

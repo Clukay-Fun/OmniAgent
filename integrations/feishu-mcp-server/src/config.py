@@ -156,6 +156,10 @@ class AutomationSettings(BaseModel):
     delay_scheduler_interval_seconds: float = 5.0
     delay_task_retention_seconds: float = 86400.0
     delay_max_seconds: float = 2592000.0
+    cron_queue_file: str = "automation_data/cron_queue.jsonl"
+    cron_scheduler_enabled: bool = True
+    cron_poll_interval_seconds: float = 30.0
+    cron_max_consecutive_failures: int = 3
     schema_sync_enabled: bool = True
     schema_poller_enabled: bool = False
     schema_sync_interval_seconds: float = 300.0
@@ -292,6 +296,10 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_DELAY_SCHEDULER_INTERVAL_SECONDS": ["automation", "delay_scheduler_interval_seconds"],
         "AUTOMATION_DELAY_TASK_RETENTION_SECONDS": ["automation", "delay_task_retention_seconds"],
         "AUTOMATION_DELAY_MAX_SECONDS": ["automation", "delay_max_seconds"],
+        "AUTOMATION_CRON_QUEUE_FILE": ["automation", "cron_queue_file"],
+        "AUTOMATION_CRON_SCHEDULER_ENABLED": ["automation", "cron_scheduler_enabled"],
+        "AUTOMATION_CRON_POLL_INTERVAL_SECONDS": ["automation", "cron_poll_interval_seconds"],
+        "AUTOMATION_CRON_MAX_CONSECUTIVE_FAILURES": ["automation", "cron_max_consecutive_failures"],
         "AUTOMATION_SCHEMA_SYNC_ENABLED": ["automation", "schema_sync_enabled"],
         "AUTOMATION_SCHEMA_POLLER_ENABLED": ["automation", "schema_poller_enabled"],
         "AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS": ["automation", "schema_sync_interval_seconds"],

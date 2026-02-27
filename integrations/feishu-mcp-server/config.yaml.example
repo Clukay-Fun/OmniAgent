@@ -187,6 +187,7 @@ tools:
     - "feishu.v1.bitable.record.delete"
     - "feishu.v1.doc.search"
     - "feishu.v1.calendar.event.create"
+    - "feishu.v1.automation.cron.schedule"
     # Phase 2
     # - "feishu.v1.file.upload"
     # - "feishu.v1.file.download"
@@ -238,6 +239,10 @@ automation:
   delay_scheduler_interval_seconds: ${AUTOMATION_DELAY_SCHEDULER_INTERVAL_SECONDS:-5}
   delay_task_retention_seconds: ${AUTOMATION_DELAY_TASK_RETENTION_SECONDS:-86400}
   delay_max_seconds: ${AUTOMATION_DELAY_MAX_SECONDS:-2592000}
+  cron_queue_file: ${AUTOMATION_CRON_QUEUE_FILE:-automation_data/cron_queue.jsonl}
+  cron_scheduler_enabled: ${AUTOMATION_CRON_SCHEDULER_ENABLED:-true}
+  cron_poll_interval_seconds: ${AUTOMATION_CRON_POLL_INTERVAL_SECONDS:-30}
+  cron_max_consecutive_failures: ${AUTOMATION_CRON_MAX_CONSECUTIVE_FAILURES:-3}
   schema_sync_enabled: ${AUTOMATION_SCHEMA_SYNC_ENABLED:-true}
   schema_poller_enabled: ${AUTOMATION_SCHEMA_POLLER_ENABLED:-false}
   schema_sync_interval_seconds: ${AUTOMATION_SCHEMA_SYNC_INTERVAL_SECONDS:-300}

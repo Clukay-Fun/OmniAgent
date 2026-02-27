@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
 
 if TYPE_CHECKING:
     from src.core.skills.base import BaseSkill
+    from src.core.skills.metadata import ReloadReport, SkillMetadata, SkillMetadataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +69,95 @@ class SkillRouter:
         self,
         skills_config: dict[str, Any],
         max_hops: int = 2,
+        skills_metadata_dir: str | Path | None = None,
     ) -> None:
         self._config = skills_config
         self._max_hops = max_hops
         self._skills: dict[str, BaseSkill] = {}
         self._chains = skills_config.get("chains", {})
         self._chain_config = skills_config.get("chain", {})
+        resolved_metadata_dir = (
+            Path(skills_metadata_dir)
+            if skills_metadata_dir is not None
+            else self._resolve_skills_metadata_dir()
+        )
+        from src.core.skills.metadata import SkillMetadataLoader
+
+        self._skill_metadata_loader = SkillMetadataLoader(skills_dir=resolved_metadata_dir)
+        self._skill_metadata_report = self._skill_metadata_loader.load_all()
+        logger.info(
+            "技能元数据已加载",
+            extra={
+                "event_code": "router.skill_metadata.loaded",
+                "skills_dir": str(resolved_metadata_dir),
+                "loaded": len(self._skill_metadata_report.loaded),
+                "failed": len(self._skill_metadata_report.failed),
+            },
+        )
+
+    @staticmethod
+    def _resolve_skills_metadata_dir() -> Path:
+        current_candidate = Path("config/skills")
+        if current_candidate.exists():
+            return current_candidate
+
+        app_root = Path(__file__).resolve().parents[3]
+        app_candidate = app_root / "config" / "skills"
+        if app_candidate.exists():
+            return app_candidate
+        return current_candidate
+
+    def _metadata_name_candidates(self, skill_name: str) -> list[str]:
+        raw_name = str(skill_name or "").strip()
+        if not raw_name:
+            return []
+
+        candidates: list[str] = [raw_name]
+        normalized_name = self._normalize_skill_name(raw_name)
+        if normalized_name not in candidates:
+            candidates.append(normalized_name)
+
+        for name in list(candidates):
+            if name.endswith("Skill") and len(name) > len("Skill"):
+                short_name = name[: -len("Skill")].lower()
+                if short_name not in candidates:
+                    candidates.append(short_name)
+            lower_name = name.lower()
+            if lower_name not in candidates:
+                candidates.append(lower_name)
+
+        return candidates
+
+    def get_skill_metadata(self, skill_name: str) -> SkillMetadata | None:
+        for candidate in self._metadata_name_candidates(skill_name):
+            metadata = self._skill_metadata_loader.get_metadata(candidate)
+            if metadata:
+                return metadata
+        return None
+
+    def get_all_skill_metadata_for_routing(self) -> list[dict[str, str]]:
+        return self._skill_metadata_loader.get_all_for_routing()
+
+    def reload_skill_metadata(self) -> ReloadReport:
+        self._skill_metadata_report = self._skill_metadata_loader.reload()
+        logger.info(
+            "技能元数据重载完成",
+            extra={
+                "event_code": "router.skill_metadata.reloaded",
+                "loaded": len(self._skill_metadata_report.loaded),
+                "failed": len(self._skill_metadata_report.failed),
+            },
+        )
+        return self._skill_metadata_report
+
+    @property
+    def last_skill_metadata_report(self) -> ReloadReport:
+        from src.core.skills.metadata import ReloadReport
+
+        return ReloadReport(
+            loaded=list(self._skill_metadata_report.loaded),
+            failed=list(self._skill_metadata_report.failed),
+        )
 
     def register(self, skill: BaseSkill) -> None:
         self._skills[skill.name] = skill

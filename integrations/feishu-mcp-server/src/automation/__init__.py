@@ -14,6 +14,8 @@ from src.automation.deadletter import DeadLetterStore
 from src.automation.runlog import RunLogStore
 from src.automation.delay_store import DelayedTask, DelayStore
 from src.automation.delay_scheduler import DelayScheduler
+from src.automation.cron_store import CronJob, CronStore
+from src.automation.cron_scheduler import CronScheduler
 
 __all__ = [
     "AutomationService",
@@ -36,4 +38,7 @@ __all__ = [
     "DelayedTask",
     "DelayStore",
     "DelayScheduler",
+    "CronJob",
+    "CronStore",
+    "CronScheduler",
 ]
