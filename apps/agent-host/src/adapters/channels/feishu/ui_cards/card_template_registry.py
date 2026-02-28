@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from src.adapters.channels.feishu.card_template_config import is_template_enabled
-from src.adapters.channels.feishu.card_templates import (
+from src.adapters.channels.feishu.ui_cards.card_template_config import is_template_enabled
+from src.adapters.channels.feishu.ui_cards.card_templates import (
     render_action_confirm_v1,
     render_create_success_v1,
     render_delete_cancelled_v1,

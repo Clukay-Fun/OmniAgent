@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.state.memory_store import MemoryStateStore
-from src.core.state.redis_store import RedisStateStore
-from src.core.state.store import StateStore
-from src.utils.metrics import record_state_store_backend
+from src.core.runtime.state.memory_store import MemoryStateStore
+from src.core.runtime.state.redis_store import RedisStateStore
+from src.core.runtime.state.store import StateStore
+from src.utils.observability.metrics import record_state_store_backend
 
 logger = logging.getLogger(__name__)
 

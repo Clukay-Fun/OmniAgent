@@ -216,6 +216,7 @@ automation:
   verification_token: ${FEISHU_EVENT_VERIFY_TOKEN:-}
   encrypt_key: ${FEISHU_EVENT_ENCRYPT_KEY:-}
   storage_dir: ${AUTOMATION_STORAGE_DIR:-automation_data}
+  sqlite_db_file: ${AUTOMATION_SQLITE_DB_FILE:-automation_data/automation.db}
   rules_file: ${AUTOMATION_RULES_FILE:-automation_rules.yaml}
   event_ttl_seconds: ${AUTOMATION_EVENT_TTL_SECONDS:-604800}
   business_ttl_seconds: ${AUTOMATION_BUSINESS_TTL_SECONDS:-604800}
@@ -232,8 +233,6 @@ automation:
   poller_interval_seconds: ${AUTOMATION_POLLER_INTERVAL_SECONDS:-60}
   action_max_retries: ${AUTOMATION_ACTION_MAX_RETRIES:-1}
   action_retry_delay_seconds: ${AUTOMATION_ACTION_RETRY_DELAY_SECONDS:-0.5}
-  dead_letter_file: ${AUTOMATION_DEAD_LETTER_FILE:-automation_data/dead_letters.jsonl}
-  run_log_file: ${AUTOMATION_RUN_LOG_FILE:-automation_data/run_logs.jsonl}
   delay_queue_file: ${AUTOMATION_DELAY_QUEUE_FILE:-automation_data/delay_queue.jsonl}
   delay_scheduler_enabled: ${AUTOMATION_DELAY_SCHEDULER_ENABLED:-true}
   delay_scheduler_interval_seconds: ${AUTOMATION_DELAY_SCHEDULER_INTERVAL_SECONDS:-5}

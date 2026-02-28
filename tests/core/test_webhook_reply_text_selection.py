@@ -16,7 +16,7 @@ setattr(crypto_module, "Cipher", crypto_cipher_module)
 sys.modules.setdefault("Crypto", crypto_module)
 sys.modules.setdefault("Crypto.Cipher", crypto_cipher_module)
 
-from src.api.webhook import _build_send_payload, _pick_reply_text
+from src.api.channels.feishu.webhook_router import _build_send_payload, _pick_reply_text
 
 
 def _card_elements(payload: dict) -> list[dict]:

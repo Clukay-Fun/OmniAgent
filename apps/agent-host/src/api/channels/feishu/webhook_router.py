@@ -20,43 +20,35 @@ from typing import Any, cast
 from Crypto.Cipher import AES
 from fastapi import APIRouter, HTTPException, Request
 
-from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter, MessageEvent
-from src.adapters.channels.feishu.processing_status import create_reaction_status_emitter
+from src.adapters.channels.feishu.protocol.event_adapter import FeishuEventAdapter, MessageEvent
+from src.adapters.channels.feishu.actions.processing_status import create_reaction_status_emitter
 from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
-from src.api.chunk_assembler import ChunkAssembler
-from src.api.conversation_scope import build_session_key
-from src.api.file_pipeline import (
+from src.api.inbound.chunk_assembler import ChunkAssembler
+from src.api.inbound.conversation_scope import build_session_key
+from src.api.inbound.file_pipeline import (
     build_ocr_completion_text,
     build_processing_status_text,
     build_file_unavailable_guidance,
     is_file_pipeline_message,
     resolve_file_markdown,
 )
-from src.adapters.channels.feishu.formatter import FeishuFormatter
-from src.api.automation_consumer import QueueAutomationEnqueuer, create_default_automation_enqueuer
-from src.api.event_router import FeishuEventRouter, get_enabled_types
-from src.api.inbound_normalizer import normalize_content
-from src.core.orchestrator import AgentOrchestrator
-from src.core.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
-from src.core.errors import (
-    CallbackDuplicatedError,
-    PendingActionExpiredError,
-    get_user_message as get_core_user_message,
-)
-from src.core.response.models import RenderedResponse
-from src.core.skills.schema_cache import get_global_schema_cache
-from src.core.session import SessionManager
+from src.adapters.channels.feishu.protocol.formatter import FeishuFormatter
+from src.api.automation.automation_consumer import QueueAutomationEnqueuer, create_default_automation_enqueuer
+from src.api.core.event_router import FeishuEventRouter, get_enabled_types
+from src.api.core.inbound_normalizer import normalize_content
+from src.core.brain.orchestration.orchestrator import AgentOrchestrator
+from src.core.expression.response.models import RenderedResponse
+from src.core.capabilities.skills.bitable.schema_cache import get_global_schema_cache
+from src.core.runtime.state.session import SessionManager
 from src.config import get_settings
-from src.llm.provider import create_llm_client
-from src.mcp.client import MCPClient
-from src.utils.feishu_api import send_message, update_message
-from src.utils.metrics import record_inbound_message
-from src.api.callback_deduper import CallbackDeduper
+from src.infra.llm.provider import create_llm_client
+from src.infra.mcp.client import MCPClient
+from src.utils.platform.feishu.feishu_api import send_message
+from src.utils.observability.metrics import record_inbound_message
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-CALLBACK_DEDUP_WINDOW_SECONDS = 600
 
 
 # ============================================
@@ -75,7 +67,6 @@ _chunk_expire_hook_bound: bool = False
 _user_manager: Any = None  # 用户管理器
 _schema_sync_bridge: Any = None
 _reminder_refresh_bridge: Any = None
-_callback_deduper: CallbackDeduper | None = None
 
 
 class _SchemaSyncBridge:
@@ -136,14 +127,6 @@ def _get_deduplicator() -> "EventDeduplicator":
             settings.webhook.dedup.max_size,
         )
     return _deduplicator
-
-
-def _get_callback_deduper() -> CallbackDeduper:
-    """延迟初始化 callback 语义去重器"""
-    global _callback_deduper
-    if _callback_deduper is None:
-        _callback_deduper = CallbackDeduper(window_seconds=CALLBACK_DEDUP_WINDOW_SECONDS)
-    return _callback_deduper
 
 
 def _get_event_router() -> FeishuEventRouter:
@@ -249,7 +232,7 @@ def _get_user_manager():
                 _mcp_client = MCPClient(settings)
 
             # 加载 skills 配置（用于 table_identity_fields 查询）
-            from src.core.intent import load_skills_config
+            from src.core.understanding.intent import load_skills_config
             skills_config = load_skills_config("config/skills.yaml")
             
             # 创建匹配器
@@ -455,7 +438,7 @@ def _build_upload_result_reply(
     }
 
 
-def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True, *, prefer_card: bool = False) -> dict[str, Any]:
+def _build_send_payload(reply: dict[str, Any], card_enabled: bool = False, *, prefer_card: bool = False) -> dict[str, Any]:
     text_fallback = _pick_reply_text(reply)
     outbound = reply.get("outbound") if isinstance(reply, dict) else None
     rendered = RenderedResponse.from_outbound(
@@ -662,182 +645,6 @@ def _decrypt_event(encrypt_text: str, encrypt_key: str) -> dict[str, Any]:
     return json.loads(content.decode("utf-8"))
 
 
-def _is_private_chat(message: dict[str, Any]) -> bool:
-    """判断是否为私聊消息"""
-    return message.get("chat_type") == "p2p"
-
-
-def _get_text_content(message: dict[str, Any]) -> str:
-    """提取纯文本消息内容"""
-    content = message.get("content")
-    if not content:
-        return ""
-    try:
-        payload = json.loads(content)
-        return payload.get("text") or ""
-    except json.JSONDecodeError:
-        return ""
-
-
-def _extract_card_action_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    event_raw = payload.get("event")
-    event = event_raw if isinstance(event_raw, dict) else {}
-    action_raw = event.get("action")
-    action = action_raw if isinstance(action_raw, dict) else {}
-    value_raw = action.get("value")
-    value = value_raw if isinstance(value_raw, dict) else {}
-    callback_action = str(value.get("callback_action") or "").strip()
-    if not callback_action:
-        callback_action = str(action.get("name") or "").strip()
-    if not callback_action:
-        return None
-
-    operator_raw = event.get("operator")
-    operator = operator_raw if isinstance(operator_raw, dict) else {}
-    op_open_id = ""
-    operator_id_raw = operator.get("operator_id")
-    operator_id = operator_id_raw if isinstance(operator_id_raw, dict) else {}
-    if operator_id:
-        op_open_id = str(operator_id.get("open_id") or "").strip()
-    if not op_open_id:
-        op_open_id = str(operator.get("open_id") or "").strip()
-
-    open_chat_id = str(event.get("open_chat_id") or "").strip()
-    chat_type = str(event.get("chat_type") or "").strip().lower()
-    message_id = str(
-        event.get("open_message_id")
-        or event.get("message_id")
-        or action.get("open_message_id")
-        or action.get("message_id")
-        or ""
-    ).strip()
-
-    return {
-        "callback_action": callback_action,
-        "event_id": str((payload.get("header") or {}).get("event_id") or payload.get("event_id") or "").strip(),
-        "open_id": op_open_id,
-        "chat_id": open_chat_id,
-        "chat_type": chat_type,
-        "message_id": message_id,
-        "value": value,
-    }
-
-
-def _extract_feishu_payload_content(payload: dict[str, Any]) -> tuple[str, dict[str, object]]:
-    msg_type = str(payload.get("msg_type") or "text")
-    if msg_type == "interactive":
-        card_raw = payload.get("card")
-        card = card_raw if isinstance(card_raw, dict) else {}
-        return "interactive", cast(dict[str, object], card)
-    content_raw = payload.get("content")
-    content = content_raw if isinstance(content_raw, dict) else {"text": str(content_raw or "")}
-    return "text", cast(dict[str, object], content)
-
-
-async def _emit_callback_result_message(callback_payload: dict[str, Any], result: dict[str, Any]) -> None:
-    chat_id = str(callback_payload.get("chat_id") or "").strip()
-    if not chat_id:
-        return
-
-    outbound_raw = result.get("outbound")
-    outbound = outbound_raw if isinstance(outbound_raw, dict) else None
-    if outbound is None:
-        return
-
-    text = str(result.get("text") or "").strip()
-
-    reply: dict[str, Any] = {
-        "type": "text",
-        "text": text or "已处理",
-    }
-    reply["outbound"] = outbound
-
-    settings = _get_settings()
-    prefer_card = bool(
-        outbound
-        and isinstance(outbound.get("blocks"), list)
-        and outbound.get("blocks")
-        and not isinstance(outbound.get("card_template"), dict)
-    )
-    if outbound and isinstance(outbound.get("card_template"), dict):
-        prefer_card = True
-
-    payload = _build_send_payload(
-        reply,
-        card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
-        prefer_card=prefer_card,
-    )
-    msg_type, content = _extract_feishu_payload_content(payload)
-    message_id = str(callback_payload.get("message_id") or "").strip()
-
-    if message_id:
-        try:
-            await update_message(settings=settings, message_id=message_id, msg_type=msg_type, content=content)
-            return
-        except Exception as exc:
-            logger.warning(
-                "更新回调原卡片失败，回退为发送新消息: %s",
-                exc,
-                extra={
-                    "event_code": "webhook.callback.update_failed",
-                    "message_id": message_id,
-                    "chat_id": chat_id,
-                    "msg_type": msg_type,
-                },
-            )
-
-    await send_message(settings, chat_id, msg_type, content)
-
-
-def _build_batch_progress_emitter(callback_payload: dict[str, Any]) -> BatchProgressEmitter | None:
-    chat_id = str(callback_payload.get("chat_id") or "").strip()
-    if not chat_id:
-        return None
-
-    message_id = str(callback_payload.get("message_id") or "").strip() or None
-    settings = _get_settings()
-
-    async def _emit(event: BatchProgressEvent) -> None:
-        if event.phase != BatchProgressPhase.START:
-            return
-        total = max(0, int(event.total or 0))
-        if total < 3:
-            return
-        await send_message(
-            settings,
-            chat_id,
-            "text",
-            {"text": f"🔄 正在执行 {total} 条操作..."},
-            reply_message_id=message_id,
-        )
-
-    return _emit
-
-
-async def _call_card_action_callback(
-    *,
-    core: Any,
-    user_id: str,
-    callback_action: str,
-    callback_value: dict[str, Any] | None,
-    batch_progress_emitter: BatchProgressEmitter | None,
-) -> dict[str, Any]:
-    try:
-        return await core.handle_card_action_callback(
-            user_id=user_id,
-            callback_action=callback_action,
-            callback_value=callback_value,
-            batch_progress_emitter=batch_progress_emitter,
-        )
-    except TypeError as exc:
-        text = str(exc)
-        if "batch_progress_emitter" not in text:
-            raise
-        return await core.handle_card_action_callback(
-            user_id=user_id,
-            callback_action=callback_action,
-            callback_value=callback_value,
-        )
 # endregion
 
 
@@ -961,75 +768,6 @@ async def feishu_webhook(request: Request) -> dict[str, str]:
         if not settings.feishu.encrypt_key:
             raise HTTPException(status_code=400, detail="encrypt_key is required")
         payload = _decrypt_event(payload["encrypt"], settings.feishu.encrypt_key)
-
-    callback_payload = _extract_card_action_payload(payload)
-    if callback_payload is not None:
-        expired_text = get_core_user_message(PendingActionExpiredError())
-        duplicated_text = get_core_user_message(CallbackDuplicatedError())
-        event_id = str(callback_payload.get("event_id") or "")
-        if event_id and settings.webhook.dedup.enabled and _get_deduplicator().is_duplicate(event_id):
-            return {"status": "ok", "reason": duplicated_text}
-        # S4: 语义级 callback 去重（user_id + action + payload hash）
-        open_id = str(callback_payload.get("open_id") or "").strip()
-        if not open_id:
-            return {"status": "ok", "reason": expired_text}
-        cb_action = str(callback_payload.get("callback_action") or "").strip()
-        if not cb_action:
-            return {"status": "ok", "reason": expired_text}
-        cb_deduper = _get_callback_deduper()
-        cb_dedup_key = cb_deduper.build_key(
-            user_id=open_id,
-            action=cb_action,
-            payload=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
-        )
-        if not cb_deduper.try_acquire(cb_dedup_key):
-            logger.info(
-                "重复 callback 已短路",
-                extra={
-                    "event_code": "callback.duplicated",
-                    "open_id": open_id,
-                    "callback_action": cb_action,
-                },
-            )
-            return {"status": "ok", "reason": duplicated_text}
-        chat_id = str(callback_payload.get("chat_id") or "").strip()
-        user_id = build_session_key(
-            user_id=open_id,
-            chat_id=chat_id,
-            chat_type=str(callback_payload.get("chat_type") or ("p2p" if chat_id else "")),
-            channel_type="feishu",
-        )
-        batch_progress_emitter = _build_batch_progress_emitter(callback_payload)
-        try:
-            result = await _call_card_action_callback(
-                core=_get_agent_core(),
-                user_id=user_id,
-                callback_action=cb_action,
-                callback_value=callback_payload.get("value") if isinstance(callback_payload.get("value"), dict) else None,
-                batch_progress_emitter=batch_progress_emitter,
-            )
-        except Exception:
-            logger.exception(
-                "处理卡片回调失败",
-                extra={
-                    "event_code": "webhook.callback.handle_failed",
-                    "event_id": event_id,
-                    "callback_action": cb_action,
-                },
-            )
-            if event_id and settings.webhook.dedup.enabled:
-                _get_deduplicator().mark(event_id)
-            return {"status": "ok", "reason": expired_text}
-        if event_id and settings.webhook.dedup.enabled:
-            _get_deduplicator().mark(event_id)
-
-        if str(result.get("status") or "") == "processed":
-            asyncio.create_task(_emit_callback_result_message(callback_payload, result))
-
-        text = str(result.get("text") or "")
-        if str(result.get("status") or "") == "expired":
-            return {"status": "ok", "reason": text or expired_text}
-        return {"status": "ok", "reason": text or duplicated_text}
 
     header = payload.get("header") or {}
     if settings.feishu.verification_token:
@@ -1357,27 +1095,17 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         
         # 发送回复消息
         outbound = reply.get("outbound") if isinstance(reply, dict) else None
-        prefer_card = bool(
-            isinstance(outbound, dict)
-            and isinstance(outbound.get("blocks"), list)
-            and outbound.get("blocks")
-            and not isinstance(outbound.get("card_template"), dict)
-        )
-        if isinstance(outbound, dict) and isinstance(outbound.get("card_template"), dict):
-            template_id = str(outbound.get("card_template", {}).get("template_id") or "").strip()
-            if template_id == "upload.result":
-                prefer_card = True
+        prefer_card = False
         payload = _build_send_payload(
             reply,
-            card_enabled=bool(getattr(settings.reply, "card_enabled", True)),
+            card_enabled=False,
             prefer_card=prefer_card,
         )
-        msg_type = str(payload.get("msg_type") or "text")
-        if msg_type == "interactive":
-            content = cast(dict[str, object], payload.get("card") if isinstance(payload.get("card"), dict) else {})
-        else:
-            msg_type = "text"
-            content = cast(dict[str, object], payload.get("content") if isinstance(payload.get("content"), dict) else {"text": _pick_reply_text(reply)})
+        msg_type = "text"
+        content = cast(
+            dict[str, object],
+            payload.get("content") if isinstance(payload.get("content"), dict) else {"text": _pick_reply_text(reply)},
+        )
 
         text_obj = content.get("text")
         text_len = len(text_obj) if isinstance(text_obj, str) else 0

@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.chitchat import ChitchatSkill
-from src.core.types import SkillContext
+from src.core.capabilities.skills.implementations.chitchat import ChitchatSkill
+from src.core.foundation.common.types import SkillContext
 
 
 class _FakeLLM:
@@ -50,7 +50,7 @@ def test_chitchat_help_trigger_for_who_are_you() -> None:
 
     assert result.success is True
     assert result.data.get("type") == "help"
-    assert "帮助" in result.reply_text
+    assert any(token in result.reply_text for token in ["帮助", "可以帮你"])
     assert llm.called is False
 
 

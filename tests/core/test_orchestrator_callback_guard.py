@@ -11,14 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.orchestrator import AgentOrchestrator  # noqa: E402
-from src.core.errors import (  # noqa: E402
+from src.core.brain.orchestration.orchestrator import AgentOrchestrator  # noqa: E402
+from src.core.foundation.common.errors import (  # noqa: E402
     PendingActionExpiredError,
     PendingActionNotFoundError,
     get_user_message,
 )
-from src.core.state.models import OperationEntry, OperationExecutionStatus, PendingActionState  # noqa: E402
-from src.core.batch_progress import BatchProgressPhase  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.runtime.state.models import OperationEntry, OperationExecutionStatus, PendingActionState  # noqa: E402
+from src.core.foundation.progress.batch_progress import BatchProgressPhase  # noqa: E402 # type: ignore[reportMissingImports]
 
 
 class _FakeStateManager:

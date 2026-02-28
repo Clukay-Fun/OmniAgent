@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.router.router import SkillRouter  # noqa: E402
+from src.core.understanding.router.router import SkillRouter  # noqa: E402
 
 
 def test_router_loads_skill_metadata_with_custom_dir(tmp_path: Path) -> None:

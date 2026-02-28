@@ -7,7 +7,7 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.adapters.channels.discord.event_adapter import DiscordMessageEvent
-from src.api.discord_client import (
+from src.api.channels.discord.discord_client import (
     _reply_kwargs,
     extract_user_text,
     is_clear_history_command,

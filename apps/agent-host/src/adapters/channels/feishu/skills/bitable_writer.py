@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.adapters.channels.feishu.record_links import build_record_url
-from src.core.skills.data_writer import DataWriter, MCPDataWriter, WriteResult
+from src.adapters.channels.feishu.utils.record_links import build_record_url
+from src.core.capabilities.skills.actions.data_writer import DataWriter, MCPDataWriter, WriteResult
 
 
 class BitableWriter(DataWriter):

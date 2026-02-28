@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.utils.logger import (  # noqa: E402
+from src.utils.observability.logger import (  # noqa: E402
     StructuredJsonFormatter,
     clear_request_context,
     set_request_context,

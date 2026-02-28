@@ -207,7 +207,7 @@ def test_create_response_missing_expected_keys_returns_failure_without_crash() -
 # ── S1: locator triplet adapter validation ──────────────────────────
 
 
-from src.core.skills.locator_triplet import validate_locator_triplet  # noqa: E402
+from src.core.capabilities.skills.utils.locator_triplet import validate_locator_triplet  # noqa: E402
 
 
 def test_bitable_writer_uses_validated_triplet() -> None:

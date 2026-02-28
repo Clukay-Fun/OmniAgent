@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from src.core.response.models import Block, RenderedResponse
-from src.core.response.renderer import ResponseRenderer
+from src.core.expression.response.models import Block, RenderedResponse
+from src.core.expression.response.renderer import ResponseRenderer
 
 __all__ = ["Block", "RenderedResponse", "ResponseRenderer"]

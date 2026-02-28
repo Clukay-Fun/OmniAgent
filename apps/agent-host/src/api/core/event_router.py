@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Protocol
 
-from src.adapters.channels.feishu.event_adapter import EventEnvelope
-from src.utils.metrics import record_automation_enqueue, record_feishu_event, record_schema_watcher_alert
+from src.adapters.channels.feishu.protocol.event_adapter import EventEnvelope
+from src.utils.observability.metrics import record_automation_enqueue, record_feishu_event, record_schema_watcher_alert
 
 
 @dataclass

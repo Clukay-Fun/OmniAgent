@@ -63,18 +63,19 @@ def build_planner_system_prompt(rules: list[dict[str, Any]]) -> str:
     )
 
     default_rules = [
-        "- 查所有/全部案件 -> intent=query_all, tool=search",
+        "- 查所有/全部记录 -> intent=query_all, tool=search",
         "- 按视图/当前视图/仅视图 -> intent=query_view, tool=search",
-        "- 我的案件/我负责 -> intent=query_my_cases, tool=search_person",
-        "- 查案号/项目ID -> intent=query_exact, tool=search_exact",
-        "- 今天/本周 + 开庭 -> intent=query_date_range, tool=search_date_range",
-        "- 张三在中院本周 -> intent=query_advanced, tool=search_advanced",
+        "- 我的记录/我负责 -> intent=query_my_cases, tool=search_person",
+        "- 查记录编号/唯一标识 -> intent=query_exact, tool=search_exact",
+        "- 今天/本周的指定日期事件 -> intent=query_date_range, tool=search_date_range",
+        "- 多条件组合查询 -> intent=query_advanced, tool=search_advanced",
         "- 新建/创建 -> intent=create_record, tool=record.create",
         "- 修改/更新 -> intent=update_record, tool=record.update",
-        "- 结案/终本/关闭案件 -> intent=close_record, tool=record.close, params.close_semantic in {default,enforcement_end}",
+        "- 完结/关闭记录 -> intent=close_record, tool=record.close, params.close_semantic in {default,enforcement_end}",
         "- 删除 -> intent=delete_record, tool=record.delete",
         "- 提醒我 -> intent=create_reminder, tool=reminder.create",
         "- 我有哪些提醒 -> intent=list_reminders, tool=reminder.list",
+        "- 业务咨询/怎么做/是什么/规定 -> intent=business_qa, tool=qa.ask",
     ]
 
     rule_lines: list[str] = []

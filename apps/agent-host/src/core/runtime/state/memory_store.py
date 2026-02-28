@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 
-from src.core.state.models import ConversationState
+from src.core.runtime.state.models import ConversationState
 
 
 class MemoryStateStore:

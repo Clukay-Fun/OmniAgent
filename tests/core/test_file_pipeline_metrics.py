@@ -11,10 +11,10 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-import src.api.file_pipeline as file_pipeline_module
-from src.api.inbound_normalizer import normalize_content
-from src.core.orchestrator import AgentOrchestrator
-import src.core.orchestrator as orchestrator_module
+import src.api.inbound.file_pipeline as file_pipeline_module
+from src.api.core.inbound_normalizer import normalize_content
+from src.core.brain.orchestration.orchestrator import AgentOrchestrator
+import src.core.brain.orchestration.orchestrator as orchestrator_module
 
 
 def test_normalizer_records_ingress_metrics_for_file_statuses(monkeypatch) -> None:
@@ -23,7 +23,7 @@ def test_normalizer_records_ingress_metrics_for_file_statuses(monkeypatch) -> No
     def _fake_record(stage: str, status: str, provider: str = "none") -> None:
         recorded.append((stage, status, provider))
 
-    monkeypatch.setattr("src.api.inbound_normalizer.record_file_pipeline", _fake_record)
+    monkeypatch.setattr("src.api.core.inbound_normalizer.record_file_pipeline", _fake_record)
 
     accepted_payload = {
         "file_key": "f1",

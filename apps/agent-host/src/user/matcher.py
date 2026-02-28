@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, List, Dict, Any
 
-from src.mcp.client import MCPClient
+from src.infra.mcp.client import MCPClient
 
 
 logger = logging.getLogger(__name__)

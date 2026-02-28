@@ -1,10 +1,13 @@
 """
-描述: MCP Server 启动脚本
+描述: MCP/Automation 运行脚本
 主要功能:
     - 配置 asyncio 策略 (Windows)
     - 使用 uvicorn 启动 ASGI 服务
-    - 监听 8081 端口（支持 FastAPI lifespan）
+    - 根据 ROLE 选择默认端口（mcp_server=8081, automation_worker=8082）
 """
+
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
@@ -27,8 +30,11 @@ load_dotenv(BASE_DIR / ".env")
 
 import uvicorn
 
+
 if __name__ == "__main__":
-    port = int(os.getenv("MCP_PORT", "8081"))
-    print(f"Starting MCP Feishu Server on http://0.0.0.0:{port}")
+    role = str(os.getenv("ROLE", "mcp_server")).strip().lower() or "mcp_server"
+    default_port = "8082" if role == "automation_worker" else "8081"
+    port = int(os.getenv("MCP_PORT", default_port))
+    print(f"Starting MCP Feishu service role={role} on http://0.0.0.0:{port}")
     print("Press Ctrl+C to stop")
     uvicorn.run("src.main:app", host="0.0.0.0", port=port, log_level="info")

@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.skills.base import BaseSkill
-from src.core.router import SkillContext, SkillResult
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.understanding.router import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class SummarySkill(BaseSkill):
 3. 如有多条，可按时间或类型分组
 4. 总字数控制在 200 字以内"""
 
-            system_prompt = "你是一个专业的律师助理。"
+            system_prompt = "你是一个信息提取与总结助手。"
             if soul_prompt:
                 system_prompt = f"{soul_prompt.strip()}\n\n{system_prompt}"
 

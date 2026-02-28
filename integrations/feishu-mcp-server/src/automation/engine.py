@@ -16,6 +16,7 @@ from typing import Any
 from src.automation.actions import ActionExecutionError, ActionExecutor
 from src.automation.deadletter import DeadLetterStore
 from src.automation.delay_store import DelayStore
+from src.automation.paths import resolve_config_base_dir, resolve_runtime_path
 from src.automation.rules import RuleMatcher, RuleStore
 from src.automation.runlog import RunLogStore
 from src.config import Settings
@@ -41,21 +42,22 @@ class AutomationEngine:
         rules_file: Path,
         runtime_state_file: Path | None = None,
         delay_store: DelayStore | None = None,
+        sqlite_db_path: Path | None = None,
     ) -> None:
         self._settings = settings
         self._store = RuleStore(rules_file, runtime_state_file=runtime_state_file)
         self._matcher = RuleMatcher()
         self._executor = ActionExecutor(settings, client, delay_store=delay_store)
 
-        dead_letter_path = Path(settings.automation.dead_letter_file)
-        if not dead_letter_path.is_absolute():
-            dead_letter_path = Path.cwd() / dead_letter_path
-        self._dead_letters = DeadLetterStore(dead_letter_path)
-
-        run_log_path = Path(settings.automation.run_log_file)
-        if not run_log_path.is_absolute():
-            run_log_path = Path.cwd() / run_log_path
-        self._run_logs = RunLogStore(run_log_path)
+        resolved_db_path = sqlite_db_path
+        if resolved_db_path is None:
+            config_base_dir = resolve_config_base_dir()
+            resolved_db_path = resolve_runtime_path(
+                settings.automation.sqlite_db_file,
+                base_dir=config_base_dir,
+            )
+        self._dead_letters = DeadLetterStore(db_path=resolved_db_path)
+        self._run_logs = RunLogStore(db_path=resolved_db_path)
 
     @property
     def rule_store(self) -> RuleStore:

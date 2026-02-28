@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from src.utils.metrics import record_file_pipeline
+from src.utils.observability.metrics import record_file_pipeline
 
 
 _SUPPORTED_FILE_EXTENSIONS = {

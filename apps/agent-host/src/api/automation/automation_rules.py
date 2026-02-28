@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 import yaml
 
-from src.utils.metrics import (
+from src.utils.observability.metrics import (
     record_automation_action,
     record_automation_dead_letter,
     record_automation_rule,

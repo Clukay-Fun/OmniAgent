@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-from src.core.state.models import (
+from src.core.runtime.state.models import (
     ActiveRecordState,
     ConversationState,
     LastResultState,

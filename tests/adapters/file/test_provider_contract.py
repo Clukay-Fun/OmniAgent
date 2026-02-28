@@ -13,7 +13,7 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.adapters.file.extractor import ExternalFileExtractor, ExtractorRequest
-from src.api.file_pipeline import build_file_unavailable_guidance
+from src.api.inbound.file_pipeline import build_file_unavailable_guidance
 from src.config import ASRSettings, FileExtractorSettings, OCRSettings
 
 

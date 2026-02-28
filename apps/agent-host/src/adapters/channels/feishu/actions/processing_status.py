@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 
 from src.config import Settings
-from src.core.processing_status import ProcessingStatus, ProcessingStatusEvent
-from src.utils.feishu_api import delete_message_reaction, set_message_reaction
+from src.core.foundation.progress.processing_status import ProcessingStatus, ProcessingStatusEvent
+from src.utils.platform.feishu.feishu_api import delete_message_reaction, set_message_reaction
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,14 @@ def create_reaction_status_emitter(settings: Settings, message_id: str) -> Feish
         - 检查是否启用了反应功能。
         - 检查消息ID是否存在。
         - 返回一个 FeishuReactionStatusEmitter 实例或 None。
+
+    注意:
+        当前已硬禁用——reaction 会产生额外 API 调用且影响用户体验，
+        后续如需恢复，删除下方 early return 即可。
     """
+    # 硬禁用: 跳过所有 reaction 表情，节省 API 调用
+    return None
+
     if not bool(getattr(getattr(settings, "reply", None), "reaction_enabled", False)):
         return None
     normalized_message_id = str(message_id or "").strip()

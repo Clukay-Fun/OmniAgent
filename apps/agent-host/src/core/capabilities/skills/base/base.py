@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.core.types import SkillContext, SkillResult
+    from src.core.foundation.common.types import SkillContext, SkillResult
 
 
 # region 技能基类

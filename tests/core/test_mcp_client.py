@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.mcp.client import MCPClient  # noqa: E402
-from src.utils.exceptions import MCPConnectionError  # noqa: E402
+from src.infra.mcp.client import MCPClient  # noqa: E402
+from src.utils.errors.exceptions import MCPConnectionError  # noqa: E402
 
 
 class _FakeResponse:
@@ -63,8 +63,8 @@ def test_call_tool_retries_transport_error_with_client_reset(monkeypatch: pytest
     async def _no_sleep(_delay: float) -> None:
         return None
 
-    monkeypatch.setattr("src.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
-    monkeypatch.setattr("src.mcp.client.asyncio.sleep", _no_sleep)
+    monkeypatch.setattr("src.infra.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("src.infra.mcp.client.asyncio.sleep", _no_sleep)
 
     client = MCPClient(_settings(max_retries=1))
     result = asyncio.run(client.call_tool("feishu.v1.bitable.record.query", {"q": "x"}))
@@ -96,8 +96,8 @@ def test_call_tool_raises_connection_error_after_transport_retries_exhausted(mon
     async def _no_sleep(_delay: float) -> None:
         return None
 
-    monkeypatch.setattr("src.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
-    monkeypatch.setattr("src.mcp.client.asyncio.sleep", _no_sleep)
+    monkeypatch.setattr("src.infra.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("src.infra.mcp.client.asyncio.sleep", _no_sleep)
 
     client = MCPClient(_settings(max_retries=1))
     with pytest.raises(MCPConnectionError) as exc_info:
@@ -127,8 +127,8 @@ def test_call_tool_fallbacks_to_localhost_for_host_ws_runtime(monkeypatch: pytes
         async def aclose(self) -> None:
             self.is_closed = True
 
-    monkeypatch.setattr("src.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
-    monkeypatch.setattr("src.mcp.client._is_running_in_container", lambda: False)
+    monkeypatch.setattr("src.infra.mcp.client.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("src.infra.mcp.client._is_running_in_container", lambda: False)
 
     settings = _settings(max_retries=0)
     settings.mcp.base_url = "http://mcp-feishu-server:8081"

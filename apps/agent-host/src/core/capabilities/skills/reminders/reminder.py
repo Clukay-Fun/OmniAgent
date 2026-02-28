@@ -15,8 +15,8 @@ import random
 import re
 from typing import Any
 
-from src.core.skills.base import BaseSkill
-from src.core.types import SkillContext, SkillResult
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.foundation.common.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 

@@ -7,6 +7,6 @@
 
 from __future__ import annotations
 
-from src.adapters.channels.feishu.formatter import CardBuildError, FeishuFormatter
+from src.adapters.channels.feishu.protocol.formatter import CardBuildError, FeishuFormatter
 
 __all__ = ["CardBuildError", "FeishuFormatter"]

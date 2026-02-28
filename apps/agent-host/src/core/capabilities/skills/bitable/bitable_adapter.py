@@ -181,10 +181,36 @@ class BitableAdapter:
             return self._apply_default_app_token(resolved)
 
         tables = await self._list_tables()
+        logger.info(
+            "resolve_table_context: _list_tables result",
+            extra={"event_code": "bitable_adapter.debug.list_tables", "count": len(tables)},
+        )
         if tables:
             matched = self._match_table_by_query(query, tables)
+            logger.info(
+                "resolve_table_context: _match_table_by_query result",
+                extra={
+                    "event_code": "bitable_adapter.debug.match_query",
+                    "matched": bool(matched),
+                    "table_id": matched.table_id if matched else None,
+                    "table_name": matched.table_name if matched else None,
+                },
+            )
             if matched:
                 return self._apply_default_app_token(matched)
+
+        default_table_id = str(
+            self._skills_config.get("default_table_id")
+            or os.getenv("BITABLE_TABLE_ID")
+            or ""
+        ).strip()
+        logger.info(
+            "resolve_table_context: fallback to default_table_id",
+            extra={"event_code": "bitable_adapter.debug.default_fallback", "default_table_id": default_table_id or "(empty)"},
+        )
+        if default_table_id:
+            resolved = await self._fill_table_name(TableContext(table_id=default_table_id, source="default"))
+            return self._apply_default_app_token(resolved)
 
         return self._apply_default_app_token(TableContext())
 

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.router.model_routing import ModelRouter, RuleBasedComplexityScorer
+from src.core.understanding.router.model_routing import ModelRouter, RuleBasedComplexityScorer
 
 
 def test_router_defaults_to_primary_when_disabled() -> None:

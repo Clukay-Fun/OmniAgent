@@ -369,7 +369,7 @@ class ReplyCaseListSettings(BaseModel):
 class ReplySettings(BaseModel):
     templates: ReplyTemplateSettings = Field(default_factory=ReplyTemplateSettings)
     case_list: ReplyCaseListSettings = Field(default_factory=ReplyCaseListSettings)
-    card_enabled: bool = True
+    card_enabled: bool = False
     reaction_enabled: bool = True
     query_card_v2_enabled: bool = False
     reply_personalization_enabled: bool = False

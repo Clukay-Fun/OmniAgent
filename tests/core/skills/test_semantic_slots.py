@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.semantic_slots import SemanticSlotExtraction, SemanticSlotKey  # noqa: E402
+from src.core.capabilities.skills.base.semantic_slots import SemanticSlotExtraction, SemanticSlotKey  # noqa: E402
 
 
 def test_semantic_slot_keys_cover_minimum_set() -> None:

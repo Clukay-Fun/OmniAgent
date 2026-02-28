@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.l0.engine import L0RuleEngine
-from src.core.state import ConversationStateManager, MemoryStateStore
+from src.core.brain.l0.engine import L0RuleEngine
+from src.core.runtime.state import ConversationStateManager, MemoryStateStore
 
 
 def _build_engine() -> L0RuleEngine:

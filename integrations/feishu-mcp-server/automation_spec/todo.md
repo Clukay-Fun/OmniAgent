@@ -34,14 +34,14 @@
 - [x] watched_fields 自动提取
 - [x] `any_field_changed` 自动全字段回退
 - [x] 状态回写可切换（`status_write_enabled`）
-- [x] 运行日志固定结构（`run_logs.jsonl`）
+- [x] 运行日志固定结构（`automation.db.run_logs`）
 - [x] 运行日志增强：`rules_evaluated/rules_matched/actions_detail`
 
 ## 3. Phase C（稳定性）
 
 - [x] 轮询补偿（poller + hybrid）
 - [x] 动作级重试
-- [x] 死信记录（`dead_letters.jsonl`）
+- [x] 死信记录（`automation.db.dead_letters`）
 - [x] 外部 webhook 指定规则触发（`/automation/webhook/{rule_id}`）
 - [x] webhook 鉴权（API Key + HMAC 签名）
 
@@ -70,4 +70,3 @@
 - [x] 发布前手工验收清单文档（regression-checklist.md）
 
 ## 6. 待办
-

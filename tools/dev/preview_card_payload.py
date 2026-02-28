@@ -24,11 +24,11 @@ try:
 except Exception:
     pass
 
-from src.adapters.channels.feishu.card_template_config import resolve_template_version  # noqa: E402
-from src.adapters.channels.feishu.formatter import FeishuFormatter  # noqa: E402
+from src.adapters.channels.feishu.ui_cards.card_template_config import resolve_template_version  # noqa: E402
+from src.adapters.channels.feishu.protocol.formatter import FeishuFormatter  # noqa: E402
 from src.config import get_settings  # noqa: E402
-from src.core.response.models import Block, CardTemplateSpec, RenderedResponse  # noqa: E402
-from src.utils.feishu_api import send_message  # noqa: E402
+from src.core.expression.response.models import Block, CardTemplateSpec, RenderedResponse  # noqa: E402
+from src.utils.platform.feishu.feishu_api import send_message  # noqa: E402
 
 
 _OPEN_ID_PATTERN = re.compile(r"^ou_[A-Za-z0-9_-]+$")

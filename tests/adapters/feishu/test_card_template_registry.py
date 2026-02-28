@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.card_template_registry import (
+from src.adapters.channels.feishu.ui_cards.card_template_registry import (
     CardTemplateRegistry,
     TemplateLookupError,
     TemplateValidationError,

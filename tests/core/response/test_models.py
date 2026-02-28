@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.response.models import Block, RenderedResponse
+from src.core.expression.response.models import Block, RenderedResponse
 
 
 @pytest.mark.parametrize("value", ["", " ", "\n\t"])

@@ -5,15 +5,12 @@
 
 -r apps/agent-host/requirements.txt
 -r integrations/feishu-mcp-server/requirements.txt
--r requirements/dev.txt
 # Workspace-level tooling and optional adapters
+pytest>=7.4.0
+pytest-cov>=4.1.0
 nanobot-ai
 markitdown
 python-docx
-pymysql
-pgvector
-psycopg[binary]
-psycopg2-binary
 requests
 sse-starlette
 typer

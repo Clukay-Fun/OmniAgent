@@ -76,6 +76,7 @@ python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 ### 3) 本地验证
 
 - MCP：`http://localhost:8081/health`
+- Automation Worker：`http://localhost:8082/health`
 - Agent：`http://localhost:8080/health`（容器开发态）
 - 工具列表：`http://localhost:8081/mcp/tools`
 
@@ -94,14 +95,14 @@ AUTOMATION_WEBHOOK_API_KEY=your_key
 查询任务：
 
 ```bash
-curl -X GET "http://localhost:8081/automation/delay/tasks?status=scheduled&limit=50" \
+curl -X GET "http://localhost:8082/automation/delay/tasks?status=scheduled&limit=50" \
   -H "x-automation-key: ${AUTOMATION_WEBHOOK_API_KEY}"
 ```
 
 取消任务：
 
 ```bash
-curl -X POST "http://localhost:8081/automation/delay/<task_id>/cancel" \
+curl -X POST "http://localhost:8082/automation/delay/<task_id>/cancel" \
   -H "x-automation-key: ${AUTOMATION_WEBHOOK_API_KEY}"
 ```
 
@@ -133,7 +134,7 @@ curl -X POST "http://localhost:8081/automation/delay/<task_id>/cancel" \
 ### 1) 服务启动口径
 
 - Docker 主文件：`deploy/docker/compose.yml`
-- 生产核心服务：`mcp-feishu-server` + `feishu-agent`（代码主入口分别对应 `integrations/feishu-mcp-server` 与 `apps/agent-host`）
+- 生产核心服务：`mcp-feishu-server` + `automation-worker` + `feishu-agent`（代码主入口分别对应 `integrations/feishu-mcp-server` 与 `apps/agent-host`）
 - 可选 profile：
   - 监控：`--profile monitoring`
   - 数据库：`--profile db`
@@ -147,7 +148,7 @@ docker compose -f deploy/docker/compose.yml --profile monitoring up -d
 
 ### 2) 公网与回调
 
-- `https://<domain>/feishu/events` -> MCP
+- `https://<domain>/feishu/events` -> Automation Worker
 - `https://<domain>/feishu/webhook` -> Agent
 - 飞书后台验证通过后再切流量
 

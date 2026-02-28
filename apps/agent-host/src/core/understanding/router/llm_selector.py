@@ -14,8 +14,8 @@ import logging
 import time
 from typing import Any
 
-from src.core.skills.metadata import SkillMetadataLoader
-from src.utils.exceptions import LLMTimeoutError
+from src.core.capabilities.skills.base.metadata import SkillMetadataLoader
+from src.utils.errors.exceptions import LLMTimeoutError
 
 
 logger = logging.getLogger(__name__)

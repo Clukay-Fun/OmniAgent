@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.api.chunk_assembler import ChunkAssembler
-from src.core.session import SessionManager
-from src.core.state import ConversationStateManager, MemoryStateStore
+from src.api.inbound.chunk_assembler import ChunkAssembler
+from src.core.runtime.state.session import SessionManager
+from src.core.runtime.state import ConversationStateManager, MemoryStateStore
 from src.config import SessionSettings
 
 

@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from src.core.skills.base import BaseSkill
+from src.core.capabilities.skills.base.base import BaseSkill
 
 logger = logging.getLogger(__name__)
 

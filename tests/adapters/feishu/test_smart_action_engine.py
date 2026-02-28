@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.action_engine import ActionEngine
-from src.adapters.channels.feishu.smart_engine import SmartEngine
+from src.adapters.channels.feishu.actions.action_engine import ActionEngine
+from src.adapters.channels.feishu.actions.smart_engine import SmartEngine
 
 
 def test_smart_engine_extracts_date_and_suggestions() -> None:

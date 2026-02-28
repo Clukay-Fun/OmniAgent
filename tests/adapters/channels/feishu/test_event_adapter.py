@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[4]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
+from src.adapters.channels.feishu.protocol.event_adapter import FeishuEventAdapter
 
 
 def test_from_webhook_payload_extracts_message_event() -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from src.utils.workspace import ensure_workspace, get_workspace_root
+from src.utils.runtime.workspace import ensure_workspace, get_workspace_root
 
 
 # region Soul 管理器
@@ -34,8 +34,10 @@ class SoulManager:
         self._workspace_root = Path(workspace_root) if workspace_root else get_workspace_root()
         ensure_workspace(self._workspace_root)
 
-        self._soul_path = self._workspace_root / "SOUL.md"
-        self._identity_path = self._workspace_root / "IDENTITY.md"
+        app_root = Path(__file__).resolve().parents[4]
+        config_identity_root = app_root / "config" / "identity"
+        self._config_soul_path = config_identity_root / "SOUL.md"
+        self._config_identity_path = config_identity_root / "IDENTITY.md"
         self._reload_interval = reload_interval
         self._last_load = 0.0
         self._soul_text = ""
@@ -64,8 +66,8 @@ class SoulManager:
         if not force and now - self._last_load < self._reload_interval:
             return
 
-        self._soul_text = self._read_file(self._soul_path)
-        self._identity_text = self._read_file(self._identity_path)
+        self._soul_text = self._read_file(self._config_soul_path)
+        self._identity_text = self._read_file(self._config_identity_path)
         self._last_load = now
 
     @staticmethod

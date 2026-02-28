@@ -13,8 +13,8 @@ from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from src.jobs.reminder_dispatcher import ReminderDispatchPayload, ReminderDispatcher
-from src.mcp.client import MCPClient
+from src.jobs.dispatchers.reminder_dispatcher import ReminderDispatchPayload, ReminderDispatcher
+from src.infra.mcp.client import MCPClient
 
 
 logger = logging.getLogger(__name__)

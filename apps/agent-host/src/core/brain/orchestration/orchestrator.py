@@ -20,8 +20,8 @@ from typing import Any, ContextManager as TypingContextManager, Mapping, cast
 
 import yaml
 
-from src.utils.logger import set_request_context, clear_request_context, generate_request_id
-from src.utils.metrics import (
+from src.utils.observability.logger import set_request_context, clear_request_context, generate_request_id
+from src.utils.observability.metrics import (
     record_chitchat_guard,
     record_file_pipeline,
     record_intent_parse,
@@ -30,12 +30,12 @@ from src.utils.metrics import (
     set_token_budget,
     set_active_sessions,
 )
-from src.core.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
-from src.core.processing_status import ProcessingStatus, ProcessingStatusEmitter, ProcessingStatusEvent
+from src.core.foundation.progress.batch_progress import BatchProgressEmitter, BatchProgressEvent, BatchProgressPhase
+from src.core.foundation.progress.processing_status import ProcessingStatus, ProcessingStatusEmitter, ProcessingStatusEvent
 
-from src.core.session import SessionManager
-from src.core.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
-from src.core.router import (
+from src.core.runtime.state.session import SessionManager
+from src.core.understanding.intent import IntentParser, IntentResult, SkillMatch, load_skills_config
+from src.core.understanding.router import (
     SkillRouter,
     SkillContext,
     SkillResult,
@@ -43,12 +43,12 @@ from src.core.router import (
     ModelRouter,
     RoutingDecision,
 )
-from src.core.l0 import L0RuleEngine
-from src.core.planner import PlannerEngine, PlannerOutput
-from src.core.state import ConversationStateManager, create_state_store
-from src.core.state.models import OperationEntry, OperationExecutionStatus, PendingActionState
-from src.core.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
-from src.core.skills import (
+from src.core.brain.l0 import L0RuleEngine
+from src.core.runtime.planner import PlannerEngine, PlannerOutput
+from src.core.runtime.state import ConversationStateManager, create_state_store
+from src.core.runtime.state.models import OperationEntry, OperationExecutionStatus, PendingActionState
+from src.core.runtime.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
+from src.core.capabilities.skills import (
     QuerySkill,
     SummarySkill,
     ReminderSkill,
@@ -56,23 +56,23 @@ from src.core.skills import (
     CreateSkill,
     UpdateSkill,
     DeleteSkill,
+    KnowledgeQASkill,
 )
-from src.core.skills.data_writer import DataWriter
-from src.core.soul import SoulManager
-from src.core.memory import MemoryManager
-from src.core.response.models import RenderedResponse
-from src.core.response.renderer import ResponseRenderer
-from src.db.postgres import PostgresClient
+from src.core.capabilities.skills.actions.data_writer import DataWriter
+from src.core.expression.soul import SoulManager
+from src.core.runtime.memory import MemoryManager
+from src.core.expression.response.models import RenderedResponse
+from src.core.expression.response.renderer import ResponseRenderer
 from src.config import Settings
-from src.llm.client import LLMClient
-from src.mcp.client import MCPClient
-from src.utils.time_parser import parse_time_range
-from src.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorMemoryManager
+from src.infra.llm.client import LLMClient
+from src.infra.mcp.client import MCPClient
+from src.utils.parsing.time_parser import parse_time_range
+from src.infra.vector import load_vector_config, EmbeddingClient, ChromaStore, VectorMemoryManager
 from src.skills_market import load_market_skills
-from src.core.usage_logger import UsageLogger, UsageRecord, now_iso
-from src.core.usage_cost import compute_usage_cost, load_model_pricing
-from src.core.cost_monitor import CostMonitorConfig, configure_cost_monitor
-from src.core.errors import (
+from src.core.foundation.telemetry.usage_logger import UsageLogger, UsageRecord, now_iso
+from src.core.foundation.telemetry.usage_cost import compute_usage_cost, load_model_pricing
+from src.core.foundation.telemetry.cost_monitor import CostMonitorConfig, configure_cost_monitor
+from src.core.foundation.common.errors import (
     PendingActionExpiredError,
     PendingActionNotFoundError,
     get_user_message_by_code,
@@ -103,7 +103,9 @@ def _resolve_chitchat_allow_llm(skills_config: dict[str, Any] | None) -> bool:
 
 
 def _load_casual_responses() -> list[str]:
-    casual_path = Path("config/responses/casual.yaml")
+    casual_path = Path("config/messages/zh-CN/casual.yaml")
+    if not casual_path.exists():
+        casual_path = Path("config/responses/casual.yaml")
     if not casual_path.exists():
         return []
     try:
@@ -247,8 +249,8 @@ class AgentOrchestrator:
         
         self._skills_config_path = skills_config_path
 
-        # 初始化 Postgres
-        self._db = PostgresClient(settings.postgres) if settings.postgres.dsn else None
+        # 初始化 Postgres (Migrating to Stateless)
+        self._db = None
 
         # 初始化向量记忆
         self._vector_config = load_vector_config()
@@ -419,7 +421,8 @@ class AgentOrchestrator:
                 data_writer=self._data_writer,
             ),
             SummarySkill(llm_client=self._llm, skills_config=self._skills_config),
-            ReminderSkill(db_client=self._db, mcp_client=self._mcp, skills_config=self._skills_config),
+            ReminderSkill(mcp_client=self._mcp, skills_config=self._skills_config),
+            KnowledgeQASkill(llm_client=self._llm, mcp_client=self._mcp, skills_config=self._skills_config),
             ChitchatSkill(skills_config=self._skills_config, llm_client=self._llm),
         ]
         if getattr(self, "_market_skills", None):
@@ -500,7 +503,6 @@ class AgentOrchestrator:
                         "mcp_client": self._mcp,
                         "llm_client": self._llm,
                         "settings": self._settings,
-                        "db_client": self._db,
                         "skills_config": base_config,
                     },
                 )
@@ -585,7 +587,9 @@ class AgentOrchestrator:
         config_path = Path(skills_config_path)
         if not config_path.is_absolute():
             config_path = Path.cwd() / config_path
-        l0_path = config_path.parent / "l0_rules.yaml"
+        l0_path = config_path.parent / "engine" / "l0_rules.yaml"
+        if not l0_path.exists():
+            l0_path = config_path.parent / "l0_rules.yaml"
         if not l0_path.exists():
             logger.info(
                 "未找到 L0 规则文件: %s",
@@ -634,6 +638,7 @@ class AgentOrchestrator:
             "create_reminder": "ReminderSkill",
             "list_reminders": "ReminderSkill",
             "cancel_reminder": "ReminderSkill",
+            "business_qa": "KnowledgeQASkill",
             "out_of_scope": "ChitchatSkill",
         }
         skill = intent_to_skill.get(plan.intent)

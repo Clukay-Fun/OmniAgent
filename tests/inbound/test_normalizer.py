@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.api.inbound_normalizer import normalize_content
+from src.api.core.inbound_normalizer import normalize_content
 
 
 def test_normalize_text_content() -> None:

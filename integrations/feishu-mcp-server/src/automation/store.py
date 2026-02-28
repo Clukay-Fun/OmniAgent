@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from pathlib import Path
 from threading import Lock
@@ -23,120 +24,189 @@ class IdempotencyStore:
         event_ttl_seconds: int = 604800,
         business_ttl_seconds: int = 604800,
         max_keys: int = 50000,
+        db_path: Path | None = None,
     ) -> None:
-        self._path = path
+        self._legacy_path = path
         self._event_ttl_seconds = max(1, int(event_ttl_seconds))
         self._business_ttl_seconds = max(1, int(business_ttl_seconds))
         self._max_keys = max(100, int(max_keys))
         self._lock = Lock()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = db_path if db_path is not None else self._legacy_path.parent / "automation.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        self._migrate_legacy_if_needed()
 
-    def _read_data(self) -> dict[str, Any]:
-        if not self._path.exists():
-            return {"events": {}, "business": {}}
-        raw = self._path.read_text(encoding="utf-8").strip()
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), timeout=30, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS idempotency_keys (
+                    bucket TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    ts INTEGER NOT NULL,
+                    PRIMARY KEY (bucket, key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_idempotency_bucket_ts
+                ON idempotency_keys (bucket, ts)
+                """
+            )
+
+    def _migrate_legacy_if_needed(self) -> None:
+        if not self._legacy_path.exists():
+            return
+        raw = self._legacy_path.read_text(encoding="utf-8").strip()
         if not raw:
-            return {"events": {}, "business": {}}
+            return
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            return {"events": {}, "business": {}}
+            return
         if not isinstance(data, dict):
-            return {"events": {}, "business": {}}
-        events = data.get("events")
-        business = data.get("business")
-        if not isinstance(events, dict):
-            events = {}
-        if not isinstance(business, dict):
-            business = {}
-        return {"events": events, "business": business}
+            return
 
-    def _write_data(self, data: dict[str, Any]) -> None:
-        self._path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        events_raw = data.get("events")
+        events: dict[str, Any] = events_raw if isinstance(events_raw, dict) else {}
+        business_raw = data.get("business")
+        business: dict[str, Any] = business_raw if isinstance(business_raw, dict) else {}
+        with self._connect() as conn:
+            existing = conn.execute("SELECT COUNT(1) FROM idempotency_keys").fetchone()
+            if existing and int(existing[0]) > 0:
+                return
+            for bucket_name, bucket_data in (("events", events), ("business", business)):
+                if not isinstance(bucket_data, dict):
+                    continue
+                for key, value in bucket_data.items():
+                    try:
+                        ts = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    normalized_key = str(key or "").strip()
+                    if not normalized_key:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO idempotency_keys(bucket, key, ts)
+                        VALUES(?, ?, ?)
+                        """,
+                        (bucket_name, normalized_key, ts),
+                    )
 
     @staticmethod
     def _now_ts() -> int:
         return int(time.time())
 
-    def _evict_expired(self, bucket: dict[str, Any], ttl_seconds: int, now_ts: int) -> dict[str, int]:
-        result: dict[str, int] = {}
-        for key, value in bucket.items():
-            try:
-                ts = int(value)
-            except (TypeError, ValueError):
-                continue
-            if now_ts - ts > ttl_seconds:
-                continue
-            result[key] = ts
-        return result
+    def _cleanup_expired(self, conn: sqlite3.Connection, bucket: str, ttl_seconds: int, now_ts: int) -> None:
+        conn.execute(
+            "DELETE FROM idempotency_keys WHERE bucket = ? AND ts < ?",
+            (bucket, now_ts - int(ttl_seconds)),
+        )
 
-    def _evict_oversized(self, bucket: dict[str, int]) -> dict[str, int]:
-        if len(bucket) <= self._max_keys:
-            return bucket
-        sorted_items = sorted(bucket.items(), key=lambda item: item[1], reverse=True)
-        return dict(sorted_items[: self._max_keys])
+    def _cleanup_oversized(self, conn: sqlite3.Connection, bucket: str) -> None:
+        conn.execute(
+            """
+            DELETE FROM idempotency_keys
+            WHERE bucket = ?
+              AND key IN (
+                SELECT key
+                FROM idempotency_keys
+                WHERE bucket = ?
+                ORDER BY ts DESC
+                LIMIT -1 OFFSET ?
+              )
+            """,
+            (bucket, bucket, int(self._max_keys)),
+        )
+
+    def _cleanup_all(self, conn: sqlite3.Connection, now_ts: int) -> None:
+        self._cleanup_expired(conn, "events", self._event_ttl_seconds, now_ts)
+        self._cleanup_expired(conn, "business", self._business_ttl_seconds, now_ts)
+        self._cleanup_oversized(conn, "events")
+        self._cleanup_oversized(conn, "business")
 
     def cleanup(self) -> None:
         with self._lock:
             now_ts = self._now_ts()
-            data = self._read_data()
-            events = self._evict_expired(data.get("events", {}), self._event_ttl_seconds, now_ts)
-            business = self._evict_expired(data.get("business", {}), self._business_ttl_seconds, now_ts)
-            data["events"] = self._evict_oversized(events)
-            data["business"] = self._evict_oversized(business)
-            self._write_data(data)
+            with self._connect() as conn:
+                self._cleanup_all(conn, now_ts)
 
     def is_event_duplicate(self, event_key: str) -> bool:
         if not event_key:
             return False
         with self._lock:
             now_ts = self._now_ts()
-            data = self._read_data()
-            events = self._evict_expired(data.get("events", {}), self._event_ttl_seconds, now_ts)
-            duplicate = event_key in events
-            data["events"] = self._evict_oversized(events)
-            data["business"] = self._evict_oversized(
-                self._evict_expired(data.get("business", {}), self._business_ttl_seconds, now_ts)
-            )
-            self._write_data(data)
-            return duplicate
+            normalized = str(event_key).strip()
+            if not normalized:
+                return False
+            with self._connect() as conn:
+                self._cleanup_all(conn, now_ts)
+                row = conn.execute(
+                    "SELECT 1 FROM idempotency_keys WHERE bucket = 'events' AND key = ? LIMIT 1",
+                    (normalized,),
+                ).fetchone()
+                return bool(row)
 
     def mark_event(self, event_key: str) -> None:
         if not event_key:
             return
         with self._lock:
             now_ts = self._now_ts()
-            data = self._read_data()
-            events = self._evict_expired(data.get("events", {}), self._event_ttl_seconds, now_ts)
-            business = self._evict_expired(data.get("business", {}), self._business_ttl_seconds, now_ts)
-            events[event_key] = now_ts
-            data["events"] = self._evict_oversized(events)
-            data["business"] = self._evict_oversized(business)
-            self._write_data(data)
+            normalized = str(event_key).strip()
+            if not normalized:
+                return
+            with self._connect() as conn:
+                self._cleanup_all(conn, now_ts)
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO idempotency_keys(bucket, key, ts)
+                    VALUES('events', ?, ?)
+                    """,
+                    (normalized, now_ts),
+                )
+                self._cleanup_oversized(conn, "events")
 
     def is_business_duplicate(self, business_key: str) -> bool:
         if not business_key:
             return False
         with self._lock:
             now_ts = self._now_ts()
-            data = self._read_data()
-            events = self._evict_expired(data.get("events", {}), self._event_ttl_seconds, now_ts)
-            business = self._evict_expired(data.get("business", {}), self._business_ttl_seconds, now_ts)
-            duplicate = business_key in business
-            data["events"] = self._evict_oversized(events)
-            data["business"] = self._evict_oversized(business)
-            self._write_data(data)
-            return duplicate
+            normalized = str(business_key).strip()
+            if not normalized:
+                return False
+            with self._connect() as conn:
+                self._cleanup_all(conn, now_ts)
+                row = conn.execute(
+                    "SELECT 1 FROM idempotency_keys WHERE bucket = 'business' AND key = ? LIMIT 1",
+                    (normalized,),
+                ).fetchone()
+                return bool(row)
 
     def mark_business(self, business_key: str) -> None:
         if not business_key:
             return
         with self._lock:
             now_ts = self._now_ts()
-            data = self._read_data()
-            events = self._evict_expired(data.get("events", {}), self._event_ttl_seconds, now_ts)
-            business = self._evict_expired(data.get("business", {}), self._business_ttl_seconds, now_ts)
-            business[business_key] = now_ts
-            data["events"] = self._evict_oversized(events)
-            data["business"] = self._evict_oversized(business)
-            self._write_data(data)
+            normalized = str(business_key).strip()
+            if not normalized:
+                return
+            with self._connect() as conn:
+                self._cleanup_all(conn, now_ts)
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO idempotency_keys(bucket, key, ts)
+                    VALUES('business', ?, ?)
+                    """,
+                    (normalized, now_ts),
+                )
+                self._cleanup_oversized(conn, "business")

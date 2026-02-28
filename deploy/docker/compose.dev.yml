@@ -1,12 +1,24 @@
 services:
   mcp-feishu-server:
     environment:
+      - ROLE=mcp_server
+      - MCP_PORT=8081
       - AUTOMATION_POLLER_ENABLED=false
       - AUTOMATION_SCHEMA_POLLER_ENABLED=false
     volumes:
       - ../../integrations/feishu-mcp-server/src:/app/src
       - ../../integrations/feishu-mcp-server/automation_rules.yaml:/app/automation_rules.yaml
     command: uvicorn src.main:app --host 0.0.0.0 --port 8081 --reload --reload-dir src
+
+  automation-worker:
+    environment:
+      - ROLE=automation_worker
+      - MCP_PORT=8082
+    volumes:
+      - ../../integrations/feishu-mcp-server/src:/app/src
+      - ../../integrations/feishu-mcp-server/automation_rules.yaml:/app/automation_rules.yaml
+      - ../../integrations/feishu-mcp-server/automation_data:/app/automation_data
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8082 --reload --reload-dir src
 
   feishu-agent:
     environment:

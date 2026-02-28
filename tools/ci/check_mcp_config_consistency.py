@@ -37,7 +37,7 @@ def _runtime_source_from_dockerfile(dockerfile_path: Path) -> str:
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
-    mcp_root = repo_root / "mcp" / "mcp-feishu-server"
+    mcp_root = repo_root / "integrations" / "feishu-mcp-server"
     dockerfile = mcp_root / "Dockerfile"
     example_path = mcp_root / "config.yaml.example"
 

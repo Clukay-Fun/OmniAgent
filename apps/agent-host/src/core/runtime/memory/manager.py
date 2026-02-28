@@ -14,8 +14,8 @@ import typing
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.utils.filelock import FileLock
-from src.utils.workspace import ensure_workspace, get_workspace_root
+from src.utils.runtime.filelock import FileLock
+from src.utils.runtime.workspace import ensure_workspace, get_workspace_root
 
 
 @dataclass

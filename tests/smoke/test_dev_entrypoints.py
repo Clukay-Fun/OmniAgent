@@ -47,7 +47,7 @@ def test_root_run_dev_agent_ws_starts_ws_client(monkeypatch) -> None:
     rc = module.main()
     assert rc == 0
 
-    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.ws_client"]
+    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.channels.feishu.ws_client"]
     assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
 
 
@@ -90,7 +90,7 @@ def test_root_run_dev_agent_discord_starts_discord_client(monkeypatch) -> None:
     rc = module.main()
     assert rc == 0
 
-    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.discord_client"]
+    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.channels.discord.discord_client"]
     assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
 
 

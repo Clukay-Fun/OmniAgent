@@ -11,8 +11,8 @@ AGENT_ROOT = REPO_ROOT / "agent" / "feishu-agent"
 if str(AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENT_ROOT))
 
-from src.core.skills.multi_table_linker import MultiTableLinker  # noqa: E402
-from src.core.skills.data_writer import build_default_data_writer  # noqa: E402
+from src.core.capabilities.skills.bitable.multi_table_linker import MultiTableLinker  # noqa: E402
+from src.core.capabilities.skills.actions.data_writer import build_default_data_writer  # noqa: E402
 
 
 class FakeMCPClient:

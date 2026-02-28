@@ -8,18 +8,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
 from typing import Any
 
-from src.core.errors import get_user_message_by_code
-from src.core.skills.base import BaseSkill
-from src.core.skills.action_execution_service import ActionExecutionService
-from src.core.skills.data_writer import DataWriter
-from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.table_adapter import TableAdapter
-from src.core.types import SkillContext, SkillResult
+from src.core.foundation.common.errors import get_user_message_by_code
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.capabilities.skills.actions.action_execution_service import ActionExecutionService
+from src.core.capabilities.skills.actions.data_writer import DataWriter
+from src.core.capabilities.skills.bitable.bitable_adapter import BitableAdapter
+from src.core.capabilities.skills.bitable.multi_table_linker import MultiTableLinker
+from src.core.foundation.common.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class CreateSkill(BaseSkill):
         if data_writer is None:
             raise ValueError("CreateSkill requires an injected data_writer")
         self._data_writer = data_writer
-        self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
+        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
         self._linker = MultiTableLinker(
             mcp_client,
             skills_config=skills_config,
@@ -70,7 +71,7 @@ class CreateSkill(BaseSkill):
         )
         self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
         
-        from src.core.skills.entity_extractor import EntityExtractor
+        from src.core.capabilities.skills.utils.entity_extractor import EntityExtractor
         self._extractor = EntityExtractor(llm_client)
 
         create_cfg = self._skills_config.get("create", {}) if isinstance(self._skills_config, dict) else {}
@@ -78,6 +79,11 @@ class CreateSkill(BaseSkill):
         self._required_fields = [str(item).strip() for item in required if str(item).strip()]
         if not self._required_fields:
             self._required_fields = ["案号", "委托人", "案由"]
+        parse_timeout_raw = create_cfg.get("field_extract_timeout_seconds", 3.0)
+        try:
+            self._field_extract_timeout_seconds = max(0.1, float(parse_timeout_raw))
+        except (TypeError, ValueError):
+            self._field_extract_timeout_seconds = 3.0
 
         confirm_phrases = create_cfg.get("confirm_phrases", ["确认", "确认创建", "是", "是的", "ok", "yes"])
         self._confirm_phrases = {str(item).strip().lower() for item in confirm_phrases if str(item).strip()}
@@ -117,6 +123,16 @@ class CreateSkill(BaseSkill):
         extra = context.extra or {}
         planner_plan = extra.get("planner_plan") if isinstance(extra.get("planner_plan"), dict) else None
         table_ctx = await self._table_adapter.resolve_table_context(query, extra, context.last_result)
+        logger.info(
+            "CreateSkill table_ctx resolved",
+            extra={
+                "event_code": "create_skill.debug.table_ctx",
+                "table_id": table_ctx.table_id,
+                "table_name": table_ctx.table_name,
+                "app_token": (table_ctx.app_token or "")[:10] + "..." if table_ctx.app_token else "(empty)",
+                "source": table_ctx.source,
+            },
+        )
 
         pending_payload = self._extract_pending_create(extra)
         has_pending_flow = bool(pending_payload)
@@ -132,6 +148,14 @@ class CreateSkill(BaseSkill):
             planner_plan=planner_plan,
             pending_payload=pending_payload,
             table_ctx=table_ctx,
+        )
+        logger.info(
+            "CreateSkill app_token resolved",
+            extra={
+                "event_code": "create_skill.debug.app_token",
+                "app_token": (app_token or "")[:10] + "..." if app_token else "(empty)",
+                "table_id": table_ctx.table_id,
+            },
         )
 
         if self._is_cancel(query):
@@ -287,6 +311,16 @@ class CreateSkill(BaseSkill):
             fields,
             table_ctx.table_id,
         )
+        logger.info(
+            "CreateSkill adapt_fields result",
+            extra={
+                "event_code": "create_skill.debug.adapt_fields",
+                "fields_count": len(fields),
+                "adapted_count": len(adapted_fields),
+                "unresolved": unresolved[:5] if unresolved else [],
+                "fields_keys": list(fields.keys())[:10],
+            },
+        )
         if unresolved:
             return SkillResult(
                 success=False,
@@ -309,12 +343,29 @@ class CreateSkill(BaseSkill):
             fields = adapted_fields
         
         try:
+            logger.info(
+                "CreateSkill execute_create start",
+                extra={
+                    "event_code": "create_skill.debug.execute_create",
+                    "table_id": table_ctx.table_id,
+                    "app_token": (app_token or "")[:10] + "..." if app_token else "(empty)",
+                    "fields_keys": list(fields.keys())[:10],
+                },
+            )
             outcome = await self._action_service.execute_create(
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
                 fields=fields,
                 idempotency_key=idempotency_key,
                 app_token=app_token,
+            )
+            logger.info(
+                "CreateSkill execute_create result",
+                extra={
+                    "event_code": "create_skill.debug.execute_create_result",
+                    "success": outcome.success,
+                    "outcome_message": outcome.message,
+                },
             )
             if not outcome.success:
                 failure_data = dict(outcome.data) if isinstance(outcome.data, dict) else {}
@@ -356,13 +407,113 @@ class CreateSkill(BaseSkill):
             except Exception as e:
                 logger.warning("_parse_fields failed to get fields for %s: %s", table_id, e)
 
-        llm_fields = await self._extractor.parse_create_fields(
-            query=query, required_fields=self._required_fields, available_fields=available_fields
-        )
         kv_fields = self._parse_key_value_fields(query)
+        compact_fields = self._parse_compact_case_fields(query)
+        for key, value in compact_fields.items():
+            kv_fields.setdefault(key, value)
+
+        missing_required = self._missing_required_fields(kv_fields, self._required_fields)
+        llm_fields: dict[str, Any] = {}
+        if missing_required:
+            llm_fields = await self._parse_fields_with_llm(query, available_fields)
+
+        merged: dict[str, Any] = {}
         for key, value in llm_fields.items():
-            kv_fields[str(key)] = value
-        return kv_fields
+            field_name = str(key).strip()
+            if not field_name:
+                continue
+            merged[field_name] = value
+        for key, value in kv_fields.items():
+            merged[str(key)] = value
+        return merged
+
+    async def _parse_fields_with_llm(self, query: str, available_fields: list[str]) -> dict[str, Any]:
+        try:
+            return await asyncio.wait_for(
+                self._extractor.parse_create_fields(
+                    query=query,
+                    required_fields=self._required_fields,
+                    available_fields=available_fields,
+                ),
+                timeout=self._field_extract_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "CreateSkill LLM 字段提取超时，回退规则解析",
+                extra={
+                    "event_code": "create_skill.parse_fields.timeout",
+                    "timeout_seconds": self._field_extract_timeout_seconds,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "CreateSkill LLM 字段提取失败，回退规则解析: %s",
+                exc,
+                extra={"event_code": "create_skill.parse_fields.error"},
+            )
+        return {}
+
+    def _parse_compact_case_fields(self, query: str) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        text = str(query or "").strip()
+        if not text:
+            return fields
+
+        compact = re.sub(
+            r"^(?:新增|新建|创建|添加|录入|登记)\s*(?:案件|案子|项目)?\s*[:：]?",
+            "",
+            text,
+            count=1,
+        ).strip(" ，,。；;")
+        if not compact:
+            return fields
+
+        vs_match = re.search(
+            r"(?P<left>[^,，。；;【】\[\]]{2,80}?)\s*(?:vs|v\\.?s\\.?|对)\s*(?P<right>[^,，。；;【】\[\]]{2,80})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        if vs_match:
+            left = str(vs_match.group("left") or "").strip(" ，,。；;")
+            right = str(vs_match.group("right") or "").strip(" ，,。；;")
+            if left:
+                fields["委托人"] = left
+            if right:
+                fields["对方当事人"] = right
+
+        project_match = re.search(r"[【\[]\s*([^】\]]{1,40})\s*[】\]]", compact)
+        if project_match:
+            project_type = str(project_match.group(1) or "").strip()
+            if project_type:
+                fields.setdefault("项目类型", project_type)
+
+        category_match = re.search(r"案件分类\s*(?:是|为|:|：|=)\s*([^,，。；;]+)", compact)
+        if category_match:
+            category = str(category_match.group(1) or "").strip()
+            if category:
+                fields["案件分类"] = category
+
+        cause_match = re.search(r"案由\s*(?:是|为|:|：|=)\s*([^,，。；;]+)", compact)
+        if cause_match:
+            cause = str(cause_match.group(1) or "").strip()
+            if cause:
+                fields["案由"] = cause
+
+        case_phrase_match = re.search(r"([^,，。；;【】\[\]]{2,40}案件)", compact)
+        if case_phrase_match:
+            case_phrase = str(case_phrase_match.group(1) or "").strip()
+            if case_phrase:
+                fields.setdefault("案由", case_phrase)
+                if case_phrase.endswith("案件"):
+                    fields.setdefault("案件分类", case_phrase[:-2])
+
+        parts = [segment.strip() for segment in re.split(r"[，,。；;]", compact) if segment.strip()]
+        if parts:
+            tail = parts[-1]
+            if re.fullmatch(r"[\u4e00-\u9fff]{2,8}", tail) and not re.search(r"案件|纠纷|仲裁|诉讼|执行", tail):
+                fields.setdefault("主办律师", tail)
+
+        return fields
 
     def _parse_key_value_fields(self, query: str) -> dict[str, Any]:
         fields: dict[str, Any] = {}

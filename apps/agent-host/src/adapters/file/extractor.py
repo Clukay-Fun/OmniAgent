@@ -18,8 +18,8 @@ import httpx
 
 from src.adapters.file.providers import ASRProvider, OCRProvider
 from src.config import ASRSettings, FileExtractorSettings, OCRSettings
-from src.core.cost_monitor import get_cost_monitor
-from src.utils.metrics import observe_file_extractor_duration, record_provider_error
+from src.core.foundation.telemetry.cost_monitor import get_cost_monitor
+from src.utils.observability.metrics import observe_file_extractor_duration, record_provider_error
 
 logger = logging.getLogger(__name__)
 

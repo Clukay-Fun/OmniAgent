@@ -16,10 +16,10 @@ from typing import Any
 
 import yaml
 
-from src.core.skills.base import BaseSkill
-from src.core.skills.metadata import SkillMetadataLoader
-from src.core.types import SkillContext, SkillResult
-from src.utils.metrics import record_chitchat_guard
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.capabilities.skills.base.metadata import SkillMetadataLoader
+from src.core.foundation.common.types import SkillContext, SkillResult
+from src.utils.observability.metrics import record_chitchat_guard
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +267,7 @@ class ChitchatSkill(BaseSkill):
     # region 配置加载 + 时间感知 + 随机选择
     # ============================================
     def _load_system_prompt(self) -> str:
-        """优先从 SKILL.md 加载，回退到 prompts.yaml。"""
+        """优先从 SKILL.md 加载，回退到 prompts 配置。"""
         default_prompt = (
             "你是一个友好、智能的助理。请用简洁、自然的中文回答用户的问题。"
             "如果用户的问题涉及案件查询、开庭安排等，"
@@ -278,7 +278,7 @@ class ChitchatSkill(BaseSkill):
         if skill_prompt:
             return skill_prompt
 
-        prompts_path = self._resolve_config_path("config/prompts.yaml")
+        prompts_path = self._resolve_config_path("config/engine/prompts.yaml", "config/prompts.yaml")
         if not prompts_path.exists():
             return default_prompt
         try:
@@ -290,16 +290,23 @@ class ChitchatSkill(BaseSkill):
             return default_prompt
 
     @staticmethod
-    def _resolve_config_path(relative_path: str) -> Path:
-        current_candidate = Path(relative_path)
-        if current_candidate.exists():
-            return current_candidate
+    def _resolve_config_path(*relative_paths: str) -> Path:
+        candidates = [item for item in relative_paths if item]
+        if not candidates:
+            return Path(".")
 
-        app_root = Path(__file__).resolve().parents[3]
-        app_candidate = app_root / relative_path
-        if app_candidate.exists():
-            return app_candidate
-        return current_candidate
+        app_root = Path(__file__).resolve().parents[5]
+
+        for relative_path in candidates:
+            current_candidate = Path(relative_path)
+            if current_candidate.exists():
+                return current_candidate
+
+        for relative_path in candidates:
+            app_candidate = app_root / relative_path
+            if app_candidate.exists():
+                return app_candidate
+        return Path(candidates[0])
 
     def _load_system_prompt_from_skill_md(self) -> str:
         skills_dir = self._resolve_config_path("config/skills")
@@ -310,8 +317,8 @@ class ChitchatSkill(BaseSkill):
         return str(metadata.system_prompt or "").strip()
 
     def _load_responses(self) -> dict[str, list[str]]:
-        """从 config/responses.yaml 加载回复模板，加载失败时用默认值"""
-        responses_path = Path("config/responses.yaml")
+        """从消息配置加载回复模板，加载失败时用默认值"""
+        responses_path = self._resolve_config_path("config/messages/zh-CN/responses.yaml", "config/responses.yaml")
         if not responses_path.exists():
             logger.warning("responses.yaml not found at %s, using defaults", responses_path)
             return dict(self.DEFAULT_RESPONSES)
@@ -332,7 +339,7 @@ class ChitchatSkill(BaseSkill):
 
     def _load_casual_pool(self) -> list[str]:
         """加载闲聊降级随机池（可选）。"""
-        casual_path = Path("config/responses/casual.yaml")
+        casual_path = self._resolve_config_path("config/messages/zh-CN/casual.yaml", "config/responses/casual.yaml")
         if not casual_path.exists():
             return []
         try:

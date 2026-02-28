@@ -12,8 +12,8 @@ import logging
 import uuid
 from typing import Any
 
-from src.vector.chroma_store import ChromaStore
-from src.vector.embedding import EmbeddingClient
+from src.infra.vector.chroma_store import ChromaStore
+from src.infra.vector.embedding import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 

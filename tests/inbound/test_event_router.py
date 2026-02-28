@@ -7,10 +7,10 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.event_adapter import EventEnvelope, FeishuEventAdapter, MessageEvent
-from src.api.event_router import FeishuEventRouter
-from src.core.skills.schema_cache import SchemaCache
-import src.api.event_router as event_router_module
+from src.adapters.channels.feishu.protocol.event_adapter import EventEnvelope, FeishuEventAdapter, MessageEvent
+from src.api.core.event_router import FeishuEventRouter
+from src.core.capabilities.skills.bitable.schema_cache import SchemaCache
+import src.api.core.event_router as event_router_module
 
 
 def _build_message_event(event_type: str = "im.message.receive_v1") -> MessageEvent:

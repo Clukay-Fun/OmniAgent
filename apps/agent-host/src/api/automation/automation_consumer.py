@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from src.api.automation_rules import (
+from src.api.automation.automation_rules import (
     AutomationActionExecutor,
     AutomationRule,
     AutomationRuleLoader,
@@ -25,11 +25,11 @@ from src.api.automation_rules import (
     resolve_default_automation_rules_path,
     resolve_default_dead_letter_path,
 )
-from src.utils.metrics import record_automation_consumed
-from src.utils.workspace import get_workspace_root
+from src.utils.observability.metrics import record_automation_consumed
+from src.utils.runtime.workspace import get_workspace_root
 from src.config import get_settings
-from src.mcp.client import MCPClient
-from src.utils.feishu_api import send_message
+from src.infra.mcp.client import MCPClient
+from src.utils.platform.feishu.feishu_api import send_message
 
 
 def _read_bool_env(key: str, default: bool) -> bool:

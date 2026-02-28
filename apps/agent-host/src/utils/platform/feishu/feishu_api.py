@@ -16,7 +16,7 @@ import json
 import httpx
 
 from src.config import Settings
-from src.utils.metrics import record_credential_refresh
+from src.utils.observability.metrics import record_credential_refresh
 
 
 # region 异常与管理器

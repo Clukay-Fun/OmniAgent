@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Deque
 
-from src.utils.metrics import record_cost_alert_triggered
+from src.utils.observability.metrics import record_cost_alert_triggered
 
 
 logger = logging.getLogger(__name__)

@@ -55,7 +55,7 @@
 - [ ] 新增/修改一条不满足条件的记录（例如协作类型不在白名单）
 - [ ] 执行：`POST /automation/scan?table_id=<source_table_id>&app_token=<app_token>`
 - [ ] 总览表无新增/无变更
-- [ ] `run_logs.jsonl` 出现 `result=no_match`
+- [ ] `automation.db.run_logs` 出现 `result=no_match`
 
 通过判据：规则过滤生效，不会误同步。
 
@@ -67,7 +67,7 @@
 
 - [ ] 对同一份数据连续执行两次 `POST /automation/scan`（不改数据）
 - [ ] 第二次执行不应产生额外业务更新
-- [ ] `run_logs.jsonl` 可见 `no_match` 或 `duplicate_business` 相关结果
+- [ ] `automation.db.run_logs` 可见 `no_match` 或 `duplicate_business` 相关结果
 
 通过判据：重复触发被幂等保护。
 
@@ -79,8 +79,8 @@
 
 - [ ] 人为制造一次失败（例如目标字段名写错）
 - [ ] 执行 `POST /automation/sync`
-- [ ] 失败写入 `dead_letters.jsonl`
-- [ ] `run_logs.jsonl` 出现 `result=failed`
+- [ ] 失败写入 `automation.db.dead_letters`
+- [ ] `automation.db.run_logs` 出现 `result=failed`
 - [ ] 修复配置后再次执行，恢复成功
 
 通过判据：失败有记录，修复后可恢复。

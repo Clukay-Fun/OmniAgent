@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.action_execution_service import ActionExecutionService  # noqa: E402
-from src.core.skills.data_writer import WriteResult  # noqa: E402
+from src.core.capabilities.skills.actions.action_execution_service import ActionExecutionService  # noqa: E402
+from src.core.capabilities.skills.actions.data_writer import WriteResult  # noqa: E402
 
 
 class _FakeWriter:

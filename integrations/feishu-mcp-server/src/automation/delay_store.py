@@ -1,21 +1,16 @@
 """
 描述: delay 动作任务存储。
 主要功能:
-    - 使用 JSONL 持久化延迟任务队列
+    - 使用 SQLite 持久化延迟任务队列
     - 提供状态迁移与到期任务读取能力
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from contextlib import contextmanager
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
 import json
-import os
 from pathlib import Path
+import sqlite3
 from threading import Lock
 import time
 from typing import Any
@@ -74,185 +69,236 @@ class DelayedTask:
 
 
 class DelayStore:
-    """延迟任务存储（JSONL + 进程内锁 + 原子替换）。"""
+    """延迟任务存储（SQLite + 进程内锁）。"""
 
-    def __init__(self, file_path: str | Path = "automation_data/delay_queue.jsonl") -> None:
-        self._file_path = Path(file_path)
-        self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock_path = self._file_path.with_name(self._file_path.name + ".lock")
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, file_path: str | Path = "automation_data/delay_queue.jsonl", db_path: str | Path | None = None) -> None:
+        self._legacy_file_path = Path(file_path)
+        self._legacy_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = Path(db_path) if db_path is not None else self._legacy_file_path.parent / "automation.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+        self._init_db()
+        self._migrate_legacy_if_needed()
 
-    @contextmanager
-    def _cross_process_lock(self):
-        with self._lock_path.open("a+", encoding="utf-8") as lock_file:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                if fcntl is not None:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
 
-    def _read_all(self) -> list[DelayedTask]:
-        if not self._file_path.exists():
-            return []
-        raw = self._file_path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-
-        tasks: list[DelayedTask] = []
-        for line in raw.splitlines():
-            text = line.strip()
-            if not text:
-                continue
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(parsed, dict):
-                continue
-            task = DelayedTask.from_dict(parsed)
-            if not task.task_id:
-                continue
-            tasks.append(task)
-        return tasks
-
-    def _write_all(self, tasks: list[DelayedTask]) -> None:
-        tmp_path = self._file_path.with_name(self._file_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as fp:
-            for task in tasks:
-                fp.write(json.dumps(task.to_dict(), ensure_ascii=False) + "\n")
-        os.replace(tmp_path, self._file_path)
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delay_tasks (
+                    task_id TEXT PRIMARY KEY,
+                    rule_id TEXT NOT NULL,
+                    trigger_at REAL NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    executed_at REAL,
+                    error_detail TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_delay_tasks_due
+                ON delay_tasks (status, trigger_at, created_at, task_id)
+                """
+            )
 
     @staticmethod
-    def _find_task_index(tasks: list[DelayedTask], task_id: str) -> int:
-        for idx, item in enumerate(tasks):
-            if item.task_id == task_id:
-                return idx
-        return -1
+    def _row_to_task(row: sqlite3.Row) -> DelayedTask:
+        payload: dict[str, Any] = {}
+        try:
+            loaded = json.loads(str(row["payload_json"]))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except json.JSONDecodeError:
+            payload = {}
+        return DelayedTask(
+            task_id=str(row["task_id"]),
+            rule_id=str(row["rule_id"]),
+            trigger_at=float(row["trigger_at"]),
+            payload=payload,
+            status=str(row["status"]),
+            created_at=float(row["created_at"]),
+            executed_at=(float(row["executed_at"]) if row["executed_at"] is not None else None),
+            error_detail=(str(row["error_detail"]) if row["error_detail"] is not None else None),
+        )
+
+    def _migrate_legacy_if_needed(self) -> None:
+        if not self._legacy_file_path.exists():
+            return
+        raw = self._legacy_file_path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return
+
+        with self._connect() as conn:
+            existing = conn.execute("SELECT COUNT(1) FROM delay_tasks").fetchone()
+            if existing and int(existing[0]) > 0:
+                return
+            for line in raw.splitlines():
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                task = DelayedTask.from_dict(parsed)
+                if not task.task_id:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO delay_tasks(
+                        task_id, rule_id, trigger_at, payload_json, status, created_at, executed_at, error_detail
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task.task_id,
+                        task.rule_id,
+                        float(task.trigger_at),
+                        json.dumps(task.payload, ensure_ascii=False),
+                        task.status,
+                        float(task.created_at),
+                        task.executed_at,
+                        task.error_detail,
+                    ),
+                )
 
     def list_tasks(self) -> list[DelayedTask]:
         with self._lock:
-            with self._cross_process_lock():
-                return self._read_all()
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, rule_id, trigger_at, payload_json, status, created_at, executed_at, error_detail
+                    FROM delay_tasks
+                    ORDER BY created_at ASC, task_id ASC
+                    """
+                ).fetchall()
+        return [self._row_to_task(row) for row in rows]
 
     def schedule(self, task: DelayedTask) -> None:
         if not task.task_id:
             raise ValueError("task_id is required")
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                if self._find_task_index(tasks, task.task_id) >= 0:
-                    raise ValueError(f"duplicate delay task id: {task.task_id}")
-                tasks.append(task)
-                self._write_all(tasks)
+            with self._connect() as conn:
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO delay_tasks(
+                            task_id, rule_id, trigger_at, payload_json, status, created_at, executed_at, error_detail
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            task.task_id,
+                            task.rule_id,
+                            float(task.trigger_at),
+                            json.dumps(task.payload, ensure_ascii=False),
+                            task.status,
+                            float(task.created_at),
+                            task.executed_at,
+                            task.error_detail,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ValueError(f"duplicate delay task id: {task.task_id}") from exc
 
     def get_due_tasks(self, now_ts: float | None = None, limit: int = 100) -> list[DelayedTask]:
         now_value = float(now_ts if now_ts is not None else time.time())
         max_items = max(1, int(limit))
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-        due = [
-            item
-            for item in tasks
-            if item.status == SCHEDULED and float(item.trigger_at) <= now_value
-        ]
-        due.sort(key=lambda item: (float(item.trigger_at), float(item.created_at), item.task_id))
-        return due[:max_items]
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, rule_id, trigger_at, payload_json, status, created_at, executed_at, error_detail
+                    FROM delay_tasks
+                    WHERE status = ? AND trigger_at <= ?
+                    ORDER BY trigger_at ASC, created_at ASC, task_id ASC
+                    LIMIT ?
+                    """,
+                    (SCHEDULED, now_value, max_items),
+                ).fetchall()
+        return [self._row_to_task(row) for row in rows]
 
     def mark_executing(self, task_id: str) -> bool:
         if not task_id:
             return False
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                idx = self._find_task_index(tasks, task_id)
-                if idx < 0:
-                    return False
-                task = tasks[idx]
-                if task.status != SCHEDULED:
-                    return False
-                task.status = EXECUTING
-                task.error_detail = None
-                tasks[idx] = task
-                self._write_all(tasks)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE delay_tasks
+                    SET status = ?, error_detail = NULL
+                    WHERE task_id = ? AND status = ?
+                    """,
+                    (EXECUTING, str(task_id), SCHEDULED),
+                )
+                return cur.rowcount > 0
 
     def mark_completed(self, task_id: str) -> bool:
         if not task_id:
             return False
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                idx = self._find_task_index(tasks, task_id)
-                if idx < 0:
-                    return False
-                task = tasks[idx]
-                if task.status not in {SCHEDULED, EXECUTING}:
-                    return False
-                task.status = COMPLETED
-                task.executed_at = time.time()
-                task.error_detail = None
-                tasks[idx] = task
-                self._write_all(tasks)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE delay_tasks
+                    SET status = ?, executed_at = ?, error_detail = NULL
+                    WHERE task_id = ? AND status IN (?, ?)
+                    """,
+                    (COMPLETED, float(time.time()), str(task_id), SCHEDULED, EXECUTING),
+                )
+                return cur.rowcount > 0
 
     def mark_failed(self, task_id: str, detail: str) -> bool:
         if not task_id:
             return False
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                idx = self._find_task_index(tasks, task_id)
-                if idx < 0:
-                    return False
-                task = tasks[idx]
-                if task.status not in {SCHEDULED, EXECUTING}:
-                    return False
-                task.status = FAILED
-                task.executed_at = time.time()
-                task.error_detail = str(detail or "")
-                tasks[idx] = task
-                self._write_all(tasks)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE delay_tasks
+                    SET status = ?, executed_at = ?, error_detail = ?
+                    WHERE task_id = ? AND status IN (?, ?)
+                    """,
+                    (FAILED, float(time.time()), str(detail or ""), str(task_id), SCHEDULED, EXECUTING),
+                )
+                return cur.rowcount > 0
 
     def cancel(self, task_id: str) -> bool:
         if not task_id:
             return False
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                idx = self._find_task_index(tasks, task_id)
-                if idx < 0:
-                    return False
-                task = tasks[idx]
-                if task.status != SCHEDULED:
-                    return False
-                task.status = CANCELLED
-                task.executed_at = time.time()
-                tasks[idx] = task
-                self._write_all(tasks)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE delay_tasks
+                    SET status = ?, executed_at = ?
+                    WHERE task_id = ? AND status = ?
+                    """,
+                    (CANCELLED, float(time.time()), str(task_id), SCHEDULED),
+                )
+                return cur.rowcount > 0
 
     def cleanup_old(self, now_ts: float | None = None, retention_seconds: float = 86400.0) -> int:
         now_value = float(now_ts if now_ts is not None else time.time())
         retention = max(1.0, float(retention_seconds))
         with self._lock:
-            with self._cross_process_lock():
-                tasks = self._read_all()
-                kept: list[DelayedTask] = []
-                removed = 0
-                for task in tasks:
-                    if task.status not in TERMINAL_STATUSES:
-                        kept.append(task)
-                        continue
-                    baseline = float(task.executed_at if task.executed_at is not None else task.created_at)
-                    if now_value - baseline <= retention:
-                        kept.append(task)
-                        continue
-                    removed += 1
-                if removed > 0:
-                    self._write_all(kept)
-                return removed
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    DELETE FROM delay_tasks
+                    WHERE status IN (?, ?, ?)
+                      AND (? - COALESCE(executed_at, created_at)) > ?
+                    """,
+                    (COMPLETED, FAILED, CANCELLED, now_value, retention),
+                )
+                return int(cur.rowcount)

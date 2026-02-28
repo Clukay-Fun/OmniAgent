@@ -21,8 +21,8 @@ import httpx
 from openai.types.chat import ChatCompletionMessageParam
 
 from src.config import LLMSettings
-from src.utils.exceptions import LLMTimeoutError
-from src.utils.metrics import record_llm_call
+from src.utils.errors.exceptions import LLMTimeoutError
+from src.utils.observability.metrics import record_llm_call
 
 
 # region LLM 客户端

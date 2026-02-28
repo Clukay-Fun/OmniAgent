@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
-from src.adapters.channels.feishu.formatter import FeishuFormatter
-from src.core.response.models import RenderedResponse
+from src.adapters.channels.feishu.protocol.formatter import FeishuFormatter
+from src.core.expression.response.models import RenderedResponse
 
 
 class FeishuSender:

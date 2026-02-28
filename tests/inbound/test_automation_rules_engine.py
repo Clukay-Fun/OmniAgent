@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.api.automation_rules import (
+from src.api.automation.automation_rules import (
     AutomationActionExecutor,
     AutomationRule,
     AutomationRuleLoader,

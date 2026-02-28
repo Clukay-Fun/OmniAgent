@@ -21,15 +21,15 @@ DEFAULT_SCENARIOS = ROOT / "docs" / "scenarios" / "scenarios.yaml"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.config import get_settings  # noqa: E402
-from src.core.skills.query import QuerySkill  # noqa: E402
-from src.core.types import SkillContext  # noqa: E402
-from src.llm.provider import create_llm_client  # noqa: E402
-from src.mcp.client import MCPClient  # noqa: E402
-from src.utils.time_parser import parse_time_range  # noqa: E402
+from src.core.capabilities.skills.implementations.query import QuerySkill  # noqa: E402
+from src.core.foundation.common.types import SkillContext  # noqa: E402
+from src.infra.llm.provider import create_llm_client  # noqa: E402
+from src.infra.mcp.client import MCPClient  # noqa: E402
+from src.utils.parsing.time_parser import parse_time_range  # noqa: E402
 
 try:  # noqa: E402
-    from src.core.orchestrator import AgentOrchestrator  # type: ignore
-    from src.core.session import SessionManager  # type: ignore
+    from src.core.brain.orchestration.orchestrator import AgentOrchestrator  # type: ignore
+    from src.core.runtime.state.session import SessionManager  # type: ignore
 
     ORCHESTRATOR_AVAILABLE = True
     ORCHESTRATOR_IMPORT_ERROR = ""
@@ -326,21 +326,27 @@ async def _run(args: argparse.Namespace) -> int:
         session_cls: Any = SessionManager
         orchestrator_cls: Any = AgentOrchestrator
         session_manager = session_cls(settings.session)
+        from src.core.capabilities.skills.actions.data_writer import build_default_data_writer
+        data_writer = build_default_data_writer(mcp_client)
         core = orchestrator_cls(
             settings=settings,
             session_manager=session_manager,
             mcp_client=mcp_client,
             llm_client=llm_client,
+            data_writer=data_writer,
             skills_config_path="config/skills.yaml",
         )
     else:
         if not ORCHESTRATOR_AVAILABLE and not bool(args.query_skill_only):
             print(f"[warn] Orchestrator 不可用，降级为 QuerySkill 模式: {ORCHESTRATOR_IMPORT_ERROR}")
+        from src.core.capabilities.skills.actions.data_writer import build_default_data_writer
+        data_writer = build_default_data_writer(mcp_client)
         query_skill = QuerySkill(
             mcp_client=mcp_client,
             settings=settings,
             llm_client=llm_client,
             skills_config=_load_skills_config(),
+            data_writer=data_writer,
         )
 
     total = 0

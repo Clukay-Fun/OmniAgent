@@ -18,24 +18,24 @@ from typing import Any
 
 import yaml
 
-from src.core.skills.base import BaseSkill
-from src.core.skills.action_execution_service import ActionExecutionService
-from src.core.skills.data_writer import DataWriter
-from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.skills.table_adapter import TableAdapter
-from src.core.skills.entity_extractor import EntityExtractor
-from src.core.skills.field_formatter import format_field_value
-from src.core.skills.semantic_slots import SemanticSlotExtraction, SemanticSlotKey
-from src.core.skills.schema_cache import SchemaCache, get_global_schema_cache
-from src.core.types import SkillContext, SkillResult
-from src.utils.metrics import (
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.capabilities.skills.actions.action_execution_service import ActionExecutionService
+from src.core.capabilities.skills.actions.data_writer import DataWriter
+from src.core.capabilities.skills.bitable.bitable_adapter import BitableAdapter
+from src.core.capabilities.skills.bitable.multi_table_linker import MultiTableLinker
+from src.core.capabilities.skills.utils.entity_extractor import EntityExtractor
+from src.core.capabilities.skills.utils.field_formatter import format_field_value
+from src.core.capabilities.skills.base.semantic_slots import SemanticSlotExtraction, SemanticSlotKey
+from src.core.capabilities.skills.bitable.schema_cache import SchemaCache, get_global_schema_cache
+from src.core.foundation.common.types import SkillContext, SkillResult
+from src.utils.observability.metrics import (
     observe_bitable_query_latency,
     observe_query_semantic_confidence,
     record_field_format,
     record_query_resolution,
     record_query_semantic_fallback,
 )
-from src.utils.time_parser import parse_time_range
+from src.utils.parsing.time_parser import parse_time_range
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class QuerySkill(BaseSkill):
         self._skills_config = skills_config or {}
         self._schema_cache = schema_cache or get_global_schema_cache()
         self._data_writer = data_writer
-        self._table_adapter = TableAdapter(mcp_client, skills_config=skills_config)
+        self._table_adapter = BitableAdapter(mcp_client, skills_config=skills_config)
         self._linker = MultiTableLinker(
             mcp_client,
             skills_config=skills_config,
@@ -1538,14 +1538,16 @@ class QuerySkill(BaseSkill):
     # region 回复模板加载
     # ============================================
     def _load_response_pool(self) -> dict[str, list[str]]:
-        """从 config/responses.yaml 加载业务回复模板"""
+        """从消息配置加载业务回复模板"""
         defaults = {
             "result_opener": ["查到啦~ "],
             "empty_result": ["咦，好像没能查到任何相关记录 🤔 要不您换个关键词再试试？"],
             "error": ["抱歉，处理时遇到了点问题 😅 稍后再试试？"],
             "timeout": ["处理超时了，稍后再来？"],
         }
-        responses_path = Path("config/responses.yaml")
+        responses_path = Path("config/messages/zh-CN/responses.yaml")
+        if not responses_path.exists():
+            responses_path = Path("config/responses.yaml")
         if not responses_path.exists():
             return defaults
         try:
@@ -1611,6 +1613,7 @@ class QuerySkill(BaseSkill):
         title_prefix = f"{opener}" if opener else ""
         title = f"{title_prefix}案件查询结果（共 {title_count} 条）"
 
+        # 尝试使用基于 Markdown Format Contract 的 LLM 生成
         items = []
         df = self._display_fields  # 使用配置的字段名
         for i, record in enumerate(records, start=1):

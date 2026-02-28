@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.cost_monitor import CostMonitor
+from src.core.foundation.telemetry.cost_monitor import CostMonitor
 
 
 def test_hourly_and_daily_threshold_crossing_only_triggers_once_per_window() -> None:

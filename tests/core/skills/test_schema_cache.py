@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.schema_cache import SchemaCache  # noqa: E402
+from src.core.capabilities.skills.bitable.schema_cache import SchemaCache  # noqa: E402
 
 
 class _FakeClock:

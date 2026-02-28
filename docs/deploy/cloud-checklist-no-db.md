@@ -30,7 +30,7 @@
 
 ## 路由与回调
 
-- [ ] `https://<domain>/feishu/events` -> MCP
+- [ ] `https://<domain>/feishu/events` -> Automation Worker
 - [ ] `https://<domain>/feishu/webhook` -> Agent
 - [ ] 飞书后台 URL 验证通过
 

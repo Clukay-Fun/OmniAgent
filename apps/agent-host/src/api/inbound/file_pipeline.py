@@ -13,7 +13,7 @@ from typing import Any
 
 from src.adapters.file import ExternalFileExtractor, ExtractorRequest
 from src.adapters.file.providers import OCRProvider
-from src.utils.metrics import record_file_pipeline
+from src.utils.observability.metrics import record_file_pipeline
 
 
 _FILE_MESSAGE_TYPES = {"file", "audio", "image"}

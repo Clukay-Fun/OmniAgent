@@ -14,13 +14,13 @@ import hashlib
 import json
 from typing import Any
 
-from src.core.errors import get_user_message_by_code
-from src.core.skills.bitable_adapter import BitableAdapter
-from src.core.skills.action_execution_service import ActionExecutionService
-from src.core.skills.base import BaseSkill
-from src.core.skills.data_writer import DataWriter
-from src.core.skills.multi_table_linker import MultiTableLinker
-from src.core.types import SkillContext, SkillResult
+from src.core.foundation.common.errors import get_user_message_by_code
+from src.core.capabilities.skills.bitable.bitable_adapter import BitableAdapter
+from src.core.capabilities.skills.actions.action_execution_service import ActionExecutionService
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.capabilities.skills.actions.data_writer import DataWriter
+from src.core.capabilities.skills.bitable.multi_table_linker import MultiTableLinker
+from src.core.foundation.common.types import SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class DeleteSkill(BaseSkill):
         self._linker = MultiTableLinker(mcp_client, skills_config=self._skills_config, data_writer=data_writer)
         self._action_service = ActionExecutionService(data_writer=self._data_writer, linker=self._linker)
         
-        from src.core.skills.entity_extractor import EntityExtractor
+        from src.core.capabilities.skills.utils.entity_extractor import EntityExtractor
         self._extractor = EntityExtractor(llm_client)
         
         # 确认短语配置

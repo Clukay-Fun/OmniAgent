@@ -14,6 +14,7 @@ intent_parser:
 
     请返回 JSON（不要输出其他内容）：
     {
+      "think": "在此详细分析用户的意图，辨别细微的诉求",
       "skills": [
         {"name": "技能名", "score": 0.0-1.0, "reason": "简短理由"}
       ],

@@ -1,6 +1,6 @@
 """
-描述: HTTP/MCP 服务路由子包。
+描述: 服务组装与路由子包。
 主要功能:
-    - 聚合 HTTP 路由、自动化路由、SSE/stdio 路由
-    - 对外提供服务接口层
+    - 基于 ROLE 组装 mcp_server / automation_worker 两类应用
+    - 提供 MCP 路由与自动化路由
 """

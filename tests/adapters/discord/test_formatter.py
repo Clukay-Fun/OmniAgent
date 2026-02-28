@@ -7,7 +7,7 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.adapters.channels.discord.formatter import DiscordFormatter
-from src.core.response.models import RenderedResponse
+from src.core.expression.response.models import RenderedResponse
 
 
 def test_formatter_returns_text_only_by_default() -> None:

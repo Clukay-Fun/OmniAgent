@@ -231,7 +231,11 @@ def _default_config_path() -> Path:
     功能:
         - 返回默认的配置文件路径
     """
-    return Path(__file__).resolve().parents[4] / "config" / "card_templates.yaml"
+    config_root = Path(__file__).resolve().parents[5] / "config"
+    new_path = config_root / "ui_templates" / "feishu" / "card_templates.yaml"
+    if new_path.exists():
+        return new_path
+    return config_root / "card_templates.yaml"
 
 
 def _yaml_enabled() -> bool:

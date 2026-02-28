@@ -1,7 +1,7 @@
 """
 描述: 向量数据库配置加载器
 主要功能:
-    - 加载 vector.yaml 配置文件
+    - 加载 engine/vector.yaml 配置文件
     - 支持环境变量展开 (${VAR} 或 ${VAR:-default})
 """
 
@@ -19,7 +19,7 @@ _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
 # region 环境变量展开与加载
-def load_vector_config(config_path: str = "config/vector.yaml") -> dict[str, Any]:
+def load_vector_config(config_path: str = "config/engine/vector.yaml") -> dict[str, Any]:
     """
     加载并解析向量配置
     
@@ -30,6 +30,8 @@ def load_vector_config(config_path: str = "config/vector.yaml") -> dict[str, Any
         解析后的配置字典 (已处理环境变量)
     """
     path = Path(config_path)
+    if not path.exists() and config_path == "config/engine/vector.yaml":
+        path = Path("config/vector.yaml")
     if not path.exists():
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

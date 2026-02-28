@@ -12,7 +12,7 @@
 - watched_fields 自动提取（按规则字段最小化拉取）
 - schema watcher（5 分钟轮询 + 字段事件即时刷新）
 - `status_write_enabled` 可切换状态回写
-- `run_logs.jsonl` 固定结构运行日志
+- `automation.db` 固定结构运行日志（`run_logs` / `dead_letters`）
 - 重试、死信、轮询补偿
 
 ## 1. 目标
@@ -28,7 +28,7 @@
 - 快照、幂等、游标、轮询补偿
 - 规则匹配：`on(created/updated)` + `changed/equals/in/any_field_changed/exclude_fields`
 - 动作执行：`log.write`、`bitable.update`、`bitable.upsert`、`calendar.create`、`http.request`
-- schema 同步：`schema_cache.json` + `schema_runtime_state.json` + 风险 webhook
+- schema 同步：`automation.db(schema_state)` + 风险 webhook（兼容镜像文件）
 - 动作重试、死信记录、运行日志
 
 不包含：
@@ -66,7 +66,7 @@
 - `status_write_enabled=false`（默认）：不写 `自动化_执行状态/自动化_最近错误`
 - `status_write_enabled=true`：允许状态字段回写
 
-即使关闭状态回写，也会持续写 `run_logs.jsonl` 与 `dead_letters.jsonl`。
+即使关闭状态回写，也会持续写 SQLite 的 `run_logs` 与 `dead_letters`。
 
 ### 4.4 运行日志固定结构
 
@@ -81,8 +81,8 @@
 5. 与快照做 diff
 6. 匹配启用规则
 7. 执行动作链（含重试）
-8. 写 `run_logs.jsonl`
-9. 失败写 `dead_letters.jsonl`
+8. 写 `automation.db.run_logs`
+9. 失败写 `automation.db.dead_letters`
 10. 更新快照与幂等键
 
 新记录触发边界：
@@ -128,21 +128,19 @@ Webhook 鉴权：
 
 ## 7. 数据文件
 
-- `snapshot.json`：快照
-- `idempotency.json`：事件级/业务级去重键
-- `checkpoint.json`：扫描游标
-- `schema_cache.json`：字段快照缓存（按 `app_token::table_id`）
-- `schema_runtime_state.json`：运行态 schema + 规则禁用状态
-- `run_logs.jsonl`：规则执行日志
-- `dead_letters.jsonl`：失败死信
+- `automation.db`：主状态库（snapshot/idempotency/checkpoint/schema_state/run_logs/dead_letters/delay/cron）
+- `snapshot.json`：历史兼容导入源
+- `idempotency.json`：历史兼容导入源
+- `checkpoint.json`：历史兼容导入源
+- `schema_cache.json`：兼容镜像文件
+- `schema_runtime_state.json`：兼容镜像文件
 
 ## 8. 关键配置
 
 - `AUTOMATION_ENABLED`
+- `AUTOMATION_SQLITE_DB_FILE`
 - `AUTOMATION_POLLER_ENABLED`
 - `AUTOMATION_STATUS_WRITE_ENABLED`
-- `AUTOMATION_RUN_LOG_FILE`
-- `AUTOMATION_DEAD_LETTER_FILE`
 - `AUTOMATION_ACTION_MAX_RETRIES`
 - `AUTOMATION_ACTION_RETRY_DELAY_SECONDS`
 - `AUTOMATION_SYNC_DELETIONS_ENABLED`
@@ -239,8 +237,8 @@ Schema 日志说明：
 
 ## 11. 待办
 
-- run_logs 文件轮转与保留策略（按天/按大小）
-- run_logs + dead_letters 统一查询脚本增强
+- automation.db 归档/备份策略（按天/按大小）
+- run_logs + dead_letters 查询脚本增强
 
 ## 12. 本次变更总结（2026-02-15）
 

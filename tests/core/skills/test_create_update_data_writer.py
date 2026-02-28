@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.create import CreateSkill  # noqa: E402
-from src.core.skills.data_writer import WriteResult  # noqa: E402
-from src.core.skills.multi_table_linker import MultiTableLinker  # noqa: E402
-from src.core.skills.update import UpdateSkill  # noqa: E402
-from src.core.types import SkillContext  # noqa: E402
+from src.core.capabilities.skills.implementations.create import CreateSkill  # noqa: E402
+from src.core.capabilities.skills.actions.data_writer import WriteResult  # noqa: E402
+from src.core.capabilities.skills.bitable.multi_table_linker import MultiTableLinker  # noqa: E402
+from src.core.capabilities.skills.implementations.update import UpdateSkill  # noqa: E402
+from src.core.foundation.common.types import SkillContext  # noqa: E402
 
 
 class _FakeWriter:
@@ -125,6 +125,155 @@ def test_create_skill_success_uses_data_writer() -> None:
     assert writer.create_calls[0]["table_id"] == "tbl_main"
     assert writer.create_calls[0]["fields"]["案号"] == "A-001"
     assert result.data.get("record_id") == "rec_create"
+
+
+def test_create_skill_compact_case_text_parses_required_fields_without_llm() -> None:
+    class _FailIfCalledLLM:
+        async def chat_json(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("LLM should not be called for compact structured input")
+
+    writer = _FakeWriter()
+    skill = CreateSkill(
+        mcp_client=object(),
+        llm_client=_FailIfCalledLLM(),
+        skills_config={
+            "create": {
+                "required_fields": ["委托人", "对方当事人", "案由", "项目类型", "案件分类"],
+            }
+        },
+        data_writer=writer,
+    )
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="新增案件深圳市中嘉建科股份有限公司 vs 深圳市神州红国际软装艺术有限公司，【争议解决】劳动仲裁案件，房怡康",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert len(writer.create_calls) == 1
+    created_fields = writer.create_calls[0]["fields"]
+    assert created_fields["委托人"] == "深圳市中嘉建科股份有限公司"
+    assert created_fields["对方当事人"] == "深圳市神州红国际软装艺术有限公司"
+    assert created_fields["项目类型"] == "争议解决"
+    assert created_fields["案由"] == "劳动仲裁案件"
+    assert created_fields["案件分类"] == "劳动仲裁"
+    assert created_fields["主办律师"] == "房怡康"
+
+
+def test_create_skill_llm_parse_timeout_falls_back_to_missing_fields_guidance() -> None:
+    class _SlowLLM:
+        async def chat_json(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            await asyncio.sleep(0.2)
+            return {"委托人": "甲公司"}
+
+    writer = _FakeWriter()
+    skill = CreateSkill(
+        mcp_client=object(),
+        llm_client=_SlowLLM(),
+        skills_config={
+            "create": {
+                "required_fields": ["委托人"],
+                "field_extract_timeout_seconds": 0.01,
+            }
+        },
+        data_writer=writer,
+    )
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    started = time.perf_counter()
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="新增案件",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+    elapsed = time.perf_counter() - started
+
+    assert result.success is True
+    assert result.message == "缺少必填字段"
+    assert "委托人" in (result.reply_text or "")
+    assert writer.create_calls == []
+    assert elapsed < 0.2
+
+
+def test_create_skill_requires_party_and_classification_fields_before_write() -> None:
+    writer = _FakeWriter()
+    skill = CreateSkill(
+        mcp_client=object(),
+        skills_config={
+            "create": {
+                "required_fields": ["委托人", "对方当事人", "案由", "项目类型", "案件分类"],
+            }
+        },
+        data_writer=writer,
+    )
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="委托人:甲公司，对方当事人:乙公司，案由:合同纠纷",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert writer.create_calls == []
+    assert result.message == "缺少必填字段"
+    pending_action = result.data.get("pending_action")
+    assert isinstance(pending_action, dict)
+    payload = pending_action.get("payload") or {}
+    assert payload.get("required_fields") == ["委托人", "对方当事人", "案由", "项目类型", "案件分类"]
+    assert "项目类型" in (result.reply_text or "")
+    assert "案件分类" in (result.reply_text or "")
+
+
+def test_create_skill_allows_create_when_required_business_fields_are_complete() -> None:
+    writer = _FakeWriter()
+    skill = CreateSkill(
+        mcp_client=object(),
+        skills_config={
+            "create": {
+                "required_fields": ["委托人", "对方当事人", "案由", "项目类型", "案件分类"],
+            }
+        },
+        data_writer=writer,
+    )
+    skill._table_adapter = _FakeTableAdapter()
+    skill._linker = _FakeLinker()
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="委托人:甲公司，对方当事人:乙公司，案由:合同纠纷，项目类型:诉讼，案件分类:劳动争议",
+                user_id="u1",
+                extra={},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert len(writer.create_calls) == 1
+    fields = writer.create_calls[0]["fields"]
+    assert fields["委托人"] == "甲公司"
+    assert fields["对方当事人"] == "乙公司"
+    assert fields["案由"] == "合同纠纷"
+    assert fields["项目类型"] == "诉讼"
+    assert fields["案件分类"] == "劳动争议"
 
 
 def _prepare_update_pending(skill: UpdateSkill) -> dict[str, Any]:
@@ -891,7 +1040,7 @@ def test_multi_table_linker_requires_data_writer_injection() -> None:
 # ── S1: locator triplet validation ──────────────────────────────────
 
 
-from src.core.skills.locator_triplet import LocatorTriplet, validate_locator_triplet  # noqa: E402
+from src.core.capabilities.skills.utils.locator_triplet import LocatorTriplet, validate_locator_triplet  # noqa: E402
 
 
 def test_locator_triplet_rejects_missing_app_token() -> None:

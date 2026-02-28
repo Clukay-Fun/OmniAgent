@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +26,7 @@ if str(ROOT) not in sys.path:
 
 from src.config import get_settings
 from src.feishu.client import FeishuClient
+from src.automation.paths import resolve_config_base_dir, resolve_runtime_path
 
 
 def _utc_now() -> datetime:
@@ -135,6 +138,31 @@ def _read_dead_letters(path: Path, since: datetime) -> tuple[int, int]:
     return total, recent
 
 
+def _read_dead_letters_sqlite(path: Path, since: datetime) -> tuple[int, int] | None:
+    if not path.exists():
+        return None
+
+    try:
+        with sqlite3.connect(str(path)) as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dead_letters'"
+            ).fetchone()
+            if table_exists is None:
+                return None
+
+            total_row = conn.execute("SELECT COUNT(1) FROM dead_letters").fetchone()
+            total = int(total_row[0]) if total_row is not None else 0
+
+            recent = 0
+            for row in conn.execute("SELECT timestamp FROM dead_letters"):
+                ts = _parse_iso_datetime(row[0])
+                if ts is not None and ts >= since:
+                    recent += 1
+            return total, recent
+    except sqlite3.Error:
+        return None
+
+
 def _read_run_logs(path: Path, since: datetime) -> dict[str, Any]:
     if not path.exists():
         return {
@@ -189,8 +217,67 @@ def _read_run_logs(path: Path, since: datetime) -> dict[str, Any]:
     }
 
 
+def _read_run_logs_sqlite(path: Path, since: datetime) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+
+    try:
+        with sqlite3.connect(str(path)) as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_logs'"
+            ).fetchone()
+            if table_exists is None:
+                return None
+
+            total_row = conn.execute("SELECT COUNT(1) FROM run_logs").fetchone()
+            total = int(total_row[0]) if total_row is not None else 0
+
+            in_window = 0
+            results_in_window: dict[str, int] = {}
+            failed_in_window = 0
+            no_match_in_window = 0
+            retry_max_in_window = 0
+
+            for row in conn.execute("SELECT payload_json FROM run_logs"):
+                raw_payload = row[0]
+                try:
+                    payload = json.loads(str(raw_payload))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+
+                ts = _parse_iso_datetime(payload.get("timestamp"))
+                if ts is None or ts < since:
+                    continue
+
+                in_window += 1
+                result = str(payload.get("result") or "unknown")
+                results_in_window[result] = results_in_window.get(result, 0) + 1
+                if result == "failed":
+                    failed_in_window += 1
+                if result == "no_match":
+                    no_match_in_window += 1
+
+                retry_count = int(payload.get("retry_count") or 0)
+                if retry_count > retry_max_in_window:
+                    retry_max_in_window = retry_count
+
+            return {
+                "total": total,
+                "in_window": in_window,
+                "results_in_window": results_in_window,
+                "failed_in_window": failed_in_window,
+                "no_match_in_window": no_match_in_window,
+                "retry_max_in_window": retry_max_in_window,
+            }
+    except sqlite3.Error:
+        return None
+
+
 async def _run_check(args: argparse.Namespace) -> dict[str, Any]:
-    load_dotenv()
+    os.environ.setdefault("CONFIG_PATH", str(ROOT / "config.yaml"))
+    load_dotenv(ROOT / ".env")
     get_settings.cache_clear()
     settings = get_settings()
 
@@ -202,13 +289,22 @@ async def _run_check(args: argparse.Namespace) -> dict[str, Any]:
     status_field = str(settings.automation.status_field or "自动化_执行状态").strip()
     error_field = str(settings.automation.error_field or "自动化_最近错误").strip()
 
-    dead_letter_file = Path(args.dead_letter_file or settings.automation.dead_letter_file)
-    if not dead_letter_file.is_absolute():
-        dead_letter_file = Path.cwd() / dead_letter_file
+    config_base_dir = resolve_config_base_dir()
+    storage_root = resolve_runtime_path(settings.automation.storage_dir, base_dir=config_base_dir)
 
-    run_log_file = Path(args.run_log_file or settings.automation.run_log_file)
+    dead_letter_file = Path(args.dead_letter_file) if str(args.dead_letter_file or "").strip() else (storage_root / "dead_letters.jsonl")
+    if not dead_letter_file.is_absolute():
+        dead_letter_file = resolve_runtime_path(dead_letter_file, base_dir=config_base_dir)
+
+    run_log_file = Path(args.run_log_file) if str(args.run_log_file or "").strip() else (storage_root / "run_logs.jsonl")
     if not run_log_file.is_absolute():
-        run_log_file = Path.cwd() / run_log_file
+        run_log_file = resolve_runtime_path(run_log_file, base_dir=config_base_dir)
+
+    sqlite_db_file = resolve_runtime_path(
+        str(args.sqlite_db_file or settings.automation.sqlite_db_file),
+        base_dir=config_base_dir,
+        default_parent=storage_root,
+    )
 
     now = _utc_now()
     since = now - timedelta(hours=float(args.hours))
@@ -247,8 +343,22 @@ async def _run_check(args: argparse.Namespace) -> dict[str, Any]:
             if error_value:
                 recent_error_nonempty += 1
 
-    dead_total, dead_recent = _read_dead_letters(dead_letter_file, since)
-    run_log_stats = _read_run_logs(run_log_file, since)
+    dead_source = "jsonl"
+    run_log_source = "jsonl"
+
+    sqlite_dead = _read_dead_letters_sqlite(sqlite_db_file, since)
+    if sqlite_dead is not None:
+        dead_total, dead_recent = sqlite_dead
+        dead_source = "sqlite"
+    else:
+        dead_total, dead_recent = _read_dead_letters(dead_letter_file, since)
+
+    sqlite_run_logs = _read_run_logs_sqlite(sqlite_db_file, since)
+    if sqlite_run_logs is not None:
+        run_log_stats = sqlite_run_logs
+        run_log_source = "sqlite"
+    else:
+        run_log_stats = _read_run_logs(run_log_file, since)
 
     anomalies: list[str] = []
     if dead_recent > 0:
@@ -274,6 +384,8 @@ async def _run_check(args: argparse.Namespace) -> dict[str, Any]:
         "status_in_window": status_recent,
         "error_nonempty_in_window": recent_error_nonempty,
         "api_scan_enabled": not bool(args.no_api),
+        "sqlite_db_file": str(sqlite_db_file),
+        "run_log_source": run_log_source,
         "run_log_file": str(run_log_file),
         "run_logs_total": int(run_log_stats.get("total") or 0),
         "run_logs_in_window": int(run_log_stats.get("in_window") or 0),
@@ -281,6 +393,7 @@ async def _run_check(args: argparse.Namespace) -> dict[str, Any]:
         "run_log_failed_in_window": int(run_log_stats.get("failed_in_window") or 0),
         "run_log_no_match_in_window": int(run_log_stats.get("no_match_in_window") or 0),
         "run_log_retry_max_in_window": int(run_log_stats.get("retry_max_in_window") or 0),
+        "dead_letter_source": dead_source,
         "dead_letter_file": str(dead_letter_file),
         "dead_letters_total": dead_total,
         "dead_letters_in_window": dead_recent,
@@ -294,6 +407,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hours", type=float, default=24, help="window size in hours")
     parser.add_argument("--table-id", type=str, default="", help="override table_id")
     parser.add_argument("--app-token", type=str, default="", help="override app_token")
+    parser.add_argument("--sqlite-db-file", type=str, default="", help="override sqlite db path")
     parser.add_argument("--dead-letter-file", type=str, default="", help="override dead letter file path")
     parser.add_argument("--run-log-file", type=str, default="", help="override run log file path")
     parser.add_argument("--page-size", type=int, default=200, help="records search page size")
@@ -319,8 +433,10 @@ def main() -> int:
         print(f"- api_scan_enabled: {result['api_scan_enabled']}")
         print(f"- records_scanned: {result['records_scanned']}")
         print(f"- records_in_window: {result['records_in_window']}")
+        print(f"- run_log_source: {result['run_log_source']}")
         print(f"- run_logs_in_window: {result['run_logs_in_window']}")
         print(f"- run_log_results_in_window: {result['run_log_results_in_window']}")
+        print(f"- dead_letter_source: {result['dead_letter_source']}")
         print(f"- dead_letters_in_window: {result['dead_letters_in_window']}")
         print(f"- error_nonempty_in_window: {result['error_nonempty_in_window']}")
         print(f"- status_in_window: {result['status_in_window']}")

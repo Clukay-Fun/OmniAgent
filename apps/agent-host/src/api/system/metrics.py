@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response
 
-from src.utils.metrics import get_metrics, get_metrics_content_type
+from src.utils.observability.metrics import get_metrics, get_metrics_content_type
 
 router = APIRouter()
 

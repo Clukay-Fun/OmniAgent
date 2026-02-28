@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from src.core.state.models import ConversationState
+from src.core.runtime.state.models import ConversationState
 
 # region 会话状态存储接口定义
 class StateStore(Protocol):

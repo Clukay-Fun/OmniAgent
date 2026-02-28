@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,12 +56,88 @@ def _extract_trigger_fields(trigger: dict[str, Any]) -> set[str]:
 
 
 class SchemaStateStore:
-    def __init__(self, cache_file: Path, runtime_state_file: Path) -> None:
+    def __init__(self, cache_file: Path, runtime_state_file: Path, db_path: Path | None = None) -> None:
         self._cache_file = cache_file
         self._runtime_state_file = runtime_state_file
         self._lock = Lock()
         self._cache_file.parent.mkdir(parents=True, exist_ok=True)
         self._runtime_state_file.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = db_path if db_path is not None else self._cache_file.parent / "automation.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        self._migrate_legacy_if_needed()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_state (
+                    state_key TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+    @staticmethod
+    def _normalize_cache(payload: dict[str, Any]) -> dict[str, Any]:
+        tables = payload.get("tables")
+        if not isinstance(tables, dict):
+            tables = {}
+        return {"tables": tables}
+
+    @staticmethod
+    def _normalize_runtime_state(payload: dict[str, Any]) -> dict[str, Any]:
+        disabled_rules = payload.get("disabled_rules")
+        if not isinstance(disabled_rules, dict):
+            disabled_rules = {}
+        schema_tables = payload.get("schema_tables")
+        if not isinstance(schema_tables, dict):
+            schema_tables = {}
+        return {
+            "disabled_rules": disabled_rules,
+            "schema_tables": schema_tables,
+        }
+
+    def _migrate_legacy_if_needed(self) -> None:
+        with self._connect() as conn:
+            existing = conn.execute("SELECT COUNT(1) FROM schema_state").fetchone()
+            if existing and int(existing[0]) > 0:
+                return
+
+            legacy_cache = self._normalize_cache(self._safe_load(self._cache_file))
+            legacy_runtime = self._normalize_runtime_state(self._safe_load(self._runtime_state_file))
+            now = _utc_now_iso()
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO schema_state(state_key, payload_json, updated_at)
+                VALUES(?, ?, ?)
+                """,
+                (
+                    "cache",
+                    json.dumps(legacy_cache, ensure_ascii=False),
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO schema_state(state_key, payload_json, updated_at)
+                VALUES(?, ?, ?)
+                """,
+                (
+                    "runtime_state",
+                    json.dumps(legacy_runtime, ensure_ascii=False),
+                    now,
+                ),
+            )
 
     @staticmethod
     def _safe_load(path: Path) -> dict[str, Any]:
@@ -81,45 +158,54 @@ class SchemaStateStore:
     def _safe_dump(path: Path, payload: dict[str, Any]) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def _load_state(self, state_key: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM schema_state WHERE state_key = ? LIMIT 1",
+                (state_key,),
+            ).fetchone()
+        if row is None:
+            return {}
+        try:
+            parsed = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return parsed
+
+    def _save_state(self, state_key: str, payload: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO schema_state(state_key, payload_json, updated_at)
+                VALUES(?, ?, ?)
+                """,
+                (
+                    state_key,
+                    json.dumps(payload, ensure_ascii=False),
+                    _utc_now_iso(),
+                ),
+            )
+
     def load_cache(self) -> dict[str, Any]:
         with self._lock:
-            data = self._safe_load(self._cache_file)
-            tables = data.get("tables")
-            if not isinstance(tables, dict):
-                tables = {}
-            return {"tables": tables}
+            return self._normalize_cache(self._load_state("cache"))
 
     def save_cache(self, cache: dict[str, Any]) -> None:
         with self._lock:
-            payload = {
-                "tables": cache.get("tables") if isinstance(cache.get("tables"), dict) else {},
-            }
+            payload = self._normalize_cache(cache)
+            self._save_state("cache", payload)
             self._safe_dump(self._cache_file, payload)
 
     def load_runtime_state(self) -> dict[str, Any]:
         with self._lock:
-            data = self._safe_load(self._runtime_state_file)
-            disabled_rules = data.get("disabled_rules")
-            if not isinstance(disabled_rules, dict):
-                disabled_rules = {}
-            schema_tables = data.get("schema_tables")
-            if not isinstance(schema_tables, dict):
-                schema_tables = {}
-            return {
-                "disabled_rules": disabled_rules,
-                "schema_tables": schema_tables,
-            }
+            return self._normalize_runtime_state(self._load_state("runtime_state"))
 
     def save_runtime_state(self, state: dict[str, Any]) -> None:
         with self._lock:
-            payload = {
-                "disabled_rules": state.get("disabled_rules")
-                if isinstance(state.get("disabled_rules"), dict)
-                else {},
-                "schema_tables": state.get("schema_tables")
-                if isinstance(state.get("schema_tables"), dict)
-                else {},
-            }
+            payload = self._normalize_runtime_state(state)
+            self._save_state("runtime_state", payload)
             self._safe_dump(self._runtime_state_file, payload)
 
 

@@ -1,25 +1,19 @@
 """
 描述: cron 周期任务存储。
 主要功能:
-    - 使用 JSONL 持久化 cron 任务队列
+    - 使用 SQLite 持久化 cron 任务队列
     - 提供状态迁移与并发安全的领取能力
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
+import sqlite3
 from threading import Lock
 import time
 from typing import Any
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
 
 
 ACTIVE = "active"
@@ -107,70 +101,155 @@ class CronJob:
 
 
 class CronStore:
-    """Cron 任务存储（JSONL + 进程内锁 + 进程间锁 + 原子替换）。"""
+    """Cron 任务存储（SQLite + 进程内锁）。"""
 
-    def __init__(self, file_path: str | Path = "automation_data/cron_queue.jsonl") -> None:
-        self._file_path = Path(file_path)
-        self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock_path = self._file_path.with_name(self._file_path.name + ".lock")
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, file_path: str | Path = "automation_data/cron_queue.jsonl", db_path: str | Path | None = None) -> None:
+        self._legacy_file_path = Path(file_path)
+        self._legacy_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = Path(db_path) if db_path is not None else self._legacy_file_path.parent / "automation.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+        self._init_db()
+        self._migrate_legacy_if_needed()
 
-    @contextmanager
-    def _cross_process_lock(self):
-        with self._lock_path.open("a+", encoding="utf-8") as lock_file:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                if fcntl is not None:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
 
-    def _read_all(self) -> list[CronJob]:
-        if not self._file_path.exists():
-            return []
-        raw = self._file_path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-
-        jobs: list[CronJob] = []
-        for line in raw.splitlines():
-            text = line.strip()
-            if not text:
-                continue
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(parsed, dict):
-                continue
-            job = CronJob.from_dict(parsed)
-            if not job.job_id or not job.cron_expr:
-                continue
-            if job.status not in VALID_CRON_STATUSES:
-                continue
-            jobs.append(job)
-        return jobs
-
-    def _write_all(self, jobs: list[CronJob]) -> None:
-        tmp_path = self._file_path.with_name(self._file_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as fp:
-            for job in jobs:
-                fp.write(json.dumps(job.to_dict(), ensure_ascii=False) + "\n")
-        os.replace(tmp_path, self._file_path)
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cron_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    cron_expr TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    rule_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    next_run_at REAL NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    last_run_at REAL,
+                    last_success_at REAL,
+                    last_failure_at REAL,
+                    last_error TEXT,
+                    pause_reason TEXT,
+                    paused_at REAL,
+                    cancelled_at REAL,
+                    consecutive_failures INTEGER NOT NULL,
+                    max_consecutive_failures INTEGER NOT NULL,
+                    execution_count INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_due
+                ON cron_jobs (status, next_run_at, created_at, job_id)
+                """
+            )
 
     @staticmethod
-    def _find_job_index(jobs: list[CronJob], job_id: str) -> int:
-        for idx, item in enumerate(jobs):
-            if item.job_id == job_id:
-                return idx
-        return -1
+    def _row_to_job(row: sqlite3.Row) -> CronJob:
+        payload: dict[str, Any] = {}
+        try:
+            loaded = json.loads(str(row["payload_json"]))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except json.JSONDecodeError:
+            payload = {}
+        return CronJob(
+            job_id=str(row["job_id"]),
+            cron_expr=str(row["cron_expr"]),
+            payload=payload,
+            rule_id=str(row["rule_id"]),
+            status=str(row["status"]),
+            next_run_at=float(row["next_run_at"]),
+            created_at=float(row["created_at"]),
+            updated_at=float(row["updated_at"]),
+            last_run_at=(float(row["last_run_at"]) if row["last_run_at"] is not None else None),
+            last_success_at=(float(row["last_success_at"]) if row["last_success_at"] is not None else None),
+            last_failure_at=(float(row["last_failure_at"]) if row["last_failure_at"] is not None else None),
+            last_error=(str(row["last_error"]) if row["last_error"] is not None else None),
+            pause_reason=(str(row["pause_reason"]) if row["pause_reason"] is not None else None),
+            paused_at=(float(row["paused_at"]) if row["paused_at"] is not None else None),
+            cancelled_at=(float(row["cancelled_at"]) if row["cancelled_at"] is not None else None),
+            consecutive_failures=int(row["consecutive_failures"]),
+            max_consecutive_failures=max(1, int(row["max_consecutive_failures"])),
+            execution_count=int(row["execution_count"]),
+        )
+
+    def _migrate_legacy_if_needed(self) -> None:
+        if not self._legacy_file_path.exists():
+            return
+        raw = self._legacy_file_path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return
+
+        with self._connect() as conn:
+            existing = conn.execute("SELECT COUNT(1) FROM cron_jobs").fetchone()
+            if existing and int(existing[0]) > 0:
+                return
+            for line in raw.splitlines():
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                job = CronJob.from_dict(parsed)
+                if not job.job_id or not job.cron_expr:
+                    continue
+                if job.status not in VALID_CRON_STATUSES:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO cron_jobs(
+                        job_id, cron_expr, payload_json, rule_id, status, next_run_at, created_at, updated_at,
+                        last_run_at, last_success_at, last_failure_at, last_error, pause_reason, paused_at,
+                        cancelled_at, consecutive_failures, max_consecutive_failures, execution_count
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job.job_id,
+                        job.cron_expr,
+                        json.dumps(job.payload, ensure_ascii=False),
+                        job.rule_id,
+                        job.status,
+                        float(job.next_run_at),
+                        float(job.created_at),
+                        float(job.updated_at),
+                        job.last_run_at,
+                        job.last_success_at,
+                        job.last_failure_at,
+                        job.last_error,
+                        job.pause_reason,
+                        job.paused_at,
+                        job.cancelled_at,
+                        int(job.consecutive_failures),
+                        int(job.max_consecutive_failures),
+                        int(job.execution_count),
+                    ),
+                )
 
     def list_jobs(self) -> list[CronJob]:
         with self._lock:
-            with self._cross_process_lock():
-                return self._read_all()
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM cron_jobs
+                    ORDER BY created_at ASC, job_id ASC
+                    """
+                ).fetchall()
+        return [self._row_to_job(row) for row in rows]
 
     def get_job(self, job_id: str) -> CronJob | None:
         normalized_job_id = str(job_id or "").strip()
@@ -178,12 +257,14 @@ class CronStore:
             return None
 
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                idx = self._find_job_index(jobs, normalized_job_id)
-                if idx < 0:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM cron_jobs WHERE job_id = ? LIMIT 1",
+                    (normalized_job_id,),
+                ).fetchone()
+                if row is None:
                     return None
-                return jobs[idx]
+                return self._row_to_job(row)
 
     def schedule(self, job: CronJob) -> None:
         if not job.job_id:
@@ -192,69 +273,90 @@ class CronStore:
             raise ValueError("cron_expr is required")
 
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                if self._find_job_index(jobs, job.job_id) >= 0:
-                    raise ValueError(f"duplicate cron job id: {job.job_id}")
-                jobs.append(job)
-                self._write_all(jobs)
+            with self._connect() as conn:
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO cron_jobs(
+                            job_id, cron_expr, payload_json, rule_id, status, next_run_at, created_at, updated_at,
+                            last_run_at, last_success_at, last_failure_at, last_error, pause_reason, paused_at,
+                            cancelled_at, consecutive_failures, max_consecutive_failures, execution_count
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            job.job_id,
+                            job.cron_expr,
+                            json.dumps(job.payload, ensure_ascii=False),
+                            job.rule_id,
+                            job.status,
+                            float(job.next_run_at),
+                            float(job.created_at),
+                            float(job.updated_at),
+                            job.last_run_at,
+                            job.last_success_at,
+                            job.last_failure_at,
+                            job.last_error,
+                            job.pause_reason,
+                            job.paused_at,
+                            job.cancelled_at,
+                            int(job.consecutive_failures),
+                            int(job.max_consecutive_failures),
+                            int(job.execution_count),
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ValueError(f"duplicate cron job id: {job.job_id}") from exc
 
     def activate_waiting(self, now_ts: float | None = None) -> int:
         now_value = float(now_ts if now_ts is not None else time.time())
-        activated = 0
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                for idx, job in enumerate(jobs):
-                    if job.status != WAITING:
-                        continue
-                    if float(job.next_run_at) > now_value:
-                        continue
-                    job.status = ACTIVE
-                    job.updated_at = now_value
-                    jobs[idx] = job
-                    activated += 1
-
-                if activated > 0:
-                    self._write_all(jobs)
-        return activated
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE cron_jobs
+                    SET status = ?, updated_at = ?
+                    WHERE status = ? AND next_run_at <= ?
+                    """,
+                    (ACTIVE, now_value, WAITING, now_value),
+                )
+                return int(cur.rowcount)
 
     def acquire_due_jobs(self, now_ts: float | None = None, limit: int = 100) -> list[CronJob]:
         now_value = float(now_ts if now_ts is not None else time.time())
         max_items = max(1, int(limit))
-        acquired: list[CronJob] = []
-
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                sorted_indexes = sorted(
-                    range(len(jobs)),
-                    key=lambda idx: (
-                        float(jobs[idx].next_run_at),
-                        float(jobs[idx].created_at),
-                        jobs[idx].job_id,
-                    ),
-                )
-
-                for idx in sorted_indexes:
-                    if len(acquired) >= max_items:
-                        break
-                    job = jobs[idx]
-                    if job.status != ACTIVE:
-                        continue
-                    if float(job.next_run_at) > now_value:
-                        continue
-
-                    job.status = EXECUTING
-                    job.last_run_at = now_value
-                    job.updated_at = now_value
-                    jobs[idx] = job
-                    acquired.append(job)
-
-                if acquired:
-                    self._write_all(jobs)
-
-        return acquired
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                rows = conn.execute(
+                    """
+                    SELECT job_id
+                    FROM cron_jobs
+                    WHERE status = ? AND next_run_at <= ?
+                    ORDER BY next_run_at ASC, created_at ASC, job_id ASC
+                    LIMIT ?
+                    """,
+                    (ACTIVE, now_value, max_items),
+                ).fetchall()
+                if not rows:
+                    conn.commit()
+                    return []
+                job_ids = [str(row["job_id"]) for row in rows]
+                for job_id in job_ids:
+                    conn.execute(
+                        """
+                        UPDATE cron_jobs
+                        SET status = ?, last_run_at = ?, updated_at = ?
+                        WHERE job_id = ? AND status = ?
+                        """,
+                        (EXECUTING, now_value, now_value, job_id, ACTIVE),
+                    )
+                placeholders = ",".join("?" for _ in job_ids)
+                acquired_rows = conn.execute(
+                    f"SELECT * FROM cron_jobs WHERE job_id IN ({placeholders}) ORDER BY next_run_at ASC, created_at ASC, job_id ASC",
+                    tuple(job_ids),
+                ).fetchall()
+                conn.commit()
+        return [self._row_to_job(row) for row in acquired_rows if str(row["status"]) == EXECUTING]
 
     def mark_success(self, job_id: str, *, next_run_at: float, executed_at: float | None = None) -> bool:
         normalized_job_id = str(job_id or "").strip()
@@ -263,28 +365,20 @@ class CronStore:
 
         now_value = float(executed_at if executed_at is not None else time.time())
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                idx = self._find_job_index(jobs, normalized_job_id)
-                if idx < 0:
-                    return False
-
-                job = jobs[idx]
-                if job.status != EXECUTING:
-                    return False
-
-                job.status = WAITING
-                job.next_run_at = float(next_run_at)
-                job.last_success_at = now_value
-                job.last_error = None
-                job.pause_reason = None
-                job.paused_at = None
-                job.consecutive_failures = 0
-                job.execution_count = int(job.execution_count) + 1
-                job.updated_at = now_value
-                jobs[idx] = job
-                self._write_all(jobs)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE cron_jobs
+                    SET status = ?, next_run_at = ?, last_success_at = ?,
+                        last_error = NULL, pause_reason = NULL, paused_at = NULL,
+                        consecutive_failures = 0,
+                        execution_count = execution_count + 1,
+                        updated_at = ?
+                    WHERE job_id = ? AND status = ?
+                    """,
+                    (WAITING, float(next_run_at), now_value, now_value, normalized_job_id, EXECUTING),
+                )
+                return cur.rowcount > 0
 
     def mark_failure(
         self,
@@ -301,36 +395,73 @@ class CronStore:
 
         now_value = float(executed_at if executed_at is not None else time.time())
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                idx = self._find_job_index(jobs, normalized_job_id)
-                if idx < 0:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT status, consecutive_failures, max_consecutive_failures
+                    FROM cron_jobs
+                    WHERE job_id = ?
+                    LIMIT 1
+                    """,
+                    (normalized_job_id,),
+                ).fetchone()
+                if row is None:
                     return {"updated": False, "paused": False}
 
-                job = jobs[idx]
-                if job.status != EXECUTING:
-                    return {"updated": False, "paused": False, "current_status": job.status}
+                current_status = str(row["status"])
+                if current_status != EXECUTING:
+                    return {"updated": False, "paused": False, "current_status": current_status}
 
-                threshold = max(1, int(job.max_consecutive_failures or max_consecutive_failures or 3))
-                next_failures = int(job.consecutive_failures) + 1
-                job.last_failure_at = now_value
-                job.last_error = str(detail or "")
-                job.execution_count = int(job.execution_count) + 1
-                job.consecutive_failures = next_failures
-                job.max_consecutive_failures = threshold
-
+                threshold = max(1, int(row["max_consecutive_failures"] or max_consecutive_failures or 3))
+                next_failures = int(row["consecutive_failures"]) + 1
                 paused = next_failures >= threshold
-                if paused:
-                    job.status = PAUSED
-                    job.paused_at = now_value
-                    job.pause_reason = f"consecutive failures reached {threshold}"
-                else:
-                    job.status = WAITING
-                    job.next_run_at = float(next_run_at)
 
-                job.updated_at = now_value
-                jobs[idx] = job
-                self._write_all(jobs)
+                if paused:
+                    conn.execute(
+                        """
+                        UPDATE cron_jobs
+                        SET status = ?, last_failure_at = ?, last_error = ?,
+                            execution_count = execution_count + 1,
+                            consecutive_failures = ?, max_consecutive_failures = ?,
+                            paused_at = ?, pause_reason = ?, updated_at = ?
+                        WHERE job_id = ? AND status = ?
+                        """,
+                        (
+                            PAUSED,
+                            now_value,
+                            str(detail or ""),
+                            next_failures,
+                            threshold,
+                            now_value,
+                            f"consecutive failures reached {threshold}",
+                            now_value,
+                            normalized_job_id,
+                            EXECUTING,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE cron_jobs
+                        SET status = ?, next_run_at = ?,
+                            last_failure_at = ?, last_error = ?,
+                            execution_count = execution_count + 1,
+                            consecutive_failures = ?, max_consecutive_failures = ?,
+                            updated_at = ?
+                        WHERE job_id = ? AND status = ?
+                        """,
+                        (
+                            WAITING,
+                            float(next_run_at),
+                            now_value,
+                            str(detail or ""),
+                            next_failures,
+                            threshold,
+                            now_value,
+                            normalized_job_id,
+                            EXECUTING,
+                        ),
+                    )
                 return {
                     "updated": True,
                     "paused": paused,
@@ -344,26 +475,26 @@ class CronStore:
 
         now_value = float(now_ts if now_ts is not None else time.time())
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                idx = self._find_job_index(jobs, normalized_job_id)
-                if idx < 0:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT status, next_run_at FROM cron_jobs WHERE job_id = ? LIMIT 1",
+                    (normalized_job_id,),
+                ).fetchone()
+                if row is None:
                     return False
-
-                job = jobs[idx]
-                if job.status != PAUSED:
+                if str(row["status"]) != PAUSED:
                     return False
-
-                job.status = ACTIVE
-                job.paused_at = None
-                job.pause_reason = None
-                job.consecutive_failures = 0
-                if float(job.next_run_at) < now_value:
-                    job.next_run_at = now_value
-                job.updated_at = now_value
-                jobs[idx] = job
-                self._write_all(jobs)
-                return True
+                next_run_at = max(float(row["next_run_at"]), now_value)
+                cur = conn.execute(
+                    """
+                    UPDATE cron_jobs
+                    SET status = ?, paused_at = NULL, pause_reason = NULL,
+                        consecutive_failures = 0, next_run_at = ?, updated_at = ?
+                    WHERE job_id = ? AND status = ?
+                    """,
+                    (ACTIVE, next_run_at, now_value, normalized_job_id, PAUSED),
+                )
+                return cur.rowcount > 0
 
     def cancel(self, job_id: str, now_ts: float | None = None) -> bool:
         normalized_job_id = str(job_id or "").strip()
@@ -372,19 +503,13 @@ class CronStore:
 
         now_value = float(now_ts if now_ts is not None else time.time())
         with self._lock:
-            with self._cross_process_lock():
-                jobs = self._read_all()
-                idx = self._find_job_index(jobs, normalized_job_id)
-                if idx < 0:
-                    return False
-
-                job = jobs[idx]
-                if job.status in {CANCELLED, EXECUTING}:
-                    return False
-
-                job.status = CANCELLED
-                job.cancelled_at = now_value
-                job.updated_at = now_value
-                jobs[idx] = job
-                self._write_all(jobs)
-                return True
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE cron_jobs
+                    SET status = ?, cancelled_at = ?, updated_at = ?
+                    WHERE job_id = ? AND status NOT IN (?, ?)
+                    """,
+                    (CANCELLED, now_value, now_value, normalized_job_id, CANCELLED, EXECUTING),
+                )
+                return cur.rowcount > 0

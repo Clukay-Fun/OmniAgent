@@ -10,10 +10,10 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.intent import IntentResult, SkillMatch  # noqa: E402 # type: ignore[reportMissingImports]
-from src.core.router.llm_selector import LLMSelectionResult  # noqa: E402 # type: ignore[reportMissingImports]
-from src.core.router.router import SkillRouter  # noqa: E402 # type: ignore[reportMissingImports]
-from src.core.types import SkillContext, SkillResult  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.understanding.intent import IntentResult, SkillMatch  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.understanding.router.llm_selector import LLMSelectionResult  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.understanding.router.router import SkillRouter  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.foundation.common.types import SkillContext, SkillResult  # noqa: E402 # type: ignore[reportMissingImports]
 
 
 def _build_intent(skill_name: str = "QuerySkill") -> IntentResult:

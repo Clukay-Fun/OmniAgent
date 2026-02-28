@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.planner.engine import PlannerEngine  # noqa: E402
-from src.core.planner.schema import PlannerOutput  # noqa: E402
+from src.core.runtime.planner.engine import PlannerEngine  # noqa: E402
+from src.core.runtime.planner.schema import PlannerOutput  # noqa: E402
 
 
 def test_planner_output_close_semantic_invalid_fallbacks_to_default() -> None:

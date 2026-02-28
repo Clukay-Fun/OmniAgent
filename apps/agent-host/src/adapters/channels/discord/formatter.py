@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from src.core.response.models import Block, RenderedResponse
+from src.core.expression.response.models import Block, RenderedResponse
 
 
 @dataclass

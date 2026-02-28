@@ -11,15 +11,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from src.adapters.channels.feishu.card_template_config import resolve_template_version
-from src.adapters.channels.feishu.card_template_registry import (
+from src.adapters.channels.feishu.ui_cards.card_template_config import resolve_template_version
+from src.adapters.channels.feishu.ui_cards.card_template_registry import (
     CardTemplateRegistry,
     TemplateLookupError,
     TemplateValidationError,
 )
-from src.adapters.channels.feishu.card_scaffold import build_card_payload, build_text_payload
-from src.core.response.models import Block, RenderedResponse
-from src.utils.metrics import record_card_template
+from src.adapters.channels.feishu.ui_cards.card_scaffold import build_card_payload, build_text_payload
+from src.core.expression.response.models import Block, RenderedResponse
+from src.utils.observability.metrics import record_card_template
 
 
 logger = logging.getLogger(__name__)

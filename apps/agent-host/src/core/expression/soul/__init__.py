@@ -6,6 +6,6 @@
 
 from __future__ import annotations
 
-from src.core.soul.soul import SoulManager
+from src.core.expression.soul.soul import SoulManager
 
 __all__ = ["SoulManager"]

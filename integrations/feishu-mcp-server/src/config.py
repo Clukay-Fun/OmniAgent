@@ -133,6 +133,7 @@ class AutomationSettings(BaseModel):
     verification_token: str = ""
     encrypt_key: str = ""
     storage_dir: str = "automation_data"
+    sqlite_db_file: str = "automation_data/automation.db"
     rules_file: str = "automation_rules.yaml"
     event_ttl_seconds: int = 604800
     business_ttl_seconds: int = 604800
@@ -149,8 +150,6 @@ class AutomationSettings(BaseModel):
     poller_interval_seconds: float = 60.0
     action_max_retries: int = 1
     action_retry_delay_seconds: float = 0.5
-    dead_letter_file: str = "automation_data/dead_letters.jsonl"
-    run_log_file: str = "automation_data/run_logs.jsonl"
     delay_queue_file: str = "automation_data/delay_queue.jsonl"
     delay_scheduler_enabled: bool = True
     delay_scheduler_interval_seconds: float = 5.0
@@ -270,6 +269,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_EVENT_VERIFY_TOKEN": ["automation", "verification_token"],
         "FEISHU_EVENT_ENCRYPT_KEY": ["automation", "encrypt_key"],
         "AUTOMATION_STORAGE_DIR": ["automation", "storage_dir"],
+        "AUTOMATION_SQLITE_DB_FILE": ["automation", "sqlite_db_file"],
         "AUTOMATION_RULES_FILE": ["automation", "rules_file"],
         "AUTOMATION_EVENT_TTL_SECONDS": ["automation", "event_ttl_seconds"],
         "AUTOMATION_BUSINESS_TTL_SECONDS": ["automation", "business_ttl_seconds"],
@@ -292,8 +292,6 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "AUTOMATION_POLLER_INTERVAL_SECONDS": ["automation", "poller_interval_seconds"],
         "AUTOMATION_ACTION_MAX_RETRIES": ["automation", "action_max_retries"],
         "AUTOMATION_ACTION_RETRY_DELAY_SECONDS": ["automation", "action_retry_delay_seconds"],
-        "AUTOMATION_DEAD_LETTER_FILE": ["automation", "dead_letter_file"],
-        "AUTOMATION_RUN_LOG_FILE": ["automation", "run_log_file"],
         "AUTOMATION_DELAY_QUEUE_FILE": ["automation", "delay_queue_file"],
         "AUTOMATION_DELAY_SCHEDULER_ENABLED": ["automation", "delay_scheduler_enabled"],
         "AUTOMATION_DELAY_SCHEDULER_INTERVAL_SECONDS": ["automation", "delay_scheduler_interval_seconds"],

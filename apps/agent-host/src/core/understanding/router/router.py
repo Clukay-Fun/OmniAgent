@@ -16,14 +16,14 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
-from src.core.errors import get_user_message_by_code
-from src.core.intent import IntentResult, SkillMatch
-from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
+from src.core.foundation.common.errors import get_user_message_by_code
+from src.core.understanding.intent import IntentResult, SkillMatch
+from src.core.foundation.common.types import SkillContext, SkillExecutionStatus, SkillResult
 
 if TYPE_CHECKING:
-    from src.core.router.llm_selector import LLMSelectionResult, LLMSkillSelector
-    from src.core.skills.base import BaseSkill
-    from src.core.skills.metadata import ReloadReport, SkillMetadata, SkillMetadataLoader
+    from src.core.understanding.router.llm_selector import LLMSelectionResult, LLMSkillSelector
+    from src.core.capabilities.skills.base.base import BaseSkill
+    from src.core.capabilities.skills.base.metadata import ReloadReport, SkillMetadata, SkillMetadataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class SkillRouter:
             if skills_metadata_dir is not None
             else self._resolve_skills_metadata_dir()
         )
-        from src.core.skills.metadata import SkillMetadataLoader
+        from src.core.capabilities.skills.base.metadata import SkillMetadataLoader
 
         self._skill_metadata_loader = SkillMetadataLoader(skills_dir=resolved_metadata_dir)
         self._skill_metadata_report = self._skill_metadata_loader.load_all()
@@ -107,7 +107,7 @@ class SkillRouter:
         self._shadow_tasks: set[asyncio.Task[Any]] = set()
         self._llm_selector: LLMSkillSelector | None = None
         if llm_client is not None:
-            from src.core.router.llm_selector import LLMSkillSelector
+            from src.core.understanding.router.llm_selector import LLMSkillSelector
 
             self._llm_selector = LLMSkillSelector(
                 llm_client=llm_client,
@@ -131,7 +131,7 @@ class SkillRouter:
         if current_candidate.exists():
             return current_candidate
 
-        app_root = Path(__file__).resolve().parents[3]
+        app_root = Path(__file__).resolve().parents[4]
         app_candidate = app_root / "config" / "skills"
         if app_candidate.exists():
             return app_candidate
@@ -182,7 +182,7 @@ class SkillRouter:
 
     @property
     def last_skill_metadata_report(self) -> ReloadReport:
-        from src.core.skills.metadata import ReloadReport
+        from src.core.capabilities.skills.base.metadata import ReloadReport
 
         return ReloadReport(
             loaded=list(self._skill_metadata_report.loaded),
@@ -360,8 +360,8 @@ class SkillRouter:
             3. 执行并记录耗时/结果
             4. 处理超时与异常
         """
-        from src.utils.metrics import record_skill_execution
-        from src.utils.exceptions import (
+        from src.utils.observability.metrics import record_skill_execution
+        from src.utils.errors.exceptions import (
             LLMTimeoutError,
             MCPTimeoutError,
             SkillTimeoutError,

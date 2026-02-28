@@ -7,7 +7,7 @@ AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
 from src.config import SessionSettings
-from src.core.session import SessionManager
+from src.core.runtime.state.session import SessionManager
 
 
 def test_trim_context_to_token_budget_removes_oldest_messages() -> None:

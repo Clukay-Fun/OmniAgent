@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import Any, cast
 
-from src.core.state.models import (
+from src.core.runtime.state.models import (
     ActiveRecordState,
     ConversationState,
     LastResultState,
@@ -21,7 +21,7 @@ from src.core.state.models import (
     PaginationState,
     PendingDeleteState,
 )
-from src.core.state.store import StateStore
+from src.core.runtime.state.store import StateStore
 
 
 class ConversationStateManager:

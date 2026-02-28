@@ -1,7 +1,7 @@
 """
 描述: OmniAgent 统一开发入口脚本。
 主要功能:
-    - 统一启动 MCP + Feishu Agent 的开发态容器
+    - 统一启动 MCP + Automation Worker + Feishu Agent 的开发态容器
     - 统一查看日志、停止、重启开发栈
     - 统一使用 deploy/docker/compose.yml 与 compose.dev.yml
 """
@@ -76,14 +76,14 @@ def _run_command(args: list[str], repo_root: Path) -> int:
 def _run_agent_ws(repo_root: Path) -> int:
     """启动一次飞书长连接客户端。"""
     agent_root = repo_root / "apps" / "agent-host"
-    ws_cmd = [sys.executable, "-m", "src.api.ws_client"]
+    ws_cmd = [sys.executable, "-m", "src.api.channels.feishu.ws_client"]
     return _run_command(ws_cmd, agent_root)
 
 
 def _run_agent_discord(repo_root: Path) -> int:
     """启动一次 Discord 客户端。"""
     agent_root = repo_root / "apps" / "agent-host"
-    discord_cmd = [sys.executable, "-m", "src.api.discord_client"]
+    discord_cmd = [sys.executable, "-m", "src.api.channels.discord.discord_client"]
     return _run_command(discord_cmd, agent_root)
 
 
@@ -108,7 +108,7 @@ def _run_agent_ws_watch(repo_root: Path) -> int:
             target.mkdir(parents=True, exist_ok=True)
 
     def _spawn() -> subprocess.Popen[str]:
-        command = [sys.executable, "-m", "src.api.ws_client"]
+        command = [sys.executable, "-m", "src.api.channels.feishu.ws_client"]
         print("$", " ".join(command))
         return subprocess.Popen(command, cwd=str(agent_root), text=True)
 
@@ -161,7 +161,7 @@ def _run_agent_discord_watch(repo_root: Path) -> int:
             target.mkdir(parents=True, exist_ok=True)
 
     def _spawn() -> subprocess.Popen[str]:
-        command = [sys.executable, "-m", "src.api.discord_client"]
+        command = [sys.executable, "-m", "src.api.channels.discord.discord_client"]
         print("$", " ".join(command))
         return subprocess.Popen(command, cwd=str(agent_root), text=True)
 
@@ -391,7 +391,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--with-monitoring", action="store_true", help="启用 monitoring profile")
     parser.add_argument("--with-db", action="store_true", help="启用 db profile")
     parser.add_argument("--all", action="store_true", help="等价于 --with-monitoring --with-db")
-    parser.add_argument("--endpoint", default="http://localhost:8081", help="MCP 地址（refresh-schema/scan/sync 使用）")
+    parser.add_argument(
+        "--endpoint",
+        default="http://localhost:8082",
+        help="Automation Worker 地址（refresh-schema/scan/sync/auth-health 使用）",
+    )
     parser.add_argument("--table-id", default="", help="指定目标表 ID（refresh-schema/scan 使用）")
     parser.add_argument("--app-token", default="", help="指定 app_token（refresh-schema/scan 使用）")
     parser.add_argument("--drill", action="store_true", help="refresh-schema 时触发风险演练")

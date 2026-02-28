@@ -35,7 +35,7 @@ def test_three_stage_guide_mentions_new_primary_entry_paths() -> None:
 
 
 def test_workspace_default_identity_uses_xiaojing_consistently() -> None:
-    content = _read("apps/agent-host/src/utils/workspace.py")
+    content = _read("apps/agent-host/src/utils/runtime/workspace.py")
 
     assert "小敬" in content
     assert "小律" not in content

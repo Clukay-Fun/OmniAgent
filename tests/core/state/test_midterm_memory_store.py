@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
+from src.core.runtime.state.midterm_memory_store import RuleSummaryExtractor, SQLiteMidtermMemoryStore
 
 
 def test_sqlite_midterm_memory_store_writes_summary_items(tmp_path: Path) -> None:

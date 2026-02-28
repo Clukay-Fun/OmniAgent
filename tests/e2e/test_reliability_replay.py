@@ -18,14 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.locator_triplet import validate_locator_triplet  # noqa: E402
-from src.core.state.models import PendingActionState, PendingActionStatus  # noqa: E402
-from src.core.errors import (  # noqa: E402
+from src.core.capabilities.skills.utils.locator_triplet import validate_locator_triplet  # noqa: E402
+from src.core.runtime.state.models import PendingActionState, PendingActionStatus  # noqa: E402
+from src.core.foundation.common.errors import (  # noqa: E402
     CoreError,
     PendingActionExpiredError,
     get_user_message,
 )
-from src.api.callback_deduper import CallbackDeduper  # noqa: E402
+from src.api.core.callback_deduper import CallbackDeduper  # noqa: E402
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "reliability_replay_cases.yaml"

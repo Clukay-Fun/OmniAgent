@@ -21,7 +21,7 @@ setattr(crypto_module, "Cipher", crypto_cipher_module)
 sys.modules.setdefault("Crypto", crypto_module)
 sys.modules.setdefault("Crypto.Cipher", crypto_cipher_module)
 
-import src.api.webhook as webhook_module  # noqa: E402
+import src.api.channels.feishu.webhook_router as webhook_module  # noqa: E402
 
 
 class _FakeRequest:

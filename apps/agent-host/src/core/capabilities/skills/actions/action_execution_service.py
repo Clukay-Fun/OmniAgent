@@ -15,11 +15,11 @@ from typing import Any, Mapping
 
 import yaml
 
-from src.core.errors import get_user_message_by_code
-from src.core.skills.action_smart_engine import ActionSmartEngine
-from src.core.skills.auto_reminders import build_auto_reminder_items
-from src.core.skills.data_writer import DataWriter
-from src.core.skills.locator_triplet import validate_locator_triplet
+from src.core.foundation.common.errors import get_user_message_by_code
+from src.core.capabilities.skills.actions.action_smart_engine import ActionSmartEngine
+from src.core.capabilities.skills.reminders.auto_reminders import build_auto_reminder_items
+from src.core.capabilities.skills.actions.data_writer import DataWriter
+from src.core.capabilities.skills.utils.locator_triplet import validate_locator_triplet
 
 
 @dataclass
@@ -842,7 +842,11 @@ class ActionExecutionService:
         custom_path = os.getenv("CARD_TEMPLATE_CONFIG_PATH", "").strip()
         if custom_path:
             return Path(custom_path)
-        return Path(__file__).resolve().parents[3] / "config" / "card_templates.yaml"
+        config_root = Path(__file__).resolve().parents[5] / "config"
+        new_path = config_root / "ui_templates" / "feishu" / "card_templates.yaml"
+        if new_path.exists():
+            return new_path
+        return config_root / "card_templates.yaml"
 
     def _deep_merge(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         merged: dict[str, Any] = dict(base)

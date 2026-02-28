@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.state import ConversationStateManager, MemoryStateStore
+from src.core.runtime.state import ConversationStateManager, MemoryStateStore
 
 
 def test_state_manager_group_user_isolation_unchanged() -> None:

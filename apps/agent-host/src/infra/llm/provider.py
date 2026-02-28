@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from src.config import LLMSettings
-from src.llm.client import LLMClient
+from src.infra.llm.client import LLMClient
 
 # region 创建LLM客户端
 def create_llm_client(settings: LLMSettings) -> LLMClient:

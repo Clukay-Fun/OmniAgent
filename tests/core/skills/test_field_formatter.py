@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.field_formatter import format_field_value  # noqa: E402
+from src.core.capabilities.skills.utils.field_formatter import format_field_value  # noqa: E402
 
 
 def test_format_number_currency_and_datetime() -> None:

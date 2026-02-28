@@ -14,8 +14,8 @@ from typing import Optional
 from src.user import UserProfile
 from src.user.cache import UserCache
 from src.user.matcher import UserMatcher
-from src.utils.feishu_api import get_token_manager
-from src.utils.metrics import record_user_mapping_miss
+from src.utils.platform.feishu.feishu_api import get_token_manager
+from src.utils.observability.metrics import record_user_mapping_miss
 from src.config import Settings
 import httpx
 

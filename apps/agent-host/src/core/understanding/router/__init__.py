@@ -7,15 +7,15 @@
 
 from __future__ import annotations
 
-from src.core.router.router import ContextManager, SkillRouter
-from src.core.router.model_routing import (
+from src.core.understanding.router.router import ContextManager, SkillRouter
+from src.core.understanding.router.model_routing import (
     ComplexityScore,
     ModelRouter,
     RoutingDecision,
     RuleBasedComplexityScorer,
 )
-from src.core.types import SkillContext, SkillResult
-from src.core.skills.base import BaseSkill
+from src.core.foundation.common.types import SkillContext, SkillResult
+from src.core.capabilities.skills.base.base import BaseSkill
 
 __all__ = [
     "BaseSkill",

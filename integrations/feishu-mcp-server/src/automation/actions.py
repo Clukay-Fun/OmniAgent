@@ -21,6 +21,7 @@ import uuid
 import httpx
 
 from src.automation.delay_store import DelayStore, DelayedTask
+from src.automation.paths import resolve_config_base_dir, resolve_runtime_path
 from src.config import Settings
 from src.feishu.client import FeishuAPIError
 
@@ -252,15 +253,18 @@ class ActionExecutor:
         self._status_write_enabled = bool(settings.automation.status_write_enabled)
         self._status_field = str(settings.automation.status_field or "").strip()
         self._error_field = str(settings.automation.error_field or "").strip()
-        runtime_state_file = Path(settings.automation.schema_runtime_state_file)
-        if not runtime_state_file.is_absolute():
-            runtime_state_file = Path.cwd() / runtime_state_file
+        config_base_dir = resolve_config_base_dir()
+        runtime_state_file = resolve_runtime_path(
+            settings.automation.schema_runtime_state_file,
+            base_dir=config_base_dir,
+        )
         self._runtime_state_file = runtime_state_file
 
         if delay_store is None:
-            delay_file = Path(str(settings.automation.delay_queue_file or "").strip() or "delay_queue.jsonl")
-            if not delay_file.is_absolute():
-                delay_file = Path.cwd() / delay_file
+            delay_file = resolve_runtime_path(
+                str(settings.automation.delay_queue_file or "").strip() or "delay_queue.jsonl",
+                base_dir=config_base_dir,
+            )
             self._delay_store = DelayStore(delay_file)
         else:
             self._delay_store = delay_store

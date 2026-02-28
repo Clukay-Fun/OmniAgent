@@ -14,10 +14,10 @@ from pathlib import Path
 import re
 from typing import Any, Callable, Mapping, Sequence
 
-from src.adapters.channels.feishu.action_engine import ActionEngine
-from src.adapters.channels.feishu.card_template_config import get_render_templates
-from src.adapters.channels.feishu.record_links import build_record_link_line
-from src.adapters.channels.feishu.template_runtime import (
+from src.adapters.channels.feishu.actions.action_engine import ActionEngine
+from src.adapters.channels.feishu.ui_cards.card_template_config import get_render_templates
+from src.adapters.channels.feishu.utils.record_links import build_record_link_line
+from src.adapters.channels.feishu.ui_cards.template_runtime import (
     FilterEngine,
     GroupEngine,
     SectionEngine,
@@ -101,9 +101,13 @@ def _template_root() -> Path:
     if custom:
         path = Path(custom)
         if not path.is_absolute():
-            path = (Path(__file__).resolve().parents[4] / custom).resolve()
+            path = (Path(__file__).resolve().parents[5] / custom).resolve()
         return path
-    return Path(__file__).resolve().parents[4] / "config" / "templates"
+    config_root = Path(__file__).resolve().parents[5] / "config"
+    new_root = config_root / "ui_templates" / "feishu" / "templates"
+    if new_root.exists():
+        return new_root
+    return config_root / "templates"
 
 
 def _resolve_template_file(template_path: str) -> Path | None:

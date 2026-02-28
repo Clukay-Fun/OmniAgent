@@ -14,7 +14,7 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 # orchestrator imports Postgres client, which requires asyncpg at import time.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))
 
-from src.core.orchestrator import AgentOrchestrator  # noqa: E402
+from src.core.brain.orchestration.orchestrator import AgentOrchestrator  # noqa: E402
 
 
 def test_orchestrator_requires_data_writer() -> None:

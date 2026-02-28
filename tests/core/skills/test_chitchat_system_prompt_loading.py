@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.chitchat import ChitchatSkill  # noqa: E402
+from src.core.capabilities.skills.implementations.chitchat import ChitchatSkill  # noqa: E402
 
 
 def test_system_prompt_prefers_skill_md(monkeypatch, tmp_path: Path) -> None:
@@ -74,10 +74,17 @@ def test_system_prompt_uses_prompts_yaml_when_skill_file_missing(monkeypatch, tm
         ChitchatSkill,
         "_resolve_config_path",
         staticmethod(
-            lambda relative_path: (
+            lambda *relative_paths: (
                 tmp_path / "missing-skills"
-                if relative_path == "config/skills"
-                else tmp_path / relative_path
+                if "config/skills" in relative_paths
+                else next(
+                    (
+                        tmp_path / str(item)
+                        for item in relative_paths
+                        if (tmp_path / str(item)).exists()
+                    ),
+                    tmp_path / str(relative_paths[0]),
+                )
             )
         ),
     )
@@ -102,7 +109,7 @@ def test_system_prompt_uses_default_when_no_config(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(
         ChitchatSkill,
         "_resolve_config_path",
-        staticmethod(lambda _path: tmp_path / "missing"),
+        staticmethod(lambda *_paths: tmp_path / "missing"),
     )
 
     skill = ChitchatSkill(skills_config={"chitchat": {"allow_llm": False}}, llm_client=None)

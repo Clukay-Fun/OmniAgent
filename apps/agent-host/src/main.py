@@ -17,18 +17,16 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from src.api.health import router as health_router
-from src.api.metrics import router as metrics_router
-from src.api.webhook import router as webhook_router, agent_core
+from src.api.system.health import router as health_router
+from src.api.system.metrics import router as metrics_router
+from src.api.channels.feishu.webhook_router import router as webhook_router, agent_core
 from src.config import get_settings
-from src.core.intent import load_skills_config
-from src.utils.logger import setup_logging
-from src.utils.workspace import ensure_workspace
-from src.utils.hot_reload import HotReloadManager
-from src.db.postgres import PostgresClient
-from src.jobs.reminder_dispatcher import ReminderDispatcher
-from src.jobs.daily_digest import DailyDigestScheduler
-from src.jobs.reminder_scheduler import ReminderScheduler
+from src.core.understanding.intent import load_skills_config
+from src.utils.observability.logger import setup_logging
+from src.utils.runtime.workspace import ensure_workspace
+from src.utils.runtime.hot_reload import HotReloadManager
+from src.jobs.dispatchers.reminder_dispatcher import ReminderDispatcher
+from src.jobs.schedulers.daily_digest import DailyDigestScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         interval_seconds=60,
     )
     hot_reload_manager.add_watcher(
-        config_path="config/prompts.yaml",
+        config_path="config/engine/prompts.yaml",
         reload_callback=lambda cfg: logger.info("Prompts config reloaded"),
         interval_seconds=60,
     )
@@ -70,28 +68,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     skills_config = load_skills_config("config/skills.yaml")
     reminder_cfg = skills_config.get("reminder", {})
     app.state.reminder_dispatcher = ReminderDispatcher(settings=settings)
-    if settings.reminder_scheduler_enabled and settings.postgres.dsn:
-        db = PostgresClient(settings.postgres)
-        interval_seconds = int(reminder_cfg.get("scan_interval_seconds", 60))
-        lock_timeout_seconds = int(reminder_cfg.get("lock_timeout_seconds", 300))
-        instance_id = os.getenv("OMNI_INSTANCE_ID", os.getenv("HOSTNAME", "instance"))
-        app.state.reminder_scheduler = ReminderScheduler(
-            settings=settings,
-            db=db,
-            interval_seconds=interval_seconds,
-            instance_id=instance_id,
-            lock_timeout_seconds=lock_timeout_seconds,
-            dispatcher=app.state.reminder_dispatcher,
-        )
-        app.state.reminder_scheduler.start()
-    else:
-        logger.info("Reminder scheduler disabled (set REMINDER_SCHEDULER_ENABLED=true and POSTGRES_DSN to enable)")
+    logger.info("Reminder scheduler disabled (Migrating to Feishu Automation)")
 
     # 启动开庭日提醒调度器
     mcp_client = None
     if settings.reminder_scan_enabled and settings.hearing_reminder.reminder_chat_id:
-        from src.jobs.hearing_reminder import HearingReminderScheduler
-        from src.mcp.client import MCPClient
+        from src.jobs.schedulers.hearing_reminder import HearingReminderScheduler
+        from src.infra.mcp.client import MCPClient
 
         mcp_client = MCPClient(settings)
         app.state.hearing_reminder_scheduler = HearingReminderScheduler(
@@ -111,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     if settings.daily_digest_enabled and settings.hearing_reminder.reminder_chat_id:
         if mcp_client is None:
-            from src.mcp.client import MCPClient
+            from src.infra.mcp.client import MCPClient
 
             mcp_client = MCPClient(settings)
         app.state.daily_digest_scheduler = DailyDigestScheduler(
@@ -132,9 +115,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # 关闭
     hot_reload_manager.stop_all()
-    scheduler: ReminderScheduler | None = getattr(app.state, "reminder_scheduler", None)
-    if scheduler is not None:
-        await scheduler.stop()
     hearing_scheduler = getattr(app.state, "hearing_reminder_scheduler", None)
     if hearing_scheduler is not None:
         await hearing_scheduler.stop()

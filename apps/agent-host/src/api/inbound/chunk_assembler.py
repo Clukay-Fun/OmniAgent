@@ -12,8 +12,8 @@ import asyncio
 import time
 from dataclasses import dataclass
 
-from src.core.state.manager import ConversationStateManager
-from src.core.state.models import MessageChunkState
+from src.core.runtime.state.manager import ConversationStateManager
+from src.core.runtime.state.models import MessageChunkState
 
 
 @dataclass

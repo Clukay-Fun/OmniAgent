@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.reminder import ReminderSkill
-from src.core.types import SkillContext
+from src.core.capabilities.skills.reminders.reminder import ReminderSkill
+from src.core.foundation.common.types import SkillContext
 
 
 class _FakeDB:
@@ -96,7 +96,7 @@ import time
 
 import pytest
 
-from src.core.state.models import (  # noqa: E402
+from src.core.runtime.state.models import (  # noqa: E402
     OperationEntry,
     OperationExecutionStatus,
     PendingActionState,

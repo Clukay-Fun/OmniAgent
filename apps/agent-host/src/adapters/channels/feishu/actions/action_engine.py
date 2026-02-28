@@ -10,8 +10,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Mapping
 
-from src.adapters.channels.feishu.card_template_config import get_render_templates
-from src.adapters.channels.feishu.smart_engine import SmartEngine
+from src.adapters.channels.feishu.ui_cards.card_template_config import get_render_templates
+from src.adapters.channels.feishu.actions.smart_engine import SmartEngine
 
 
 class ActionEngine:

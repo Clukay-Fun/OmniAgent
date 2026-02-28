@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.template_runtime import FilterEngine, GroupEngine, SummaryEngine
+from src.adapters.channels.feishu.ui_cards.template_runtime import FilterEngine, GroupEngine, SummaryEngine
 
 
 def test_filter_engine_supports_compare_sort_limit() -> None:

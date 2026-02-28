@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from src.core.state import ConversationStateManager
+from src.core.runtime.state import ConversationStateManager
 
 logger = logging.getLogger(__name__)
 

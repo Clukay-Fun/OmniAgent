@@ -13,10 +13,10 @@ from datetime import date, datetime
 import logging
 from typing import Any, Protocol
 
-from src.adapters.channels.feishu.reminder_target_adapter import map_target_conversation_id
+from src.adapters.channels.feishu.utils.reminder_target_adapter import map_target_conversation_id
 from src.config import Settings
-from src.utils.feishu_api import send_message
-from src.utils.metrics import record_reminder_dispatch
+from src.utils.platform.feishu.feishu_api import send_message
+from src.utils.observability.metrics import record_reminder_dispatch
 
 
 @dataclass

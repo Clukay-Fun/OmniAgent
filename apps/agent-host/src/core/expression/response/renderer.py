@@ -14,8 +14,8 @@ from typing import Any, Dict, Mapping, cast
 
 import yaml
 
-from src.core.errors import get_user_message_by_code
-from src.core.response.models import Block, CardTemplateSpec, RenderedResponse
+from src.core.foundation.common.errors import get_user_message_by_code
+from src.core.expression.response.models import Block, CardTemplateSpec, RenderedResponse
 
 
 DEFAULT_TEMPLATES: Dict[str, str] = {
@@ -1014,7 +1014,11 @@ class ResponseRenderer:
         return merged
 
     def _default_template_path(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "config" / "responses.yaml"
+        config_root = Path(__file__).resolve().parents[4] / "config"
+        new_path = config_root / "messages" / "zh-CN" / "responses.yaml"
+        if new_path.exists():
+            return new_path
+        return config_root / "responses.yaml"
 
     def _to_mapping(self, value: Any) -> Dict[str, Any]:
         if isinstance(value, Mapping):

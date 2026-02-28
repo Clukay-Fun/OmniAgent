@@ -6,14 +6,15 @@
 
 from __future__ import annotations
 
-from src.core.skills.base import BaseSkill
-from src.core.skills.query import QuerySkill
-from src.core.skills.summary import SummarySkill
-from src.core.skills.reminder import ReminderSkill
-from src.core.skills.chitchat import ChitchatSkill
-from src.core.skills.create import CreateSkill
-from src.core.skills.update import UpdateSkill
-from src.core.skills.delete import DeleteSkill
+from src.core.capabilities.skills.base.base import BaseSkill
+from src.core.capabilities.skills.implementations.query import QuerySkill
+from src.core.capabilities.skills.implementations.summary import SummarySkill
+from src.core.capabilities.skills.reminders.reminder import ReminderSkill
+from src.core.capabilities.skills.implementations.chitchat import ChitchatSkill
+from src.core.capabilities.skills.implementations.create import CreateSkill
+from src.core.capabilities.skills.implementations.update import UpdateSkill
+from src.core.capabilities.skills.implementations.delete import DeleteSkill
+from src.core.capabilities.skills.implementations.qa import KnowledgeQASkill
 
 # region 技能类导出
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "CreateSkill",
     "UpdateSkill",
     "DeleteSkill",
+    "KnowledgeQASkill",
 ]
 # endregion

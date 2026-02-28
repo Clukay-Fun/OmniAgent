@@ -9,16 +9,16 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.event_adapter import FeishuEventAdapter
-from src.api.automation_consumer import (
+from src.adapters.channels.feishu.protocol.event_adapter import FeishuEventAdapter
+from src.api.automation.automation_consumer import (
     AutomationConsumer,
     AutomationStartupGate,
     InMemoryAutomationQueue,
     QueueAutomationEnqueuer,
 )
-from src.api.automation_rules import AutomationRule
-from src.api.event_router import FeishuEventRouter
-import src.api.automation_consumer as automation_consumer_module
+from src.api.automation.automation_rules import AutomationRule
+from src.api.core.event_router import FeishuEventRouter
+import src.api.automation.automation_consumer as automation_consumer_module
 
 
 def _build_record_changed_envelope() -> object:

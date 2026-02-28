@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.response.renderer import ResponseRenderer
+from src.core.expression.response.renderer import ResponseRenderer
 
 
 def build_renderer() -> ResponseRenderer:
@@ -467,7 +467,7 @@ def test_load_templates_falls_back_to_defaults_when_yaml_invalid(tmp_path: Path)
 
 # ── S3: typed error → error catalog → user message ──────────────────
 
-from src.core.errors import (  # noqa: E402
+from src.core.foundation.common.errors import (  # noqa: E402
     CoreError,
     PendingActionExpiredError,
     PendingActionNotFoundError,

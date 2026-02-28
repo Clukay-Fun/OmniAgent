@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any
 
-from src.core.skills.data_writer import DataWriter
+from src.core.capabilities.skills.actions.data_writer import DataWriter
 
 logger = logging.getLogger(__name__)
 

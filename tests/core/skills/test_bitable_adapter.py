@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.bitable_adapter import BitableAdapter  # noqa: E402 # type: ignore[reportMissingImports]
+from src.core.capabilities.skills.bitable.bitable_adapter import BitableAdapter  # noqa: E402 # type: ignore[reportMissingImports]
 
 
 class _FakeMCP:

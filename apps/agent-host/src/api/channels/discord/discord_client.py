@@ -22,15 +22,15 @@ from src.adapters.channels.discord.formatter import (
     DiscordFormatter,
     DiscordResponsePayload,
 )
-from src.api.conversation_scope import build_session_key
+from src.api.inbound.conversation_scope import build_session_key
 from src.config import DiscordSettings, Settings, get_settings
 from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
-from src.core.orchestrator import AgentOrchestrator
-from src.core.response.models import RenderedResponse
-from src.core.session import SessionManager
-from src.llm.provider import create_llm_client
-from src.mcp.client import MCPClient
-from src.utils.logger import setup_logging
+from src.core.brain.orchestration.orchestrator import AgentOrchestrator
+from src.core.expression.response.models import RenderedResponse
+from src.core.runtime.state.session import SessionManager
+from src.infra.llm.provider import create_llm_client
+from src.infra.mcp.client import MCPClient
+from src.utils.observability.logger import setup_logging
 
 
 logger = logging.getLogger(__name__)

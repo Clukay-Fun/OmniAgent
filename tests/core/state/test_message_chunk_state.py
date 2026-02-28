@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.state import ConversationStateManager, MemoryStateStore
-from src.core.state.models import ConversationState, MessageChunkState
+from src.core.runtime.state import ConversationStateManager, MemoryStateStore
+from src.core.runtime.state.models import ConversationState, MessageChunkState
 
 
 def test_conversation_state_from_dict_parses_message_chunk() -> None:
@@ -53,7 +53,7 @@ def test_state_manager_get_message_chunk_clears_stale_chunk(monkeypatch) -> None
         MessageChunkState(segments=["A"], started_at=10.0, last_at=10.0),
     )
 
-    monkeypatch.setattr("src.core.state.manager.time.time", lambda: 20.0)
+    monkeypatch.setattr("src.core.runtime.state.manager.time.time", lambda: 20.0)
 
     loaded = manager.get_message_chunk("u2")
 

@@ -19,7 +19,7 @@
 - ✅ 本地技能市场动态加载
 - ✅ **多模型路由**（任务模型 + 对话模型分离）
 - ✅ **人格化回复**（模板随机池 + 时间感知问候 + 柔性拒绝）
-- ✅ **回复模板外置**（`config/responses.yaml` 集中管理）
+- ✅ **回复模板外置**（`config/messages/zh-CN/responses.yaml` 集中管理）
 
 ## 🆕 近期开发进展（2026-02）
 
@@ -130,8 +130,8 @@ TASK_LLM_API_BASE=https://api.minimax.chat/v1
 | CRUD 操作 | 创建/更新/删除成功均用随机回复 |
 | 错误/超时 | 失败提示多条变体轮替 |
 
-所有回复模板集中在 **`config/responses.yaml`**，修改文案无需改代码。
-技能通过共享 `ResponsePool` 单例（`src/core/skills/response_pool.py`）访问模板。
+所有回复模板集中在 **`config/messages/zh-CN/responses.yaml`**，修改文案无需改代码。
+技能通过共享 `ResponsePool` 单例（`src/core/capabilities/skills/base/response_pool.py`）访问模板。
 
 ## 💡 自动偏好记忆
 
@@ -237,7 +237,7 @@ python run_server.py
 - `run_server.py`（本地单服务模式）监听 `8088`
 - 如需固定 `ngrok 8088`：先启动 `python ../../tools/dev/ngrok_mux.py --port 8088`，再执行 `ngrok http 8088`
   - `/feishu/webhook` -> Agent(8080)
-  - `/feishu/events` -> MCP(8081)
+  - `/feishu/events` -> Automation Worker(8082)
 
 双组织说明：
 - Agent 仅使用组织B机器人凭证（`FEISHU_BOT_*`）
@@ -343,29 +343,29 @@ python run_server.py
 ### 入口与路由
 
 - **`src/main.py`** - FastAPI 入口，注册路由和调度器
-- **`src/api/webhook.py`** - 飞书事件回调处理（验证/解密/去重）
+- **`src/api/channels/feishu/webhook_router.py`** - 飞书事件回调处理（验证/解密/去重）
 
 ### 编排与意图
 
-- **`src/core/orchestrator.py`** - 主流程编排器
-- **`src/core/l0/engine.py`** - L0 硬规则层（确认/取消/分页/空输入）
-- **`src/core/planner/*`** - L1 规划层（单次 LLM + Schema 校验 + 降级）
-- **`src/core/intent/parser.py`** - 意图解析（规则优先 + LLM 兜底）
-- **`src/core/intent/rules.py`** - 日期类查询规则
-- **`src/core/state/*`** - 会话状态管理（Memory + TTL，可替换 Redis）
+- **`src/core/brain/orchestration/orchestrator.py`** - 主流程编排器
+- **`src/core/brain/l0/engine.py`** - L0 硬规则层（确认/取消/分页/空输入）
+- **`src/core/runtime/planner/*`** - L1 规划层（单次 LLM + Schema 校验 + 降级）
+- **`src/core/understanding/intent/parser.py`** - 意图解析（规则优先 + LLM 兜底）
+- **`src/core/understanding/intent/rules.py`** - 日期类查询规则
+- **`src/core/runtime/state/*`** - 会话状态管理（Memory + TTL，可替换 Redis）
 
 ### 技能系统
 
-- **`src/core/router/router.py`** - 技能路由与链式执行
-- **`src/core/skills/query.py`** - 案件查询
-- **`src/core/skills/summary.py`** - 结果汇总
-- **`src/core/skills/reminder.py`** - 提醒 CRUD
-- **`src/core/skills/chitchat.py`** - 闲聊与问候（随机池 + 时间感知）
-- **`src/core/skills/response_pool.py`** - 回复模板随机池单例（全 Skill 共享）
+- **`src/core/understanding/router/router.py`** - 技能路由与链式执行
+- **`src/core/capabilities/skills/implementations/query.py`** - 案件查询
+- **`src/core/capabilities/skills/implementations/summary.py`** - 结果汇总
+- **`src/core/capabilities/skills/reminders/reminder.py`** - 提醒 CRUD
+- **`src/core/capabilities/skills/implementations/chitchat.py`** - 闲聊与问候（随机池 + 时间感知）
+- **`src/core/capabilities/skills/base/response_pool.py`** - 回复模板随机池单例（全 Skill 共享）
 
 ### 配置文件
 
-- **`config/responses.yaml`** - 回复模板随机池（集中管理所有文案）
+- **`config/messages/zh-CN/responses.yaml`** - 回复模板随机池（集中管理所有文案）
 
 ### 用户身份
 
@@ -379,13 +379,13 @@ python run_server.py
 
 ### 记忆与向量检索
 
-- **`src/core/memory/manager.py`** - 用户记忆、日志记录、自动偏好存储
-- **`src/vector/*`** - Chroma 存储（可选启用）
+- **`src/core/runtime/memory/manager.py`** - 用户记忆、日志记录、自动偏好存储
+- **`src/infra/vector/*`** - Chroma 存储（可选启用）
 
 ### 监控与工具
 
-- **`src/utils/metrics.py`** - Prometheus 指标
-- **`src/utils/feishu_api.py`** - 飞书消息发送
+- **`src/utils/observability/metrics.py`** - Prometheus 指标
+- **`src/utils/platform/feishu/feishu_api.py`** - 飞书消息发送
 
 ---
 
@@ -419,7 +419,7 @@ table_recognition:
   max_candidates: 3
 ```
 
-### config/responses.yaml
+### config/messages/zh-CN/responses.yaml
 
 回复模板随机池（集中管理所有 Agent 回复文案）：
 
@@ -443,7 +443,7 @@ empty_result:
   - "嗯...没找到相关记录 🤔 试试换个关键词？"
 ```
 
-### config/prompts.yaml
+### config/engine/prompts.yaml
 
 ```yaml
 intent_parser:
@@ -495,7 +495,3 @@ workspace/
 首次运行会自动创建上述文件与目录。用户偏好（如"偏好简洁回复"）会自动写入各用户的 `memory.md`。
 
 ---
-
-## 📄 License
-
-MIT License

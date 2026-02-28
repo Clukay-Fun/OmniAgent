@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.adapters.channels.feishu.processing_status import (  # noqa: E402
+from src.adapters.channels.feishu.actions.processing_status import (  # noqa: E402
     FeishuReactionStatusEmitter,
     create_reaction_status_emitter,
 )
-from src.core.processing_status import ProcessingStatus, ProcessingStatusEvent  # noqa: E402
+from src.core.foundation.progress.processing_status import ProcessingStatus, ProcessingStatusEvent  # noqa: E402
 
 
 def _settings(reaction_enabled: bool = True) -> SimpleNamespace:
@@ -32,7 +32,7 @@ def test_feishu_reaction_status_emitter_fail_open(monkeypatch) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.set_message_reaction",
         _raise,
     )
 
@@ -56,7 +56,7 @@ def test_feishu_reaction_status_emitter_disables_on_invalid_reaction_type(monkey
         raise RuntimeError("reaction type is invalid")
 
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.set_message_reaction",
         _raise,
     )
 
@@ -84,7 +84,7 @@ def test_feishu_reaction_status_emitter_uses_single_reaction_per_status(monkeypa
         return None
 
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.set_message_reaction",
         _send,
     )
 
@@ -113,11 +113,11 @@ def test_feishu_reaction_status_emitter_removes_processing_reaction_on_done(monk
         delete_calls.append(str(kwargs.get("reaction_id") or ""))
 
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.set_message_reaction",
         _send,
     )
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.delete_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.delete_message_reaction",
         _delete,
     )
 
@@ -153,7 +153,7 @@ def test_feishu_reaction_status_emitter_keeps_retrying_non_invalid_errors(monkey
         raise RuntimeError("temporary network error")
 
     monkeypatch.setattr(
-        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        "src.adapters.channels.feishu.actions.processing_status.set_message_reaction",
         _raise,
     )
 

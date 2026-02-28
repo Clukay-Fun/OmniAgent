@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.router.router import SkillRouter
-from src.core.types import SkillContext, SkillExecutionStatus, SkillResult
-import src.utils.metrics as metrics_module
+from src.core.understanding.router.router import SkillRouter
+from src.core.foundation.common.types import SkillContext, SkillExecutionStatus, SkillResult
+import src.utils.observability.metrics as metrics_module
 
 
 def _build_router(timeout_seconds: float) -> SkillRouter:

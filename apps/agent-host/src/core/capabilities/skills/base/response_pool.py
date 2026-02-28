@@ -1,7 +1,7 @@
 """
 描述: 回复模板随机池
 主要功能:
-    - 从 config/responses.yaml 加载所有回复模板
+    - 从 config/messages/zh-CN/responses.yaml 加载所有回复模板
     - 提供 pick(key) 方法随机选取一条回复
     - 模块级单例，所有 Skill 共享同一份数据
 """
@@ -49,7 +49,7 @@ class ResponsePool:
     回复模板随机池（单例）
 
     用法:
-        from src.core.skills.response_pool import pool
+        from src.core.capabilities.skills.base.response_pool import pool
         reply = pool.pick("create_success")
     """
 
@@ -91,9 +91,11 @@ class ResponsePool:
     # 私有方法
     # ------------------------------------------------
     def _load(self) -> dict[str, list[str]]:
-        """从 config/responses.yaml 加载，缺失或出错时用默认值"""
+        """从消息配置加载回复模板，缺失或出错时用默认值"""
         result = dict(DEFAULT_RESPONSES)
-        path = Path("config/responses.yaml")
+        path = Path("config/messages/zh-CN/responses.yaml")
+        if not path.exists():
+            path = Path("config/responses.yaml")
         if not path.exists():
             logger.warning("responses.yaml not found, using defaults")
             return result

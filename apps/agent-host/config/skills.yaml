@@ -9,6 +9,8 @@ routing:
   llm_confidence_threshold: 0.6
   shadow_max_pending: 10
 
+default_table_id: "tblDTbRZRB89q8GJ"
+
 skills:
   query:
     timeout_seconds: 25
@@ -112,9 +114,12 @@ create:
     - 录入
     - 登记
   required_fields:
-    - 案号
     - 委托人
+    - 对方当事人
     - 案由
+    - 项目类型
+    - 案件分类
+  field_extract_timeout_seconds: 3
   confirm_phrases:
     - 确认
     - 确认创建

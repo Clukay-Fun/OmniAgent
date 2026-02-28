@@ -11,7 +11,7 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 load_dotenv(AGENT_HOST_ROOT / ".env")
 
 from src.config import get_settings
-from src.utils.feishu_api import send_message, FeishuAPIError
+from src.utils.platform.feishu.feishu_api import send_message, FeishuAPIError
 
 async def main():
     settings = get_settings()
@@ -64,7 +64,7 @@ async def main():
     try:
         import httpx
         token = "token_will_be_fetched" 
-        from src.utils.feishu_api import get_token_manager
+        from src.utils.platform.feishu.feishu_api import get_token_manager
         token = await get_token_manager(settings).get_token()
         
         url = f"{settings.feishu.api_base}/im/v1/messages"

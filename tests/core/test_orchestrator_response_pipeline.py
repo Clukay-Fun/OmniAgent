@@ -13,15 +13,15 @@ sys.path.insert(0, str(AGENT_HOST_ROOT))
 # orchestrator imports Postgres client, which requires asyncpg at import time.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))
 
-from src.core.orchestrator import (
+from src.core.brain.orchestration.orchestrator import (
     AgentOrchestrator,
     _build_outbound_from_skill_result,
     _resolve_assistant_name,
 )
-import src.core.orchestrator as orchestrator_module
-from src.core.types import SkillResult
-from src.core.response.models import RenderedResponse
-from src.core.router.model_routing import RoutingDecision
+import src.core.brain.orchestration.orchestrator as orchestrator_module
+from src.core.foundation.common.types import SkillResult
+from src.core.expression.response.models import RenderedResponse
+from src.core.understanding.router.model_routing import RoutingDecision
 
 
 def test_outbound_prefers_reply_text_as_text_fallback() -> None:

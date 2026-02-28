@@ -33,8 +33,8 @@ if "apscheduler.schedulers.asyncio" not in sys.modules:
     sys.modules["apscheduler.schedulers"] = schedulers_module
     sys.modules["apscheduler.schedulers.asyncio"] = asyncio_module
 
-from src.jobs.hearing_reminder import HearingReminderScheduler
-from src.jobs.reminder_dispatcher import (
+from src.jobs.schedulers.hearing_reminder import HearingReminderScheduler
+from src.jobs.dispatchers.reminder_dispatcher import (
     InMemoryReminderDedupeStore,
     ReminderDispatchPayload,
     ReminderDispatcher,

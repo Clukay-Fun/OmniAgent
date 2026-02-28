@@ -2,7 +2,7 @@
 描述: 提供核心错误类型的定义和用户消息解析功能。
 主要功能:
     - 定义多种核心错误类型，每个错误类型都有一个对应的代码。
-    - 加载并解析 error_messages.yaml 文件，根据错误代码获取用户友好的消息。
+    - 加载并解析错误消息配置，根据错误代码获取用户友好的消息。
 """
 
 from __future__ import annotations
@@ -81,13 +81,16 @@ def _load_error_catalog() -> dict[str, str]:
     """加载错误消息目录。
 
     功能:
-        - 从 error_messages.yaml 文件加载错误消息目录。
+        - 从错误消息配置文件加载错误消息目录。
         - 如果文件不存在或加载失败，则返回空目录。
     """
     global _ERROR_CATALOG
     if _ERROR_CATALOG is not None:
         return _ERROR_CATALOG
-    path = Path(__file__).resolve().parents[2] / "config" / "error_messages.yaml"
+    config_root = Path(__file__).resolve().parents[4] / "config"
+    path = config_root / "messages" / "zh-CN" / "error_messages.yaml"
+    if not path.exists():
+        path = config_root / "error_messages.yaml"
     if not path.exists():
         _ERROR_CATALOG = {}
         return _ERROR_CATALOG

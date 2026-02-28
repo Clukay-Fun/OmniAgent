@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.intent.parser import IntentParser  # noqa: E402
+from src.core.understanding.intent.parser import IntentParser  # noqa: E402
 
 
 def test_intent_parser_merges_top_level_skill_keywords_when_skills_section_present() -> None:

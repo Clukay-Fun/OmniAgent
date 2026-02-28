@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.core.intent.rules import match_date_query
+from src.core.understanding.intent.rules import match_date_query
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +444,7 @@ class IntentParser:
 
 请返回 JSON（不要输出其他内容）：
 {{
+  \"think\": \"在此详细分析用户的意图，辨别细微的诉求\",
   \"skills\": [
     {{\"name\": \"技能名\", \"score\": 0.0-1.0, \"reason\": \"简短理由\"}}
   ],

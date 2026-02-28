@@ -21,8 +21,7 @@ setattr(crypto_module, "Cipher", crypto_cipher_module)
 sys.modules.setdefault("Crypto", crypto_module)
 sys.modules.setdefault("Crypto.Cipher", crypto_cipher_module)
 
-import src.api.webhook as webhook_module
-from src.core.batch_progress import BatchProgressEvent, BatchProgressPhase
+import src.api.channels.feishu.webhook_router as webhook_module
 
 
 def test_process_message_sends_formatter_payload(monkeypatch) -> None:
@@ -365,26 +364,18 @@ def test_webhook_card_callback_returns_processed(monkeypatch) -> None:
                 },
             }
 
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            assert "ou_1" in user_id
-            assert callback_action == "delete_record_confirm"
-            assert isinstance(callback_value, dict)
-            return {"status": "processed", "text": "已处理"}
-
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
         webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=True, ttl_seconds=300, max_size=1000)),
     )
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
     monkeypatch.setattr(webhook_module, "_deduplicator", None)
 
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
-    assert result["status"] == "ok"
-    assert "已处理" in result["reason"]
+    assert result["status"] == "ignored"
+    assert result["reason"] == "event_not_implemented"
 
 
 def test_webhook_card_callback_group_user_isolation_session_key(monkeypatch) -> None:
@@ -400,24 +391,17 @@ def test_webhook_card_callback_group_user_isolation_session_key(monkeypatch) -> 
                 },
             }
 
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            assert user_id == "feishu:group:oc_group_1:user:ou_group_u1"
-            assert callback_action == "delete_record_confirm"
-            assert isinstance(callback_value, dict)
-            return {"status": "processed", "text": "已处理"}
-
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
         webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
     )
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
 
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
-    assert result["status"] == "ok"
+    assert result["status"] == "ignored"
+    assert result["reason"] == "event_not_implemented"
 
 
 def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
@@ -432,25 +416,17 @@ def test_webhook_card_callback_returns_expired(monkeypatch) -> None:
                 },
             }
 
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            assert "ou_2" in user_id
-            assert callback_action == "update_record_confirm"
-            assert isinstance(callback_value, dict)
-            return {"status": "expired", "text": "已过期"}
-
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
         webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
     )
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
 
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
-    assert result["status"] == "ok"
-    assert any(token in str(result["reason"]) for token in ["过期", "超时"])
+    assert result["status"] == "ignored"
+    assert result["reason"] == "event_not_implemented"
 
 
 def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
@@ -465,79 +441,28 @@ def test_webhook_card_callback_failure_is_non_blocking(monkeypatch) -> None:
                 },
             }
 
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            _ = user_id, callback_action, callback_value
-            raise RuntimeError("boom")
-
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
         webhook=SimpleNamespace(dedup=SimpleNamespace(enabled=False, ttl_seconds=300, max_size=1000)),
     )
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
 
     result = asyncio.run(webhook_module.feishu_webhook(_FakeRequest()))
 
-    assert result["status"] == "ok"
-    assert any(token in str(result["reason"]) for token in ["过期", "超时"])
+    assert result["status"] == "ignored"
+    assert result["reason"] == "event_not_implemented"
 
 
-def test_webhook_batch_progress_emitter_sends_start_message_only(monkeypatch) -> None:
-    sent_calls: list[dict[str, object]] = []
-
-    async def _fake_send_message(settings, chat_id, msg_type, content, reply_message_id=None):
-        sent_calls.append(
-            {
-                "settings": settings,
-                "chat_id": chat_id,
-                "msg_type": msg_type,
-                "content": content,
-                "reply_message_id": reply_message_id,
-            }
-        )
-        return {"message_id": "omni-msg-progress"}
-
-    monkeypatch.setattr(webhook_module, "send_message", _fake_send_message)
-    monkeypatch.setattr(webhook_module, "_get_settings", lambda: SimpleNamespace())
-
-    emitter = webhook_module._build_batch_progress_emitter({"chat_id": "oc_progress", "message_id": "om_1"})
-    assert emitter is not None
-
-    asyncio.run(
-        emitter(
-            BatchProgressEvent(
-                phase=BatchProgressPhase.START,
-                user_id="u1",
-                total=3,
-            )
-        )
-    )
-    asyncio.run(
-        emitter(
-            BatchProgressEvent(
-                phase=BatchProgressPhase.COMPLETE,
-                user_id="u1",
-                total=3,
-                succeeded=3,
-                failed=0,
-            )
-        )
-    )
-
-    assert len(sent_calls) == 1
-    assert sent_calls[0]["chat_id"] == "oc_progress"
-    assert sent_calls[0]["reply_message_id"] == "om_1"
-    content = sent_calls[0]["content"] if isinstance(sent_calls[0]["content"], dict) else {}
-    assert "正在执行 3 条操作" in str(content.get("text") or "")
+def test_webhook_does_not_expose_batch_progress_emitter() -> None:
+    assert not hasattr(webhook_module, "_build_batch_progress_emitter")
 
 
 # ── S4: callback dedup ──────────────────────────────────────────────
 
 import time as _time
 
-from src.api.callback_deduper import CallbackDeduper  # noqa: E402
+from src.api.core.callback_deduper import CallbackDeduper  # noqa: E402
 
 
 def test_callback_deduper_detects_duplicate() -> None:
@@ -566,7 +491,7 @@ def test_callback_deduper_key_is_deterministic() -> None:
 
 # ── S1 修复验证：triplet 校验为必经路径 ──────────────────────────────
 
-from src.core.skills.action_execution_service import ActionExecutionService
+from src.core.capabilities.skills.actions.action_execution_service import ActionExecutionService
 
 
 def _make_action_service() -> ActionExecutionService:
@@ -619,9 +544,9 @@ def test_s1_execute_delete_rejects_missing_record_id() -> None:
 
 # ── S2 修复验证：manager 集成状态机 ──────────────────────────────────
 
-from src.core.state.manager import ConversationStateManager
-from src.core.state.memory_store import MemoryStateStore
-from src.core.state.models import OperationExecutionStatus, PendingActionStatus
+from src.core.runtime.state.manager import ConversationStateManager
+from src.core.runtime.state.memory_store import MemoryStateStore
+from src.core.runtime.state.models import OperationExecutionStatus, PendingActionStatus
 
 
 def test_s2_manager_confirm_pending_action() -> None:
@@ -684,17 +609,15 @@ def test_s2_manager_pending_action_supports_batch_operations() -> None:
 # ── S4 修复验证：callback_deduper 已接入 webhook ──────────────────────
 
 def test_s4_callback_deduper_is_imported_in_webhook() -> None:
-    """验证 CallbackDeduper 已在 webhook.py 中被导入和使用。"""
+    """卡片回调链路已移除，webhook 不再接入 CallbackDeduper。"""
     import importlib
-    webhook_mod = importlib.import_module("src.api.webhook")
-    assert hasattr(webhook_mod, "CallbackDeduper")
-    assert hasattr(webhook_mod, "_get_callback_deduper")
+    webhook_mod = importlib.import_module("src.api.channels.feishu.webhook_router")
+    assert not hasattr(webhook_mod, "CallbackDeduper")
+    assert not hasattr(webhook_mod, "_get_callback_deduper")
 
 
-def test_s4_callback_deduper_window_uses_600s(monkeypatch) -> None:
-    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
-    deduper = webhook_module._get_callback_deduper()
-    assert deduper._window == 600
+def test_s4_callback_deduper_not_initialized_in_webhook() -> None:
+    assert not hasattr(webhook_module, "_callback_deduper")
 
 
 def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
@@ -704,14 +627,6 @@ def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
 
         async def json(self):
             return self._payload
-
-    calls = {"count": 0}
-
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            _ = user_id, callback_action, callback_value
-            calls["count"] += 1
-            return {"status": "processed", "text": "已处理"}
 
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
@@ -746,19 +661,16 @@ def test_s4_webhook_semantic_dedup_short_circuit(monkeypatch, caplog) -> None:
     }
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
     monkeypatch.setattr(webhook_module, "_deduplicator", None)
-    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
 
     with caplog.at_level("INFO"):
         first = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_1)))
         second = asyncio.run(webhook_module.feishu_webhook(_FakeRequest(payload_2)))
 
-    assert first["status"] == "ok"
-    assert second["status"] == "ok"
-    assert "已处理" in second["reason"]
-    assert calls["count"] == 1
-    assert any(getattr(record, "event_code", "") == "callback.duplicated" for record in caplog.records)
+    assert first["status"] == "ignored"
+    assert second["status"] == "ignored"
+    assert first["reason"] == "event_not_implemented"
+    assert second["reason"] == "event_not_implemented"
 
 
 def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> None:
@@ -768,15 +680,6 @@ def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> N
 
         async def json(self):
             return self._payload
-
-    calls = {"count": 0}
-
-    class _FakeCore:
-        async def handle_card_action_callback(self, user_id, callback_action, callback_value=None):
-            _ = user_id, callback_action, callback_value
-            calls["count"] += 1
-            await asyncio.sleep(0.02)
-            return {"status": "processed", "text": "已处理"}
 
     settings = SimpleNamespace(
         feishu=SimpleNamespace(encrypt_key=None, verification_token=""),
@@ -811,9 +714,7 @@ def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> N
     }
 
     monkeypatch.setattr(webhook_module, "_get_settings", lambda: settings)
-    monkeypatch.setattr(webhook_module, "_get_agent_core", lambda: _FakeCore())
     monkeypatch.setattr(webhook_module, "_deduplicator", None)
-    monkeypatch.setattr(webhook_module, "_callback_deduper", None)
 
     async def _invoke_both() -> tuple[dict[str, object], dict[str, object]]:
         return await asyncio.gather(
@@ -823,6 +724,7 @@ def test_s4_webhook_semantic_dedup_blocks_concurrent_callbacks(monkeypatch) -> N
 
     first, second = asyncio.run(_invoke_both())
 
-    assert first["status"] == "ok"
-    assert second["status"] == "ok"
-    assert calls["count"] == 1
+    assert first["status"] == "ignored"
+    assert second["status"] == "ignored"
+    assert first["reason"] == "event_not_implemented"
+    assert second["reason"] == "event_not_implemented"

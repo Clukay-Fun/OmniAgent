@@ -14,11 +14,12 @@
 - ✅ 多维表格记录创建、更新、删除
 - ✅ 飞书文档搜索
 - ✅ MCP 工具注册与统一调用入口
+- ✅ ROLE 进程隔离（`mcp_server` / `automation_worker`）
 - ✅ 自动化通知 Webhook（可选：对接调度器/外部系统回调）
 
 ## 🗂️ 目录说明
 
-- `src/`：服务源码（路由、自动化引擎、工具实现）
+- `src/`：服务源码（ROLE 应用装配、路由、自动化引擎、工具实现）
 - `tests/`：本地测试代码（默认不入库）
 - `scripts/`：运维与修复脚本
 - `docs/`：服务级文档
@@ -86,6 +87,10 @@ cp .env.example .env
 ### 3. 配置环境变量
 
 ```env
+# 运行角色（容器部署时由 service 覆盖）
+ROLE=mcp_server
+MCP_PORT=8081
+
 # 飞书应用凭证
 FEISHU_DATA_APP_ID=cli_xxx
 FEISHU_DATA_APP_SECRET=xxx
@@ -98,6 +103,7 @@ BITABLE_VIEW_ID=             # 视图 ID（可选，建议留空）
 
   # 自动化关键开关（可选）
   AUTOMATION_ENABLED=true
+  AUTOMATION_SQLITE_DB_FILE=automation_data/automation.db
   AUTOMATION_POLLER_ENABLED=false
   AUTOMATION_STATUS_WRITE_ENABLED=false
   FEISHU_EVENT_VERIFY_TOKEN=your_event_token
@@ -153,15 +159,20 @@ python run_dev.py scan --table-id tbl_xxx --app-token app_xxx
 # AUTOMATION_POLLER_ENABLED=false
 # AUTOMATION_SCHEMA_SYNC_EVENT_DRIVEN=false
 
-# MCP 单服务模式
-python run_server.py
+# MCP 工具服务（只暴露 /mcp/tools）
+ROLE=mcp_server MCP_PORT=8081 python run_server.py
+
+# 自动化 Worker（只暴露 /feishu/events + /automation/*）
+ROLE=automation_worker MCP_PORT=8082 python run_server.py
 ```
 
-默认端口：`8081`（统一开发入口与单服务模式一致）
+默认端口：
+- MCP 工具服务：`8081`
+- Automation Worker：`8082`
 
 ### 5. 实时事件订阅（推荐）
 
-1) 准备公网回调地址（例如 `ngrok http 8081`）
+1) 准备公网回调地址（例如 `ngrok http 8082`）
 
 2) 在飞书开发者后台配置事件订阅：
 - 请求地址：`https://<你的公网域名>/feishu/events`
@@ -202,16 +213,16 @@ python run_server.py
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/health` | GET | 健康检查 |
-| `/mcp/tools` | GET | 列出所有工具 |
-| `/mcp/tools/{tool_name}` | POST | 调用指定工具 |
-| `/bitable/fields` | GET | 查看表格字段（调试用）|
-| `/feishu/events` | POST | 飞书事件订阅回调（实时触发） |
-| `/automation/init` | POST | 初始化快照 |
-| `/automation/scan` | POST | 手动补偿扫描 |
-| `/automation/sync` | POST | 手动全量同步（新增+修改+删除对账） |
-| `/automation/schema/refresh` | POST | 手动刷新表结构（支持全量/单表，支持风险演练） |
-| `/automation/auth/health` | GET | 鉴权健康检查（token 获取与网络连通性） |
+| `/health` | GET | 健康检查（两种 role 都可用） |
+| `/mcp/tools` | GET | 列出所有工具（`mcp_server:8081`） |
+| `/mcp/tools/{tool_name}` | POST | 调用指定工具（`mcp_server:8081`） |
+| `/bitable/fields` | GET | 查看表格字段（`mcp_server:8081`） |
+| `/feishu/events` | POST | 飞书事件订阅回调（`automation_worker:8082`） |
+| `/automation/init` | POST | 初始化快照（`automation_worker:8082`） |
+| `/automation/scan` | POST | 手动补偿扫描（`automation_worker:8082`） |
+| `/automation/sync` | POST | 手动全量同步（`automation_worker:8082`） |
+| `/automation/schema/refresh` | POST | 手动刷新表结构（`automation_worker:8082`） |
+| `/automation/auth/health` | GET | 鉴权健康检查（`automation_worker:8082`） |
 
 ### 示例请求
 
@@ -236,19 +247,19 @@ curl -X POST http://localhost:8081/mcp/tools/feishu.v1.bitable.search_person \
   -d '{"params": {"field": "主办律师", "open_id": "ou_xxx"}}'
 
 # 手动刷新全部表 schema
-curl -X POST http://localhost:8081/automation/schema/refresh
+curl -X POST http://localhost:8082/automation/schema/refresh
 
 # 手动全量同步（新增+修改+删除对账）
-curl -X POST http://localhost:8081/automation/sync
+curl -X POST http://localhost:8082/automation/sync
 
 # 鉴权健康检查（token + 网络）
-curl http://localhost:8081/automation/auth/health
+curl http://localhost:8082/automation/auth/health
 
 # 手动刷新单表 schema
-curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx"
+curl -X POST "http://localhost:8082/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx"
 
 # 强制风险演练（只发 webhook，不改 schema；需开启 AUTOMATION_SCHEMA_WEBHOOK_DRILL_ENABLED=true）
-curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx&drill=true"
+curl -X POST "http://localhost:8082/automation/schema/refresh?table_id=tbl_xxx&app_token=app_xxx&drill=true"
 ```
 
 说明：
@@ -269,8 +280,17 @@ curl -X POST "http://localhost:8081/automation/schema/refresh?table_id=tbl_xxx&a
 
 ### 入口与路由
 
-- **`src/main.py`** - FastAPI 入口，注册 `/health` 与 MCP 工具路由
-- **`src/server/http.py`** - MCP 工具列表与执行入口
+- **`src/main.py`** - FastAPI 入口（按 `ROLE` 组装 app）
+- **`src/server/app_factory.py`** - role 应用装配（mcp_server / automation_worker）
+- **`src/server/mcp.py`** - MCP 工具列表与执行入口
+
+### 自动化编排（Step 3 拆分）
+
+- **`src/automation/service.py`** - 对外 facade 与依赖装配
+- **`src/automation/dispatcher.py`** - 事件分发、Webhook 鉴权与规则触发入口
+- **`src/automation/processor.py`** - 快照/扫描/同步/Schema 刷新处理链路
+- **`src/automation/executor.py`** - Delay/Cron 任务管理与基础校验
+- **`src/automation/models.py`** - 共享常量、错误类型与归一化工具
 
 ### 工具实现
 
@@ -352,12 +372,12 @@ tools:
 
 自动化灰度结束后，可用脚本一次性汇总：
 
-- 运行日志窗口统计（`automation_data/run_logs.jsonl`）
+- 运行日志窗口统计（优先读取 `automation_data/automation.db`）
 - 死信总量与最近窗口死信数
 - 最近窗口状态字段分布（`自动化_执行状态`）
 - 最近窗口错误字段非空数量（`自动化_最近错误`）
 
-说明：如果你已删除状态字段，请保持 `AUTOMATION_STATUS_WRITE_ENABLED=false`，仅依赖 `run_logs.jsonl` 与 `dead_letters.jsonl` 观察。
+说明：如果你已删除状态字段，请保持 `AUTOMATION_STATUS_WRITE_ENABLED=false`，通过 `automation.db` 观察 `run_logs/dead_letters`（脚本会在无 SQLite 数据时回退读取旧 JSONL）。
 
 ```bash
 # 默认检查最近 24 小时
@@ -369,8 +389,11 @@ python scripts/automation_gray_check.py --strict
 # JSON 输出，便于 CI 收集
 python scripts/automation_gray_check.py --json
 
-# 零 API 模式（只读本地 run_logs/dead_letters）
+# 零 API 模式（只读本地日志，优先 SQLite）
 python scripts/automation_gray_check.py --no-api --strict
+
+# 指定 SQLite 文件
+python scripts/automation_gray_check.py --sqlite-db-file automation_data/automation.db
 ```
 
 ---

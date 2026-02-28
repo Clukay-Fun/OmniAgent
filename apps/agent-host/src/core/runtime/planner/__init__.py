@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from src.core.planner.engine import PlannerEngine
-from src.core.planner.schema import PlannerOutput
+from src.core.runtime.planner.engine import PlannerEngine
+from src.core.runtime.planner.schema import PlannerOutput
 
 __all__ = ["PlannerEngine", "PlannerOutput"]

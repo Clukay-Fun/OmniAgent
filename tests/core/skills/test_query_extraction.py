@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.skills.query import QuerySkill  # noqa: E402
-import src.core.skills.query as query_module  # noqa: E402
-from src.core.skills.data_writer import WriteResult  # noqa: E402
-from src.core.skills.semantic_slots import SemanticSlotKey  # noqa: E402
-from src.utils.time_parser import parse_time_range  # noqa: E402
+from src.core.capabilities.skills.implementations.query import QuerySkill  # noqa: E402
+import src.core.capabilities.skills.implementations.query as query_module  # noqa: E402
+from src.core.capabilities.skills.actions.data_writer import WriteResult  # noqa: E402
+from src.core.capabilities.skills.base.semantic_slots import SemanticSlotKey  # noqa: E402
+from src.utils.parsing.time_parser import parse_time_range  # noqa: E402
 
 
 class _NoopWriter:

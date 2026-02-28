@@ -28,6 +28,7 @@ PlannerIntent = Literal[
     "list_reminders",
     "cancel_reminder",
     "out_of_scope",
+    "business_qa",
     "clarify_needed",
 ]
 

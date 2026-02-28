@@ -18,8 +18,8 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 import httpx
 
 from src.config import Settings
-from src.utils.exceptions import MCPConnectionError, MCPTimeoutError, MCPToolError
-from src.utils.metrics import record_mcp_tool_call
+from src.utils.errors.exceptions import MCPConnectionError, MCPTimeoutError, MCPToolError
+from src.utils.observability.metrics import record_mcp_tool_call
 
 logger = logging.getLogger(__name__)
 

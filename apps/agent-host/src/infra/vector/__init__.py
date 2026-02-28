@@ -9,10 +9,10 @@
 
 from __future__ import annotations
 
-from src.vector.config import load_vector_config
-from src.vector.embedding import EmbeddingClient
-from src.vector.chroma_store import ChromaStore
-from src.vector.memory import VectorMemoryManager
+from src.infra.vector.config import load_vector_config
+from src.infra.vector.embedding import EmbeddingClient
+from src.infra.vector.chroma_store import ChromaStore
+from src.infra.vector.memory import VectorMemoryManager
 
 __all__ = [
     "load_vector_config",

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from src.core.intent.parser import IntentParser, IntentResult, SkillMatch, load_skills_config
+from src.core.understanding.intent.parser import IntentParser, IntentResult, SkillMatch, load_skills_config
 
 __all__ = [
     "IntentParser",

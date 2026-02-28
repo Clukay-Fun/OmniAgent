@@ -7,11 +7,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_ws_client_registers_bot_presence_events() -> None:
-    content = (REPO_ROOT / "apps" / "agent-host" / "src" / "api" / "ws_client.py").read_text(encoding="utf-8")
+    content = (REPO_ROOT / "apps" / "agent-host" / "src" / "api" / "channels" / "feishu" / "ws_client.py").read_text(encoding="utf-8")
     assert '"im.chat.access_event.bot_p2p_chat_entered_v1"' in content
     assert '"im.chat.member.bot.added_v1"' in content
 
 
-def test_ws_client_registers_card_action_trigger_event() -> None:
-    content = (REPO_ROOT / "apps" / "agent-host" / "src" / "api" / "ws_client.py").read_text(encoding="utf-8")
-    assert "register_p2_card_action_trigger" in content
+def test_ws_client_does_not_register_card_action_trigger_event() -> None:
+    content = (REPO_ROOT / "apps" / "agent-host" / "src" / "api" / "channels" / "feishu" / "ws_client.py").read_text(encoding="utf-8")
+    assert "register_p2_card_action_trigger" not in content

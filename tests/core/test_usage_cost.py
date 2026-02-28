@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.usage_cost import compute_usage_cost, load_model_pricing
+from src.core.foundation.telemetry.usage_cost import compute_usage_cost, load_model_pricing
 
 
 def test_compute_usage_cost_with_input_output_pricing() -> None:

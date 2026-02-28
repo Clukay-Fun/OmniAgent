@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_HOST_ROOT = ROOT / "apps" / "agent-host"
 sys.path.insert(0, str(AGENT_HOST_ROOT))
 
-from src.core.usage_logger import UsageLogger, UsageRecord
+from src.core.foundation.telemetry.usage_logger import UsageLogger, UsageRecord
 
 
 def test_usage_logger_writes_jsonl_with_date_template(tmp_path: Path) -> None:
