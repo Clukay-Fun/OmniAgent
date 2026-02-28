@@ -290,32 +290,127 @@ class ExternalFileExtractor:
             - 构建请求头和负载
             - 发送HTTP请求并处理响应
             - 解析响应内容并处理错误
+            - 对 MinerU 异步任务支持轮询逻辑
         """
         headers = self._build_headers(api_key=api_key, mode=mode)
         payload = self._build_payload(request, mode=mode, provider=provider)
         endpoint = self._resolve_endpoint(provider=provider, api_base=api_base, mode=mode)
         timeout = httpx.Timeout(self._timeout_seconds)
+        
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             if provider not in {"mineru", "llm"}:
                 raise ValueError(f"unsupported_provider:{provider}")
+            
+            # 1. 提交抽取任务
             response = await client.post(endpoint, headers=headers, json=payload)
 
-        data = self._safe_json(response)
-        mapped_error = self._map_http_error(response=response, payload=data)
-        if mapped_error:
-            if mapped_error == "extractor_rate_limited":
-                retry_after = self._parse_retry_after_seconds(response)
-                raise _ProviderError(
-                    error_type=mapped_error,
-                    retryable=True,
-                    retry_after_seconds=retry_after,
-                )
-            raise _ProviderError(error_type=mapped_error, retryable=False)
+            data = self._safe_json(response)
+            mapped_error = self._map_http_error(response=response, payload=data)
+            if mapped_error:
+                if mapped_error == "extractor_rate_limited":
+                    retry_after = self._parse_retry_after_seconds(response)
+                    raise _ProviderError(
+                        error_type=mapped_error,
+                        retryable=True,
+                        retry_after_seconds=retry_after,
+                    )
+                raise _ProviderError(error_type=mapped_error, retryable=False)
 
-        markdown = self._extract_markdown(data)
-        if markdown:
-            return markdown
-        raise _ProviderError(error_type="extractor_empty_content", retryable=False)
+            # 如果不是 mineru，直接提取 Markdown
+            if provider != "mineru":
+                markdown = self._extract_markdown(data)
+                if markdown:
+                    return markdown
+                raise _ProviderError(error_type="extractor_empty_content", retryable=False)
+
+            # 2. 如果是 mineru，需要轮询任务状态
+            task_id = ""
+            if isinstance(data, dict):
+                task_id_info = data.get("data")
+                if isinstance(task_id_info, dict):
+                    task_id = task_id_info.get("task_id", "")
+                elif isinstance(data.get("task_id"), str):
+                    task_id = data.get("task_id", "")
+            
+            if not task_id:
+                raise _ProviderError(error_type="extractor_missing_task_id", retryable=False)
+            
+            # 构建轮询 URL: https://mineru.net/api/v4/extract/task/{task_id}
+            poll_endpoint = f"{endpoint.rstrip('/')}/{task_id}"
+            
+            max_polls = max(1, self._timeout_seconds // 2)
+            logger.info(f"MinerU task submitted: {task_id}. Polling {poll_endpoint} (max {max_polls} attempts).")
+            for i in range(max_polls):
+                await asyncio.sleep(2.0)
+                poll_resp = await client.get(poll_endpoint, headers=headers)
+                poll_data = self._safe_json(poll_resp)
+                logger.debug(f"MinerU poll {i+1}/{max_polls}: status={poll_resp.status_code}")
+                
+                poll_mapped_error = self._map_http_error(response=poll_resp, payload=poll_data)
+                if poll_mapped_error:
+                    if poll_mapped_error == "extractor_rate_limited":
+                        retry_after = self._parse_retry_after_seconds(poll_resp)
+                        raise _ProviderError(
+                            error_type=poll_mapped_error,
+                            retryable=True,
+                            retry_after_seconds=retry_after,
+                        )
+                    raise _ProviderError(error_type=poll_mapped_error, retryable=False)
+                
+                if isinstance(poll_data, dict) and isinstance(poll_data.get("data"), dict):
+                    poll_data_inner = poll_data.get("data", {})
+                    # MinerU uses 'state' for the task state
+                    status = str(poll_data_inner.get("state", "")).strip().lower()
+                    
+                    if status == "done":
+                        # 3. 轮询成功，提取 Markdown
+                        # MinerU v4 返回的内容通常在 data -> extra_info -> markdown，或类似层级
+                        # 根据测试，返回格式包含 'full_zip_url'
+                        zip_url = poll_data_inner.get("full_zip_url", "")
+                        if zip_url:
+                            import zipfile
+                            import io
+                            try:
+                                import subprocess
+
+                                def download_zip():
+                                    # Python's OpenSSL may be incompatible with some CDN TLS configs.
+                                    # System curl (SecureTransport/LibreSSL) handles it reliably.
+                                    result = subprocess.run(
+                                        ["curl", "-sS", "-L", "-k", "--connect-timeout", "15",
+                                         "--max-time", "60", zip_url],
+                                        capture_output=True,
+                                        timeout=90
+                                    )
+                                    if result.returncode != 0:
+                                        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+                                        raise RuntimeError(f"curl failed (exit {result.returncode}): {stderr}")
+                                    if not result.stdout:
+                                        raise RuntimeError("curl returned empty response")
+                                    return result.stdout
+
+                                zip_content = await asyncio.to_thread(download_zip)
+                                with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
+                                    md_files = [f for f in z.namelist() if f.endswith('.md')]
+                                    if md_files:
+                                        # 读取找到的第一个 md 文件
+                                        with z.open(md_files[0]) as f:
+                                            return f.read().decode('utf-8')
+                            except Exception as e:
+                                import traceback
+                                logger.error(f"Failed to download or extract mineru zip: {e}\n{traceback.format_exc()}")
+                                raise _ProviderError(error_type="extractor_provider_error", retryable=False)
+                        
+                        markdown = self._extract_markdown(poll_data)
+                        if markdown:
+                            return markdown
+                        raise _ProviderError(error_type="extractor_empty_content", retryable=False)
+                    elif status == "failed" or status == "error":
+                        raise _ProviderError(error_type="extractor_provider_error", retryable=False)
+                    # 如果是 processing / pending 等状态，继续轮询
+            
+            # 超出轮询次数
+            raise _ProviderError(error_type="extractor_timeout", retryable=True)
 
     def _build_payload(self, request: ExtractorRequest, mode: str, provider: str = "") -> dict[str, Any]:
         """

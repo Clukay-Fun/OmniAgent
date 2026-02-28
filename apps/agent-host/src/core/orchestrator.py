@@ -370,6 +370,8 @@ class AgentOrchestrator:
         planner_cfg = self._skills_config.get("planner", {}) if isinstance(self._skills_config, dict) else {}
         planner_enabled = bool(planner_cfg.get("enabled", True))
         self._planner_confidence_threshold = float(planner_cfg.get("confidence_threshold", 0.65))
+        planner_llm_timeout_seconds = float(planner_cfg.get("llm_timeout_seconds", 4.0))
+        planner_fast_path_confidence = float(planner_cfg.get("fast_path_confidence", 0.8))
         scenarios_dir = self._resolve_planner_scenarios_dir(
             skills_config_path,
             str(planner_cfg.get("scenarios_dir", "config/scenarios")),
@@ -378,6 +380,8 @@ class AgentOrchestrator:
             llm_client=self._task_llm,
             scenarios_dir=scenarios_dir,
             enabled=planner_enabled,
+            llm_timeout_seconds=planner_llm_timeout_seconds,
+            fast_path_confidence=planner_fast_path_confidence,
         )
         
         # 注册技能

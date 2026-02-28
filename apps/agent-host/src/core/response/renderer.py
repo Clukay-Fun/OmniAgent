@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from pathlib import Path
+import re
 from typing import Any, Dict, Mapping, cast
 
 import yaml
@@ -55,9 +57,15 @@ class ResponseRenderer:
         rendered_template = template_text.format(skill_name=skill_name)
         text_fallback = chosen_text if self._is_non_blank(chosen_text) else rendered_template
 
+        data = payload.get("data")
+        if skill_name == "QuerySkill" and success and isinstance(data, Mapping):
+            text_fallback = self._build_query_text_fallback(
+                data=data,
+                default_text=str(text_fallback),
+            )
+
         blocks = [Block(type="paragraph", content={"text": str(text_fallback)})]
 
-        data = payload.get("data")
         if isinstance(data, Mapping) and data and skill_name not in ["QuerySkill", "ChitchatSkill"]:
             items = self._build_safe_kv_items(data)
             if items:
@@ -191,7 +199,9 @@ class ResponseRenderer:
         if skill_name == "QuerySkill":
             records = data.get("records")
             if isinstance(records, list):
-                query_text = text_fallback
+                query_meta_raw = data.get("query_meta")
+                query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+                query_text = str(query_meta.get("query_text") or text_fallback)
                 domain = self._detect_query_domain(data)
                 style = self._select_query_style(
                     domain=domain,
@@ -209,8 +219,6 @@ class ResponseRenderer:
                 title = self._query_title_by_domain(domain)
                 if self._query_card_v2_enabled:
                     actions = self._build_query_list_actions(data)
-                    query_meta_raw = data.get("query_meta")
-                    query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
                     return CardTemplateSpec(
                         template_id="query.list",
                         version="v2",
@@ -491,10 +499,11 @@ class ResponseRenderer:
         data: Mapping[str, Any],
         record_count: int,
     ) -> str:
-        _ = query_text
-        _ = record_count
         query_meta_raw = data.get("query_meta")
         query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+        tool = str(query_meta.get("tool") or "").strip().lower()
+        normalized_query = self._normalize_query_text(str(query_text or query_meta.get("query_text") or ""))
+
         variant_hint = str(
             query_meta.get("style_variant")
             or query_meta.get("variant")
@@ -503,7 +512,54 @@ class ResponseRenderer:
         ).strip().upper()
         if self._is_style_allowed_for_domain(domain, variant_hint):
             return variant_hint
+
+        if domain == "case":
+            if record_count <= 1:
+                if any(token in normalized_query for token in ("开庭", "截止", "到期", "管辖权", "举证", "查封", "反诉", "上诉")):
+                    return "T3C"
+                if any(token in normalized_query for token in ("进展", "时间线", "最新情况", "进度")):
+                    return "T5B"
+                if any(token in normalized_query for token in ("法官", "法院", "案号", "程序", "一审", "二审")):
+                    return "T6"
+
+            if tool == "data.bitable.search_date_range":
+                if any(token in normalized_query for token in ("截止", "到期", "管辖权", "举证", "查封", "反诉", "上诉")):
+                    return "T3B"
+                return "T3A"
+
+            if any(token in normalized_query for token in ("待办", "待做", "还没做")):
+                return "T5A"
+            if any(token in normalized_query for token in ("进展", "时间线", "最新情况", "进度")):
+                return "T5B"
+            if any(token in normalized_query for token in ("状态", "未结", "重要紧急", "紧急")):
+                return "T5C"
+            if any(token in normalized_query for token in ("联系人", "当事人", "委托人", "对方当事人")):
+                return "T4B"
+            if any(token in normalized_query for token in ("我的案件", "我的案子", "主办", "协办", "律师")):
+                return "T4A"
+            if any(token in normalized_query for token in ("法官", "法院", "案号", "程序", "一审", "二审")):
+                return "T6"
+
+        if domain == "contracts":
+            if record_count > 1 and any(token in normalized_query for token in ("未付款", "未开票", "待盖章", "到期", "快到期")):
+                return "HT-T3"
+
+        if domain == "bidding":
+            if record_count > 1 and any(token in normalized_query for token in ("中标", "结果", "中标率")):
+                return "ZB-T4"
+            if record_count > 1 and any(token in normalized_query for token in ("最近", "截标", "标书", "保证金", "时间线", "本周", "下周")):
+                return "ZB-T3"
+
+        if domain == "team_overview":
+            if record_count > 1 and any(token in normalized_query for token in ("看板", "过期", "重要紧急", "待办")):
+                return "RW-T3"
+            if record_count > 1 and any(token in normalized_query for token in ("总览", "任务总览", "完成情况")):
+                return "RW-T4"
+
         return style
+
+    def _normalize_query_text(self, query_text: str) -> str:
+        return re.sub(r"\s+", "", str(query_text or "")).lower()
 
     def _default_detail_style(self, domain: str) -> str:
         return {
@@ -532,6 +588,410 @@ class ResponseRenderer:
         if domain == "team_overview":
             return normalized.startswith("RW-")
         return normalized.startswith("T")
+
+    def _build_query_text_fallback(self, data: Mapping[str, Any], default_text: str) -> str:
+        records_raw = data.get("records")
+        records = records_raw if isinstance(records_raw, list) else []
+        if not records:
+            return default_text
+
+        query_meta_raw = data.get("query_meta")
+        query_meta = query_meta_raw if isinstance(query_meta_raw, Mapping) else {}
+        query_text = str(query_meta.get("query_text") or default_text)
+        domain = self._detect_query_domain(data)
+        style = self._select_query_style(domain=domain, query_text=query_text, data=data, record_count=len(records))
+        variant = self._select_query_style_variant(
+            domain=domain,
+            style=style,
+            query_text=query_text,
+            data=data,
+            record_count=len(records),
+        )
+        active_style = variant or style
+        total = int(data.get("total") or len(records))
+
+        if domain == "case":
+            if len(records) == 1:
+                return self._render_case_detail_text(records[0], style=active_style)
+            return self._render_case_list_text(records, total=total, style=active_style)
+
+        if domain == "contracts":
+            if len(records) == 1:
+                return self._render_contract_detail_text(records[0], style=active_style)
+            return self._render_contract_list_text(records, total=total, style=active_style)
+
+        if domain == "bidding":
+            if len(records) == 1:
+                return self._render_bidding_detail_text(records[0], style=active_style)
+            return self._render_bidding_list_text(records, total=total, style=active_style)
+
+        if domain == "team_overview":
+            if len(records) == 1:
+                return self._render_team_detail_text(records[0], style=active_style)
+            return self._render_team_list_text(records, total=total, style=active_style)
+
+        return default_text
+
+    def _record_fields(self, record: Mapping[str, Any]) -> Mapping[str, Any]:
+        fields_text = record.get("fields_text")
+        if isinstance(fields_text, Mapping):
+            return fields_text
+        fields = record.get("fields")
+        if isinstance(fields, Mapping):
+            return fields
+        return {}
+
+    def _pick_field(self, fields: Mapping[str, Any], keys: list[str]) -> str:
+        for key in keys:
+            value = str(fields.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _short_date(self, raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return "—"
+        normalized = text.replace("/", "-").replace(".", "-")
+        if "T" in normalized:
+            normalized = normalized.replace("T", " ")
+        try:
+            dt = datetime.fromisoformat(normalized)
+            return dt.strftime("%m-%d %H:%M")
+        except ValueError:
+            pass
+        try:
+            d = date.fromisoformat(normalized.split(" ", 1)[0])
+            return d.strftime("%m-%d")
+        except ValueError:
+            return text
+
+    def _deadline_badge(self, raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text or text == "—":
+            return "➖ 未设置"
+        normalized = text.replace("/", "-").replace(".", "-")
+        if "T" in normalized:
+            normalized = normalized.replace("T", " ")
+        try:
+            due = date.fromisoformat(normalized.split(" ", 1)[0])
+        except ValueError:
+            return "➖ 未设置"
+        today = date.today()
+        delta = (due - today).days
+        if delta < 0:
+            return f"❌ 已过期{abs(delta)}天"
+        if delta == 0:
+            return "⏰ 今日到期"
+        if delta <= 3:
+            return f"⏰ 还有{delta}天"
+        if delta <= 7:
+            return f"🟡 {delta}天后"
+        return f"🟢 {delta}天后"
+
+    def _urgency_badge(self, raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return "⚪ 未标注"
+        if "重要紧急" in text:
+            return f"🔴 {text}"
+        if "重要" in text or "紧急" in text:
+            return f"🟡 {text}"
+        return f"🔵 {text}"
+
+    def _render_case_detail_text(self, record: Mapping[str, Any], style: str) -> str:
+        fields = self._record_fields(record)
+        project_id = self._pick_field(fields, ["项目 ID", "项目ID", "项目号", "record_id"]) or "—"
+        project_type = self._pick_field(fields, ["项目类型", "案件分类"]) or "—"
+        category = self._pick_field(fields, ["案件分类", "案由"]) or "—"
+        client = self._pick_field(fields, ["委托人", "客户名称", "甲方"]) or "—"
+        opponent = self._pick_field(fields, ["对方当事人", "乙方"]) or "—"
+        contact_person = self._pick_field(fields, ["联系人", "联系人姓名"]) or "—"
+        contact_info = self._pick_field(fields, ["联系方式", "手机号", "联系电话"]) or "—"
+        case_no = self._pick_field(fields, ["案号", "案件号"]) or "—"
+        court = self._pick_field(fields, ["审理法院", "法院"]) or "—"
+        stage = self._pick_field(fields, ["审理程序", "程序阶段"]) or "—"
+        judge = self._pick_field(fields, ["承办法官", "法官"]) or "—"
+        owner = self._pick_field(fields, ["主办律师", "负责人"]) or "—"
+        co_owner = self._pick_field(fields, ["协办律师"]) or "—"
+        hearing = self._pick_field(fields, ["开庭日", "开庭时间"]) or "—"
+        jurisdiction = self._pick_field(fields, ["管辖权异议截止日"]) or "—"
+        evidence = self._pick_field(fields, ["举证截止日"]) or "—"
+        seizure = self._pick_field(fields, ["查封到期日", "查封到期"]) or "—"
+        counterclaim = self._pick_field(fields, ["反诉截止日"]) or "—"
+        appeal = self._pick_field(fields, ["上诉截止日"]) or "—"
+        status = self._pick_field(fields, ["案件状态", "状态"]) or "未标注"
+        urgency = self._urgency_badge(self._pick_field(fields, ["重要紧急程度", "紧急程度"]))
+        todo = self._pick_field(fields, ["待做事项", "待办事项", "待办"]) or "—"
+        progress = self._pick_field(fields, ["进展", "最新进展"]) or "—"
+        remark = self._pick_field(fields, ["备注"]) or "—"
+        link = str(record.get("record_url") or "").strip()
+
+        header = "📅 重要日期总览" if style == "T3C" else "📌 案件详情"
+        lines = [
+            header,
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"🔖 {project_id} | {project_type}",
+            f"📂 案件分类：{category}",
+            "━━ 当事人信息 ━━",
+            f"🏢 委托人：{client}",
+            f"🆚 对方：{opponent}",
+            f"📞 联系人：{contact_person} | {contact_info}",
+            "━━ 案件信息 ━━",
+            f"📄 案号：{case_no}",
+            f"⚖️ 审理法院：{court}",
+            f"📌 审理程序：{stage}",
+            f"👨‍⚖️ 承办法官：{judge}",
+            "━━ 承办律师 ━━",
+            f"👤 主办：{owner} | 协办：{co_owner}",
+            "━━ 重要日期 ━━",
+            f"📅 开庭日：{hearing} {self._deadline_badge(hearing)}",
+            f"⚠️ 管辖权异议截止：{jurisdiction} {self._deadline_badge(jurisdiction)}",
+            f"⚠️ 举证截止：{evidence} {self._deadline_badge(evidence)}",
+            f"📎 查封到期：{seizure} {self._deadline_badge(seizure)}",
+            f"📎 反诉截止：{counterclaim} {self._deadline_badge(counterclaim)}",
+            f"📎 上诉截止：{appeal} {self._deadline_badge(appeal)}",
+            "━━ 案件动态 ━━",
+            f"{urgency} | {status}",
+            f"📝 待办事项：{todo}",
+            f"💬 最新进展：{progress}",
+            f"💡 备注：{remark}",
+        ]
+        if link:
+            lines.append(f"🔗 查看详情：{link}")
+        return "\n".join(lines)
+
+    def _render_case_list_text(self, records: list[Mapping[str, Any]], total: int, style: str) -> str:
+        shown = len(records)
+        title = f"🔍 找到 {total} 个相关案件（显示前{shown}条）"
+        if style == "T3A":
+            title = "📅 近期开庭安排"
+        elif style == "T3B":
+            title = "⚠️ 重要截止日提醒"
+        elif style == "T4A":
+            title = "👤 律师案件总览"
+        elif style == "T4B":
+            title = "🔍 当事人/联系人查找结果"
+        elif style == "T5A":
+            title = "📝 待办事项看板"
+        elif style == "T5B":
+            title = "💬 案件进展查询"
+        elif style == "T5C":
+            title = "📌 状态筛选结果"
+        elif style == "T6":
+            title = "⚖️ 法院/程序/案号查询结果"
+
+        lines: list[str] = [title, "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for index, record in enumerate(records, start=1):
+            fields = self._record_fields(record)
+            project_id = self._pick_field(fields, ["项目 ID", "项目ID", "项目号", "record_id"]) or "—"
+            client = self._pick_field(fields, ["委托人", "客户名称", "甲方"]) or "—"
+            opponent = self._pick_field(fields, ["对方当事人", "乙方"]) or "—"
+            category = self._pick_field(fields, ["案件分类", "案由"]) or "—"
+            hearing = self._pick_field(fields, ["开庭日", "开庭时间"]) or "—"
+            court = self._pick_field(fields, ["审理法院", "法院"]) or "—"
+            owner = self._pick_field(fields, ["主办律师", "负责人"]) or "—"
+            status = self._pick_field(fields, ["案件状态", "状态"]) or "未标注"
+            urgency = self._urgency_badge(self._pick_field(fields, ["重要紧急程度", "紧急程度"]))
+            case_no = self._pick_field(fields, ["案号", "案件号"]) or "—"
+            progress = self._pick_field(fields, ["进展", "最新进展"]) or "—"
+            todo = self._pick_field(fields, ["待做事项", "待办事项", "待办"]) or "—"
+            link = str(record.get("record_url") or "").strip()
+
+            lines.append(f"{index}️⃣ {project_id}")
+            lines.append(f"🏢 {client} vs {opponent}")
+            if style in {"T3A", "T3B", "T3C"}:
+                lines.append(f"📅 关键日期：{hearing} | {self._deadline_badge(hearing)}")
+            elif style in {"T5A", "T5B", "T5C"}:
+                lines.append(f"📋 {category} | {urgency} | {status}")
+                lines.append(f"📝 待办：{todo}")
+                if style == "T5B":
+                    lines.append(f"💬 进展：{progress}")
+            elif style == "T6":
+                lines.append(f"📄 案号：{case_no}")
+                lines.append(f"⚖️ {court} | 👤 {owner} | {status}")
+            else:
+                lines.append(f"📋 {category} | 📅 开庭：{self._short_date(hearing)} ({self._deadline_badge(hearing)})")
+                lines.append(f"⚖️ {court} | 👤 {owner} | {urgency} | {status}")
+
+            if link:
+                lines.append(f"🔗 查看详情：{link}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+
+        return "\n".join(lines)
+
+    def _render_contract_detail_text(self, record: Mapping[str, Any], style: str) -> str:
+        fields = self._record_fields(record)
+        contract_id = self._pick_field(fields, ["合同编号", "合同号", "项目ID"]) or "—"
+        contract_type = self._pick_field(fields, ["合同类型", "类型"]) or "—"
+        contract_name = self._pick_field(fields, ["合同名称", "标题"]) or "—"
+        client = self._pick_field(fields, ["客户名称", "甲方", "委托人"]) or "—"
+        owner = self._pick_field(fields, ["主办律师", "负责人"]) or "—"
+        amount = self._pick_field(fields, ["合同金额", "金额"]) or "—"
+        status = self._pick_field(fields, ["合同状态", "状态"]) or "—"
+        payment_status = self._pick_field(fields, ["开票付款状态", "付款状态"]) or "—"
+        sign_date = self._pick_field(fields, ["签约日期"]) or "—"
+        start_date = self._pick_field(fields, ["开始日期"]) or "—"
+        end_date = self._pick_field(fields, ["结束日期", "到期日期"]) or "—"
+        seal_status = self._pick_field(fields, ["盖章状态"]) or "—"
+        linked_project = self._pick_field(fields, ["关联项目", "项目ID"]) or "—"
+        link = str(record.get("record_url") or "").strip()
+
+        lines = [
+            "📋 合同详情",
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📋 合同号：{contract_id}",
+            f"📂 合同类型：{contract_type}",
+            f"📄 合同名称：{contract_name}",
+            f"🏢 客户：{client}",
+            f"👤 主办律师：{owner}",
+            f"💰 合同金额：{amount}",
+            f"📌 合同状态：{status}",
+            f"💳 开票付款状态：{payment_status}",
+            f"📅 签约日期：{sign_date}",
+            f"📅 开始日期：{start_date}",
+            f"📅 结束日期：{end_date} {self._deadline_badge(end_date)}",
+            f"📎 盖章状态：{seal_status}",
+            f"🔗 关联项目：{linked_project}",
+        ]
+        if link:
+            lines.append(f"🔗 查看详情：{link}")
+        return "\n".join(lines)
+
+    def _render_contract_list_text(self, records: list[Mapping[str, Any]], total: int, style: str) -> str:
+        title = f"🔍 找到 {total} 份合同（显示前{len(records)}条）"
+        if style == "HT-T3":
+            title = "💳 合同状态聚焦"
+        lines = [title, "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for index, record in enumerate(records, start=1):
+            fields = self._record_fields(record)
+            contract_id = self._pick_field(fields, ["合同编号", "合同号", "项目ID"]) or "—"
+            contract_name = self._pick_field(fields, ["合同名称", "标题"]) or "—"
+            client = self._pick_field(fields, ["客户名称", "甲方", "委托人"]) or "—"
+            amount = self._pick_field(fields, ["合同金额", "金额"]) or "—"
+            payment_status = self._pick_field(fields, ["开票付款状态", "付款状态"]) or "—"
+            end_date = self._pick_field(fields, ["结束日期", "到期日期"]) or "—"
+            seal_status = self._pick_field(fields, ["盖章状态"]) or "—"
+            link = str(record.get("record_url") or "").strip()
+            lines.append(f"{index}️⃣ {contract_id} | {contract_name}")
+            lines.append(f"🏢 {client}")
+            lines.append(f"💰 {amount} | {payment_status}")
+            lines.append(f"📅 到期：{end_date} {self._deadline_badge(end_date)} | {seal_status}")
+            if link:
+                lines.append(f"🔗 查看详情：{link}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+        return "\n".join(lines)
+
+    def _render_bidding_detail_text(self, record: Mapping[str, Any], style: str) -> str:
+        fields = self._record_fields(record)
+        bid_id = self._pick_field(fields, ["项目号", "编号", "项目ID"]) or "—"
+        project_name = self._pick_field(fields, ["投标项目名称", "项目名称", "标题"]) or "—"
+        owner_org = self._pick_field(fields, ["招标方", "业主单位"]) or "—"
+        owner = self._pick_field(fields, ["承办律师", "负责人"]) or "—"
+        phase = self._pick_field(fields, ["阶段", "进度", "状态"]) or "—"
+        close_date = self._pick_field(fields, ["截标时间", "投标截止日", "截止日"]) or "—"
+        book_status = self._pick_field(fields, ["标书领取状态", "标书状态"]) or "—"
+        deposit_status = self._pick_field(fields, ["保证金缴纳状态", "保证金状态"]) or "—"
+        bid_result = self._pick_field(fields, ["是否中标", "中标状态"]) or "—"
+        bid_amount = self._pick_field(fields, ["中标金额", "金额"]) or "—"
+        link = str(record.get("record_url") or "").strip()
+        lines = [
+            "🏁 招投标详情",
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"🔖 {bid_id}",
+            f"📋 投标项目：{project_name}",
+            f"🏢 招标方：{owner_org}",
+            f"👤 承办律师：{owner}",
+            f"📌 当前阶段：{phase}",
+            f"📅 截标时间：{close_date} {self._deadline_badge(close_date)}",
+            f"📄 标书状态：{book_status}",
+            f"💰 保证金：{deposit_status}",
+            f"🏆 中标结果：{bid_result}",
+            f"💰 中标金额：{bid_amount}",
+        ]
+        if link:
+            lines.append(f"🔗 查看详情：{link}")
+        return "\n".join(lines)
+
+    def _render_bidding_list_text(self, records: list[Mapping[str, Any]], total: int, style: str) -> str:
+        title = f"🔍 进行中的招投标项目（共{total}个）"
+        if style == "ZB-T3":
+            title = "📅 招投标时间线"
+        elif style == "ZB-T4":
+            title = "🏆 招投标结果"
+        lines = [title, "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for index, record in enumerate(records, start=1):
+            fields = self._record_fields(record)
+            bid_id = self._pick_field(fields, ["项目号", "编号", "项目ID"]) or "—"
+            project_name = self._pick_field(fields, ["投标项目名称", "项目名称", "标题"]) or "—"
+            owner_org = self._pick_field(fields, ["招标方", "业主单位"]) or "—"
+            owner = self._pick_field(fields, ["承办律师", "负责人"]) or "—"
+            close_date = self._pick_field(fields, ["截标时间", "投标截止日", "截止日"]) or "—"
+            phase = self._pick_field(fields, ["阶段", "进度", "状态"]) or "—"
+            amount = self._pick_field(fields, ["中标金额", "金额"]) or "—"
+            link = str(record.get("record_url") or "").strip()
+            lines.append(f"{index}️⃣ {bid_id}")
+            lines.append(f"📋 {project_name}")
+            lines.append(f"🏢 {owner_org}")
+            lines.append(f"👤 {owner} | 💰 {amount}")
+            lines.append(f"📅 截标：{self._short_date(close_date)} ({self._deadline_badge(close_date)})")
+            lines.append(f"📝 当前阶段：{phase}")
+            if link:
+                lines.append(f"🔗 查看详情：{link}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+        return "\n".join(lines)
+
+    def _render_team_detail_text(self, record: Mapping[str, Any], style: str) -> str:
+        fields = self._record_fields(record)
+        record_id = self._pick_field(fields, ["record_id", "记录 ID"]) or "—"
+        desc = self._pick_field(fields, ["任务描述", "描述"]) or "—"
+        task_type = self._pick_field(fields, ["任务类型", "类型"]) or "—"
+        status = self._pick_field(fields, ["状态", "进展"]) or "—"
+        creator = self._pick_field(fields, ["发起人"]) or "—"
+        helper = self._pick_field(fields, ["请求协助人", "协助人"]) or "—"
+        deadline = self._pick_field(fields, ["截止时间", "截止日"]) or "—"
+        urgency = self._urgency_badge(self._pick_field(fields, ["重要紧急程度", "紧急程度"]))
+        link = str(record.get("record_url") or "").strip()
+        lines = [
+            "📋 任务详情",
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"🔖 {record_id}",
+            f"📋 任务描述：{desc}",
+            f"📂 任务类型：{task_type}",
+            f"📌 状态：{status}",
+            f"{urgency}",
+            f"👤 发起人：{creator}",
+            f"🤝 请求协助人：{helper}",
+            f"📅 截止：{deadline} {self._deadline_badge(deadline)}",
+            "⚠️ 只读数据",
+        ]
+        if link:
+            lines.append(f"🔗 查看详情：{link}")
+        return "\n".join(lines)
+
+    def _render_team_list_text(self, records: list[Mapping[str, Any]], total: int, style: str) -> str:
+        title = f"📋 任务列表（共 {total} 条）"
+        if style == "RW-T3":
+            title = "📋 任务看板"
+        elif style == "RW-T4":
+            title = "👤 成员任务总览"
+        lines = [title, "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for index, record in enumerate(records, start=1):
+            fields = self._record_fields(record)
+            member = self._pick_field(fields, ["成员", "负责人", "发起人"]) or "—"
+            desc = self._pick_field(fields, ["任务描述", "描述"]) or "—"
+            status = self._pick_field(fields, ["状态", "进展"]) or "—"
+            due = self._pick_field(fields, ["截止时间", "截止日"]) or "—"
+            urgency = self._urgency_badge(self._pick_field(fields, ["重要紧急程度", "紧急程度"]))
+            link = str(record.get("record_url") or "").strip()
+            lines.append(f"{index}️⃣ {member} | {desc}")
+            lines.append(f"📌 {status} | {urgency}")
+            lines.append(f"📅 截止：{self._short_date(due)} ({self._deadline_badge(due)})")
+            if link:
+                lines.append(f"🔗 查看详情：{link}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("⚠️ 只读数据")
+        return "\n".join(lines)
 
     def _load_templates(self, templates_path: str | Path | None) -> Dict[str, str]:
         path = Path(templates_path) if templates_path else self._default_template_path()

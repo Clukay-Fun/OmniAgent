@@ -97,8 +97,52 @@ def test_feishu_reaction_status_emitter_uses_single_reaction_per_status(monkeypa
     asyncio.run(emitter(event))
     asyncio.run(emitter(event))
 
-    assert calls == ["HOURGLASS", "HOURGLASS"]
-    assert all(reaction != "OK" for reaction in calls)
+    assert calls == ["OK", "OK"]
+
+
+def test_feishu_reaction_status_emitter_removes_processing_reaction_on_done(monkeypatch) -> None:
+    add_calls: list[str] = []
+    delete_calls: list[str] = []
+
+    async def _send(*_args, **kwargs):
+        reaction_type = kwargs.get("reaction_type")
+        add_calls.append(str(reaction_type))
+        return "reaction_1"
+
+    async def _delete(*_args, **kwargs):
+        delete_calls.append(str(kwargs.get("reaction_id") or ""))
+
+    monkeypatch.setattr(
+        "src.adapters.channels.feishu.processing_status.set_message_reaction",
+        _send,
+    )
+    monkeypatch.setattr(
+        "src.adapters.channels.feishu.processing_status.delete_message_reaction",
+        _delete,
+    )
+
+    emitter = FeishuReactionStatusEmitter(settings=_settings(True), message_id="msg_1")
+    asyncio.run(
+        emitter(
+            ProcessingStatusEvent(
+                status=ProcessingStatus.THINKING,
+                user_id="u1",
+                chat_id="oc_1",
+            )
+        )
+    )
+    asyncio.run(
+        emitter(
+            ProcessingStatusEvent(
+                status=ProcessingStatus.DONE,
+                user_id="u1",
+                chat_id="oc_1",
+            )
+        )
+    )
+
+    assert add_calls == ["OK"]
+    assert delete_calls == ["reaction_1"]
 
 
 def test_feishu_reaction_status_emitter_keeps_retrying_non_invalid_errors(monkeypatch) -> None:

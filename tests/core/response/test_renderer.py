@@ -186,7 +186,7 @@ def test_render_query_skill_selects_case_style_variant() -> None:
 
     assert response.card_template is not None
     assert response.card_template.params["style"] == "T2"
-    assert response.card_template.params["style_variant"] == "T2"
+    assert response.card_template.params["style_variant"] == "T3A"
 
 
 def test_render_always_contains_paragraph_block():

@@ -16,9 +16,8 @@ from src.utils.feishu_api import delete_message_reaction, set_message_reaction
 logger = logging.getLogger(__name__)
 
 _REACTION_BY_STATUS: dict[ProcessingStatus, str] = {
-    ProcessingStatus.THINKING: "HOURGLASS",
-    ProcessingStatus.SEARCHING: "MAG",
-    ProcessingStatus.DONE: "DONE",
+    ProcessingStatus.THINKING: "OK",
+    ProcessingStatus.SEARCHING: "OK",
 }
 
 class FeishuReactionStatusEmitter:
@@ -54,6 +53,30 @@ class FeishuReactionStatusEmitter:
             return
         if event.status in self._disabled_statuses:
             return
+
+        if event.status == ProcessingStatus.DONE:
+            if not self._last_reaction_id:
+                return
+            try:
+                await delete_message_reaction(
+                    settings=self._settings,
+                    message_id=self._message_id,
+                    reaction_id=self._last_reaction_id,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "撤回完成态前的 processing reaction 失败: %s",
+                    exc,
+                    extra={
+                        "event_code": "feishu.processing_status.reaction_delete_failed",
+                        "reaction_id": self._last_reaction_id,
+                        "message_id": self._message_id,
+                    },
+                )
+            self._last_reaction_id = ""
+            self._last_reaction_type = ""
+            return
+
         reaction_type = _REACTION_BY_STATUS.get(event.status)
         if not reaction_type:
             return

@@ -30,6 +30,8 @@ intent:
 planner:
   enabled: true
   confidence_threshold: 0.65
+  llm_timeout_seconds: 4
+  fast_path_confidence: 0.8
   scenarios_dir: config/scenarios
 
 query:

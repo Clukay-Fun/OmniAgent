@@ -297,6 +297,7 @@ class QuerySkill(BaseSkill):
                 "params": {k: v for k, v in params.items() if k != "page_token"},
                 "table_name": table_result.get("table_name") or "",
                 "table_id": table_result.get("table_id") or params.get("table_id") or "",
+                "query_text": query,
                 "resolution_trace": list(self._last_resolution_trace),
             }
 
@@ -1336,7 +1337,21 @@ class QuerySkill(BaseSkill):
             return ""
         if candidate in {"我", "自己", "所有", "全部", "今天", "明天", "本周", "本月", "最近", "近期"}:
             return ""
-        return candidate
+        if candidate:
+            return candidate
+
+        reversed_pattern = re.compile(
+            r"(?:查找|查询|搜索|查一查|查一下|查|找|看看|看下|看一下|查看)?\s*(?:案件|案子|项目)\s*([^\s]{2,60}?)(?:的)?$"
+        )
+        reversed_match = reversed_pattern.search(compact)
+        if not reversed_match:
+            return ""
+        reversed_candidate = self._sanitize_search_keyword(reversed_match.group(1).strip())
+        reversed_candidate = re.sub(r"^(我的|我负责的|我负责|自己的|有关|关于)", "", reversed_candidate).strip()
+        reversed_candidate = re.sub(r"(负责的?|相关的?|有关的?)$", "", reversed_candidate).strip()
+        if reversed_candidate in {"我", "自己", "所有", "全部", "今天", "明天", "本周", "本月", "最近", "近期"}:
+            return ""
+        return reversed_candidate
 
     def _apply_keyword_relevance(self, records: list[dict[str, Any]], keyword: str) -> list[dict[str, Any]]:
         """对结果进行本地相关性过滤，避免全表噪声记录。"""

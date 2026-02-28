@@ -36,39 +36,56 @@ class PlannerEngine:
         llm_client: Any,
         scenarios_dir: str,
         enabled: bool = True,
+        llm_timeout_seconds: float = 4.0,
+        fast_path_confidence: float = 0.8,
     ) -> None:
         self._llm = llm_client
         self._enabled = enabled
+        self._llm_timeout_seconds = max(1.0, float(llm_timeout_seconds))
+        self._fast_path_confidence = max(0.0, min(1.0, float(fast_path_confidence)))
         self._rules = load_scenario_rules(scenarios_dir)
         self._system_prompt = build_planner_system_prompt(self._rules)
 
     async def plan(self, query: str, *, user_profile: Any = None) -> PlannerOutput | None:
+        fallback_output = self._fallback_plan(query, user_profile=user_profile)
         if not self._enabled:
-            return self._fallback_plan(query, user_profile=user_profile)
+            return fallback_output
+
+        if fallback_output is not None and fallback_output.confidence >= self._fast_path_confidence:
+            logger.info(
+                "Planner fast-path命中，跳过LLM规划",
+                extra={
+                    "event_code": "planner.fast_path.hit",
+                    "confidence": fallback_output.confidence,
+                    "intent": fallback_output.intent,
+                    "tool": fallback_output.tool,
+                },
+            )
+            return fallback_output
 
         # 无可用 LLM 配置则直接规则降级
         if not getattr(getattr(self._llm, "_settings", None), "api_key", ""):
-            return self._fallback_plan(query, user_profile=user_profile)
+            return fallback_output
 
         user_prompt = f"用户输入：{query}\n请输出 JSON。"
         try:
             raw = await self._llm.chat_json(
                 user_prompt,
                 system=self._system_prompt,
-                timeout=10,
+                timeout=self._llm_timeout_seconds,
             )
             if not isinstance(raw, dict) or not raw:
-                return self._fallback_plan(query, user_profile=user_profile)
+                return fallback_output
             try:
                 self._warn_close_semantic_drift(raw)
                 output = PlannerOutput.model_validate(raw)
             except ValidationError as exc:
                 logger.warning("Planner schema validation failed: %s", exc)
-                return self._fallback_plan(query, user_profile=user_profile)
+                return fallback_output
             return output
         except Exception as exc:
             logger.warning("Planner failed, fallback to rules: %s", exc)
-            return self._fallback_plan(query, user_profile=user_profile)
+            return fallback_output
 
     def _fallback_plan(self, query: str, *, user_profile: Any = None) -> PlannerOutput | None:
         text = (query or "").strip()
@@ -465,9 +482,16 @@ class PlannerEngine:
 
     def _extract_subject_entity(self, text: str) -> str:
         matched = re.search(r"([^的\s，。,.！？!]{1,32})的(?:案件|案子|项目)", text)
-        if not matched:
+        if matched:
+            return self._clean_subject(matched.group(1))
+
+        reversed_matched = re.search(
+            r"(?:查找|查询|搜索|查一查|查一下|查|找|看看|看下|看一下|查看)?\s*(?:案件|案子|项目)\s*([^\s，。,.！？!]{1,32})(?:的)?$",
+            text,
+        )
+        if not reversed_matched:
             return ""
-        return self._clean_subject(matched.group(1))
+        return self._clean_subject(reversed_matched.group(1))
 
     def _clean_subject(self, value: str) -> str:
         subject = str(value or "").strip()
