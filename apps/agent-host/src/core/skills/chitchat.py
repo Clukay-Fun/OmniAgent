@@ -157,7 +157,7 @@ class ChitchatSkill(BaseSkill):
             return self._create_result(greeting_type, "问候响应")
 
         # 4.1 明显离题时柔性收敛到业务域
-        if not self._is_domain_related(query):
+        if not self._is_domain_related(query) and not self._allow_open_domain_chat(context):
             record_chitchat_guard("blocked")
             return self._create_result("out_of_scope", "离题请求")
 
@@ -257,6 +257,11 @@ class ChitchatSkill(BaseSkill):
     def _is_domain_related(self, query: str) -> bool:
         query_lower = query.lower()
         return any(token in query or token.lower() in query_lower for token in self.DOMAIN_HINTS)
+
+    def _allow_open_domain_chat(self, context: SkillContext) -> bool:
+        extra = context.extra if isinstance(context.extra, dict) else {}
+        user_profile = extra.get("user_profile") if isinstance(extra.get("user_profile"), dict) else {}
+        return bool(user_profile.get("allow_open_domain_chat", False))
 
     # ============================================
     # region 配置加载 + 时间感知 + 随机选择

@@ -52,3 +52,22 @@ def test_chitchat_help_trigger_for_who_are_you() -> None:
     assert result.data.get("type") == "help"
     assert "帮助" in result.reply_text
     assert llm.called is False
+
+
+def test_chitchat_open_domain_allowed_for_discord_profile() -> None:
+    llm = _FakeLLM()
+    skill = ChitchatSkill(skills_config={"chitchat": {"allow_llm": True}}, llm_client=llm)
+
+    result = asyncio.run(
+        skill.execute(
+            SkillContext(
+                query="你觉得今天晚饭吃什么好？",
+                user_id="u4",
+                extra={"user_profile": {"channel_type": "discord", "allow_open_domain_chat": True}},
+            )
+        )
+    )
+
+    assert result.success is True
+    assert result.data.get("type") == "llm_chat"
+    assert llm.called is True

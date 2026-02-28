@@ -125,6 +125,10 @@ class SessionManager:
         session = self.get_or_create(user_id)
         return list(session.messages)
 
+    def clear_user(self, user_id: str) -> None:
+        """清除指定用户会话。"""
+        self._sessions.pop(user_id, None)
+
     def cleanup_expired(self) -> None:
         """清理过期会话"""
         ttl = timedelta(minutes=self._settings.ttl_minutes)

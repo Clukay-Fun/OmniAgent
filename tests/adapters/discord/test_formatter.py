@@ -53,6 +53,94 @@ def test_formatter_generates_embed_for_query_skill() -> None:
     assert payload.embed.fields[0].value == "A-001"
 
 
+def test_formatter_query_list_prefers_plain_text_without_embed() -> None:
+    formatter = DiscordFormatter(embed_enabled=True, components_enabled=False)
+    rendered = RenderedResponse.model_validate(
+        {
+            "text_fallback": "很长很长的列表文本",
+            "blocks": [{"type": "paragraph", "content": {"text": "很长很长的列表文本"}}],
+            "meta": {"skill_name": "QuerySkill"},
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v1",
+                "params": {
+                    "total": 2,
+                    "records": [
+                        {
+                            "fields_text": {
+                                "案号": "A-001",
+                                "委托人": "甲方",
+                                "对方当事人": "乙方",
+                                "开庭日": "2026-03-01 09:00",
+                                "案件状态": "进行中",
+                            }
+                        },
+                        {
+                            "fields_text": {
+                                "案号": "A-002",
+                                "委托人": "丙方",
+                                "对方当事人": "丁方",
+                                "开庭日": "2026-03-02 10:00",
+                                "案件状态": "待开庭",
+                            }
+                        },
+                    ],
+                },
+            },
+        }
+    )
+
+    payload = formatter.format(rendered)
+
+    assert "查询结果" in payload.text
+    assert "共 2 条" in payload.text
+    assert "**1. A-001**" in payload.text
+    assert "👥 甲方 vs 乙方" in payload.text
+    assert "**2. A-002**" in payload.text
+    assert "\n\n**2. A-002**" in payload.text
+    assert payload.embed is None
+
+
+def test_formatter_query_list_shows_only_five_items_with_navigation_hints() -> None:
+    formatter = DiscordFormatter(embed_enabled=True, components_enabled=False)
+    records = []
+    for idx in range(1, 7):
+        records.append(
+            {
+                "fields_text": {
+                    "案号": f"A-00{idx}",
+                    "委托人": f"甲方{idx}",
+                    "对方当事人": f"乙方{idx}",
+                    "开庭日": f"2026-03-0{idx} 09:00",
+                    "案件状态": "进行中",
+                }
+            }
+        )
+    rendered = RenderedResponse.model_validate(
+        {
+            "text_fallback": "查询结果",
+            "blocks": [{"type": "paragraph", "content": {"text": "查询结果"}}],
+            "meta": {"skill_name": "QuerySkill"},
+            "card_template": {
+                "template_id": "query.list",
+                "version": "v1",
+                "params": {
+                    "total": 12,
+                    "records": records,
+                },
+            },
+        }
+    )
+
+    payload = formatter.format(rendered)
+
+    assert "本次展示 5 条" in payload.text
+    assert "**5. A-005**" in payload.text
+    assert "6. A-006" not in payload.text
+    assert "第6个详情" in payload.text
+    assert "下一页" in payload.text
+
+
 def test_formatter_generates_confirm_cancel_components() -> None:
     formatter = DiscordFormatter(embed_enabled=False, components_enabled=True)
     rendered = RenderedResponse.model_validate(

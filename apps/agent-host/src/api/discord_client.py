@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,112 @@ except Exception:  # pragma: no cover - import guard for environments without di
 
 
 load_dotenv()
+
+
+_CONFIRM_CANCEL_TOKENS = {
+    "确认",
+    "确认删除",
+    "确认创建",
+    "确认修改",
+    "取消",
+    "是",
+    "是的",
+    "ok",
+    "okay",
+    "yes",
+    "no",
+}
+
+_REMINDER_TOKENS = {
+    "提醒",
+    "待办",
+    "提醒列表",
+    "我的提醒",
+    "取消提醒",
+    "日历",
+    "别忘了",
+    "记得",
+    "自动提醒",
+    "自动化提醒",
+    "定时提醒",
+    "周期提醒",
+    "每天",
+    "每日",
+    "每周",
+    "工作日",
+    "cron",
+}
+
+_QUERY_OPERATION_TOKENS = {
+    "查",
+    "查询",
+    "找",
+    "搜索",
+    "检索",
+}
+
+_WRITE_OPERATION_TOKENS = {
+    "新增",
+    "新建",
+    "创建",
+    "添加",
+    "录入",
+    "登记",
+    "更新",
+    "修改",
+    "改为",
+    "改成",
+    "删除",
+    "删掉",
+    "移除",
+    "去掉",
+    "关闭",
+    "结案",
+}
+
+_DOMAIN_OBJECT_HINTS = {
+    "案件",
+    "案号",
+    "项目",
+    "记录",
+    "表格",
+    "台账",
+    "开庭",
+    "庭审",
+    "当事人",
+    "委托人",
+    "法院",
+    "主办",
+    "协办",
+    "进展",
+    "状态",
+    "合同",
+    "招投标",
+    "飞书",
+}
+
+_PAGINATION_TOKENS = {
+    "下一页",
+    "继续",
+    "更多",
+    "下页",
+}
+
+_ORDINAL_DETAIL_PATTERN = re.compile(r"第\s*(\d+|[一二三四五六七八九十百]+)\s*(个|条)?\s*(详情|明细|记录|案件)?")
+
+_CLEAR_HISTORY_COMMANDS = {
+    "清空会话",
+    "清空聊天记录",
+    "删除聊天记录",
+    "重置会话",
+    "重置记忆",
+    "清除记忆",
+    "清空记忆",
+    "reset",
+    "/reset",
+    "clear",
+    "/clear",
+}
 
 
 def _is_guild_allowed(event: DiscordMessageEvent, config: DiscordSettings) -> bool:
@@ -82,7 +189,7 @@ def extract_user_text(event: DiscordMessageEvent, *, bot_user_id: str, require_m
     raw_text = str(event.text or "").strip()
     if not raw_text:
         return ""
-    if event.chat_type == "group" and require_mention and bot_user_id:
+    if event.chat_type == "group" and bot_user_id:
         return strip_bot_mention(raw_text, bot_user_id)
     return raw_text
 
@@ -109,12 +216,76 @@ def _split_text_chunks(text: str, *, chunk_limit: int, max_lines: int) -> list[s
     return [chunk for chunk in chunks if chunk.strip()]
 
 
+def is_feishu_operation_query(text: str) -> bool:
+    """判断是否为应进入 Feishu 业务链路的操作请求。"""
+
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    normalized = raw.lower().replace(" ", "")
+
+    if normalized in _CONFIRM_CANCEL_TOKENS:
+        return True
+
+    if any(token in normalized for token in _REMINDER_TOKENS):
+        return True
+
+    if any(token in normalized for token in _PAGINATION_TOKENS):
+        return True
+
+    if _ORDINAL_DETAIL_PATTERN.search(raw):
+        return True
+
+    if any(token in normalized for token in _WRITE_OPERATION_TOKENS):
+        return True
+
+    has_verb = any(token in normalized for token in _QUERY_OPERATION_TOKENS)
+    has_domain_hint = any(token in normalized for token in _DOMAIN_OBJECT_HINTS)
+    if has_verb and has_domain_hint:
+        return True
+
+    return False
+
+
+def is_clear_history_command(text: str) -> bool:
+    """判断是否为清空会话命令。"""
+
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+
+    normalized = raw.lower().replace(" ", "")
+    normalized = normalized.strip("。.!！？?,，")
+    return normalized in _CLEAR_HISTORY_COMMANDS
+
+
 def _extract_callback_action(custom_id: str) -> str:
     raw = str(custom_id or "").strip()
     prefix = "omni:action:"
     if raw.startswith(prefix):
         return raw[len(prefix) :].strip()
     return ""
+
+
+def _reply_kwargs(
+    chunk: str,
+    *,
+    include_rich: bool,
+    embed: Any = None,
+    view: Any = None,
+) -> dict[str, Any]:
+    """构建 message.reply 参数，避免重复 reference 传参。"""
+
+    kwargs: dict[str, Any] = {
+        "content": chunk,
+        "mention_author": False,
+    }
+    if include_rich:
+        if embed is not None:
+            kwargs["embed"] = embed
+        if view is not None:
+            kwargs["view"] = view
+    return kwargs
 
 
 def _discord_button_style(style: str) -> Any:
@@ -220,12 +391,30 @@ if discord is not None:
                 channel_type="discord",
             )
 
+            if event.chat_type == "p2p" and is_clear_history_command(text):
+                self._runtime.agent_core.clear_user_conversation(session_user_id)
+                await message.reply(
+                    "已清空当前私聊会话记忆。Discord 聊天窗口中的历史消息请手动删除。",
+                    mention_author=False,
+                )
+                return
+
+            is_operation = is_feishu_operation_query(text)
+            user_profile = {
+                "channel_type": "discord",
+                "allow_open_domain_chat": True,
+                "mode": "feishu_operation" if is_operation else "open_chat",
+                "raw_user_id": event.sender_id,
+            }
+
             try:
                 reply = await self._runtime.agent_core.handle_message(
                     user_id=session_user_id,
                     text=text,
                     chat_id=event.channel_id,
                     chat_type=event.chat_type,
+                    user_profile=user_profile,
+                    force_chitchat=not is_operation,
                 )
                 rendered = RenderedResponse.from_outbound(
                     reply.get("outbound") if isinstance(reply, dict) else None,
@@ -320,16 +509,12 @@ if discord is not None:
             view_obj = _ActionView(payload.components) if payload.components else None
 
             for index, chunk in enumerate(chunks):
-                kwargs = {
-                    "content": chunk,
-                    "mention_author": False,
-                }
-                if index == 0:
-                    kwargs["reference"] = message
-                    if embed_obj is not None:
-                        kwargs["embed"] = embed_obj
-                    if view_obj is not None:
-                        kwargs["view"] = view_obj
+                kwargs = _reply_kwargs(
+                    chunk,
+                    include_rich=index == 0,
+                    embed=embed_obj,
+                    view=view_obj,
+                )
                 await message.reply(**kwargs)
 
 else:

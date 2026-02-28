@@ -662,6 +662,7 @@ class AgentOrchestrator:
         file_markdown: str = "",
         file_provider: str = "none",
         status_emitter: ProcessingStatusEmitter | None = None,
+        force_chitchat: bool = False,
     ) -> dict[str, Any]:
         """
         处理用户消息
@@ -766,7 +767,21 @@ class AgentOrchestrator:
                     should_execute = True
                     intent: IntentResult | None = None
 
-                    if l0_decision.force_skill:
+                    if force_chitchat:
+                        usage_skill = "ChitchatSkill"
+                        intent = IntentResult(
+                            skills=[
+                                SkillMatch(
+                                    name="ChitchatSkill",
+                                    score=1.0,
+                                    reason="forced by caller",
+                                )
+                            ],
+                            is_chain=False,
+                            requires_llm_confirm=False,
+                            method="channel_policy",
+                        )
+                    elif l0_decision.force_skill:
                         usage_skill = l0_decision.force_skill
                         intent = IntentResult(
                             skills=[
@@ -1051,8 +1066,30 @@ class AgentOrchestrator:
             )
         except Exception:
             pass
-        
+
         return reply
+
+    def clear_user_conversation(self, user_id: str) -> None:
+        """清空指定用户的会话上下文与状态。"""
+
+        if not user_id:
+            return
+
+        try:
+            if hasattr(self._sessions, "clear_user"):
+                self._sessions.clear_user(user_id)
+        except Exception as exc:
+            logger.warning("清理会话消息失败: %s", exc)
+
+        try:
+            self._context_manager.clear(user_id)
+        except Exception as exc:
+            logger.warning("清理上下文失败: %s", exc)
+
+        try:
+            self._state_manager.clear_user(user_id)
+        except Exception as exc:
+            logger.warning("清理会话状态失败: %s", exc)
 
     async def _emit_processing_status(
         self,

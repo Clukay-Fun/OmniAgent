@@ -53,19 +53,31 @@ class DiscordFormatter:
         self._components_enabled = bool(components_enabled)
 
     def format(self, rendered: RenderedResponse) -> DiscordResponsePayload:
-        text = str(rendered.text_fallback or "").strip() or "请稍后重试。"
+        text = self._build_text_payload(rendered)
         embed = self._build_embed(rendered) if self._embed_enabled and self._should_use_embed(rendered) else None
         components = self._build_components(rendered) if self._components_enabled else []
         return DiscordResponsePayload(text=text, embed=embed, components=components)
 
+    def _build_text_payload(self, rendered: RenderedResponse) -> str:
+        template = rendered.card_template
+        if template is not None and str(template.template_id or "").strip() == "query.list":
+            compact = self._build_query_list_text(template.params if isinstance(template.params, Mapping) else {})
+            if compact:
+                return compact
+        return str(rendered.text_fallback or "").strip() or "请稍后重试。"
+
     def _should_use_embed(self, rendered: RenderedResponse) -> bool:
         skill_name = str(rendered.meta.get("skill_name") or "").strip()
-        if skill_name == "QuerySkill":
-            return True
         template_id = str(getattr(rendered.card_template, "template_id", "") or "").strip()
-        if template_id in {"query.list", "query.detail", "error.notice", "delete.success", "delete.cancelled"}:
+        if template_id == "query.list":
+            return False
+        if template_id in {"query.detail", "error.notice", "delete.success", "delete.cancelled"}:
             return True
-        return any(block.type in {"heading", "kv_list", "bullet_list"} for block in rendered.blocks)
+        if any(block.type in {"heading", "kv_list", "bullet_list"} for block in rendered.blocks):
+            return True
+        if skill_name == "QuerySkill":
+            return False
+        return False
 
     def _build_embed(self, rendered: RenderedResponse) -> DiscordEmbedPayload | None:
         title = self._pick_embed_title(rendered)
@@ -198,3 +210,98 @@ class DiscordFormatter:
             if callback:
                 return callback
         return str(fallback or "").strip()
+
+    def _build_query_list_text(self, params: Mapping[str, Any]) -> str:
+        records_raw = params.get("records")
+        records = records_raw if isinstance(records_raw, list) else []
+        if not records:
+            return ""
+
+        total = int(params.get("total") or len(records))
+        display_limit = 5
+        shown_records = records[:display_limit]
+        lines: list[str] = [f"🔎 **查询结果**（共 {total} 条，本次展示 {len(shown_records)} 条）", ""]
+        current_length = sum(len(item) for item in lines)
+
+        for index, record in enumerate(shown_records, start=1):
+            if not isinstance(record, Mapping):
+                continue
+            fields = self._record_fields(record)
+            record_title = self._truncate(
+                self._pick_field(fields, ["案号", "项目 ID", "项目ID", "项目号", "合同编号", "record_id"]) or f"记录{index}",
+                28,
+            )
+            party_left = self._truncate(
+                self._pick_field(fields, ["委托人", "客户名称", "投标项目名称", "任务描述", "标题"]) or "-",
+                24,
+            )
+            party_right = self._truncate(
+                self._pick_field(fields, ["对方当事人", "乙方", "招标方", "请求协助人"]),
+                24,
+            )
+            event_time = self._truncate(
+                self._pick_field(fields, ["开庭日", "开庭时间", "截止时间", "结束日期", "投标截止日", "提醒时间"]) or "-",
+                20,
+            )
+            status = self._truncate(
+                self._pick_field(fields, ["案件状态", "状态", "进度", "合同状态", "阶段"]) or "-",
+                16,
+            )
+            court = self._truncate(
+                self._pick_field(fields, ["审理法院", "法院", "承办单位"]),
+                18,
+            )
+
+            line1 = f"**{index}. {record_title}**"
+            line2 = f"　👥 {party_left}"
+            if party_right:
+                line2 = f"{line2} vs {party_right}"
+            line3 = f"　📅 {event_time}"
+            line4 = f"　📌 {status}"
+            if court:
+                line4 = f"{line4} ｜ ⚖ {court}"
+
+            candidate_add = len(line1) + len(line2) + len(line3) + len(line4) + 4
+            if current_length + candidate_add > 1700:
+                remaining = max(len(shown_records) - index + 1, 0)
+                if remaining > 0:
+                    lines.append(f"…其余 {remaining} 条可回复“第N个详情”查看")
+                break
+
+            lines.append(line1)
+            lines.append(line2)
+            lines.append(line3)
+            lines.append(line4)
+            lines.append("")
+            current_length += candidate_add
+
+        hidden_in_page = max(len(records) - len(shown_records), 0)
+        if hidden_in_page > 0:
+            lines.append(f"本页其余 {hidden_in_page} 条可回复“第N个详情”查看（如：第6个详情）。")
+        if total > len(shown_records):
+            lines.append("➡ 回复“下一页”继续查看后续结果。")
+        lines.append("ℹ 也可回复“第N个详情”查看单条详情。")
+
+        return "\n".join(line for line in lines if line is not None).strip()
+
+    def _record_fields(self, record: Mapping[str, Any]) -> Mapping[str, Any]:
+        fields_text = record.get("fields_text")
+        if isinstance(fields_text, Mapping):
+            return fields_text
+        fields = record.get("fields")
+        if isinstance(fields, Mapping):
+            return fields
+        return {}
+
+    def _pick_field(self, fields: Mapping[str, Any], keys: list[str]) -> str:
+        for key in keys:
+            value = str(fields.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _truncate(self, text: str, max_chars: int) -> str:
+        normalized = str(text or "").strip()
+        if max_chars <= 0 or len(normalized) <= max_chars:
+            return normalized
+        return f"{normalized[: max_chars - 1]}…"

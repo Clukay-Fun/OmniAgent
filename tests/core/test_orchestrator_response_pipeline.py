@@ -115,6 +115,30 @@ def test_resolve_assistant_name_reads_from_skills_config() -> None:
     assert _resolve_assistant_name({}) == "小敬"
 
 
+def test_clear_user_conversation_clears_session_context_and_state() -> None:
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+
+    calls: dict[str, str] = {}
+
+    orchestrator._sessions = SimpleNamespace(
+        clear_user=lambda user_id: calls.setdefault("session", user_id),
+    )
+    orchestrator._context_manager = SimpleNamespace(
+        clear=lambda user_id: calls.setdefault("context", user_id),
+    )
+    orchestrator._state_manager = SimpleNamespace(
+        clear_user=lambda user_id: calls.setdefault("state", user_id),
+    )
+
+    orchestrator.clear_user_conversation("discord_user_1")
+
+    assert calls == {
+        "session": "discord_user_1",
+        "context": "discord_user_1",
+        "state": "discord_user_1",
+    }
+
+
 def test_handle_message_always_returns_outbound_structure() -> None:
     orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
     orchestrator._assistant_name = "管道助手"

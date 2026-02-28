@@ -11,7 +11,7 @@ routing:
 
 skills:
   query:
-    timeout_seconds: 15
+    timeout_seconds: 25
   create:
     timeout_seconds: 30
   update:
