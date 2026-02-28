@@ -68,6 +68,49 @@ def test_root_run_dev_agent_ws_watch_delegates_to_watch_runner(monkeypatch) -> N
     assert captured["repo_root"] == REPO_ROOT
 
 
+def test_root_run_dev_agent_discord_starts_discord_client(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_discord")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: str, check: bool):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        assert check is False
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-discord"])
+    monkeypatch.setattr(module.sys, "executable", "/usr/bin/python3")
+
+    rc = module.main()
+    assert rc == 0
+
+    assert captured["command"] == ["/usr/bin/python3", "-m", "src.api.discord_client"]
+    assert captured["cwd"] == str(REPO_ROOT / "apps" / "agent-host")
+
+
+def test_root_run_dev_agent_discord_watch_delegates_to_watch_runner(monkeypatch) -> None:
+    module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_discord_watch")
+
+    captured: dict[str, object] = {}
+
+    def fake_watch_runner(repo_root: Path) -> int:
+        captured["repo_root"] = repo_root
+        return 0
+
+    monkeypatch.setattr(module, "_run_agent_discord_watch", fake_watch_runner)
+    monkeypatch.setattr(module.sys, "argv", ["run_dev.py", "agent-discord-watch"])
+
+    rc = module.main()
+    assert rc == 0
+    assert captured["repo_root"] == REPO_ROOT
+
+
 def test_root_run_dev_card_preview_passes_send_to_me(monkeypatch) -> None:
     module = _load_module(REPO_ROOT / "run_dev.py", "root_run_dev_card_preview")
 

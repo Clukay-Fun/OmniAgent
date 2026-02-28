@@ -41,6 +41,22 @@ feishu:
     use_reply_mode: true
 
 # ------------------------------------------------------------
+# Discord 机器人配置
+# ------------------------------------------------------------
+discord:
+  enabled: ${DISCORD_ENABLED:-false}
+  bot_token: ${DISCORD_BOT_TOKEN:-}
+  require_mention: ${DISCORD_REQUIRE_MENTION:-true}
+  allow_bots: ${DISCORD_ALLOW_BOTS:-false}
+  private_chat_only: ${DISCORD_PRIVATE_CHAT_ONLY:-false}
+  text_chunk_limit: ${DISCORD_TEXT_CHUNK_LIMIT:-1800}
+  max_lines_per_message: ${DISCORD_MAX_LINES_PER_MESSAGE:-30}
+  embed_enabled: ${DISCORD_EMBED_ENABLED:-true}
+  components_enabled: ${DISCORD_COMPONENTS_ENABLED:-true}
+  guild_allowlist: []
+  allowed_user_ids: []
+
+# ------------------------------------------------------------
 # MCP Server 配置
 # ------------------------------------------------------------
 mcp:

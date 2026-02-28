@@ -47,6 +47,22 @@ class FeishuSettings(BaseModel):
     message: FeishuMessageSettings = Field(default_factory=FeishuMessageSettings)
 
 
+class DiscordSettings(BaseModel):
+    """Discord 机器人配置"""
+
+    enabled: bool = False
+    bot_token: str = ""
+    require_mention: bool = True
+    allow_bots: bool = False
+    private_chat_only: bool = False
+    text_chunk_limit: int = 1800
+    max_lines_per_message: int = 30
+    embed_enabled: bool = True
+    components_enabled: bool = True
+    guild_allowlist: list[str] = Field(default_factory=list)
+    allowed_user_ids: list[str] = Field(default_factory=list)
+
+
 class MCPRequestSettings(BaseModel):
     timeout: int = 30
     max_retries: int = 2
@@ -406,6 +422,7 @@ class Settings(BaseModel):
     """全局配置聚合根"""
     server: ServerSettings = Field(default_factory=ServerSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
+    discord: DiscordSettings = Field(default_factory=DiscordSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     reminder_scheduler_enabled: bool = False
@@ -510,6 +527,15 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         "FEISHU_BOT_ORG_B_APP_SECRET": ["feishu", "org_b_app_secret"],
         "FEISHU_BOT_VERIFICATION_TOKEN": ["feishu", "verification_token"],
         "FEISHU_BOT_ENCRYPT_KEY": ["feishu", "encrypt_key"],
+        "DISCORD_ENABLED": ["discord", "enabled"],
+        "DISCORD_BOT_TOKEN": ["discord", "bot_token"],
+        "DISCORD_REQUIRE_MENTION": ["discord", "require_mention"],
+        "DISCORD_ALLOW_BOTS": ["discord", "allow_bots"],
+        "DISCORD_PRIVATE_CHAT_ONLY": ["discord", "private_chat_only"],
+        "DISCORD_TEXT_CHUNK_LIMIT": ["discord", "text_chunk_limit"],
+        "DISCORD_MAX_LINES_PER_MESSAGE": ["discord", "max_lines_per_message"],
+        "DISCORD_EMBED_ENABLED": ["discord", "embed_enabled"],
+        "DISCORD_COMPONENTS_ENABLED": ["discord", "components_enabled"],
         "MCP_SERVER_BASE": ["mcp", "base_url"],
         "POSTGRES_DSN": ["postgres", "dsn"],
         "REMINDER_SCHEDULER_ENABLED": ["reminder_scheduler_enabled"],
