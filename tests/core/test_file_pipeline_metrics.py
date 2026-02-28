@@ -118,3 +118,6 @@ def test_file_pipeline_media_guidance_and_status_text() -> None:
     assert file_pipeline_module.build_processing_status_text("audio").startswith("正在识别语音内容")
     assert "图片识别失败" in file_pipeline_module.build_file_unavailable_guidance("ocr_timeout")
     assert file_pipeline_module.build_file_unavailable_guidance("asr_unconfigured") == "语音识别失败，请发送文字。"
+    assert "连接失败" in file_pipeline_module.build_file_unavailable_guidance("extractor_connect_failed")
+    assert "网络异常" in file_pipeline_module.build_file_unavailable_guidance("extractor_network_error")
+    assert "服务异常" in file_pipeline_module.build_file_unavailable_guidance("extractor_provider_error")

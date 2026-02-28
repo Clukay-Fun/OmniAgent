@@ -18,34 +18,3 @@ __all__ = [
     "ExtractorResult",
     "ExternalFileExtractor",
 ]
-
-# region 数据结构定义
-class ExtractorRequest:
-    """
-    文件提取请求的数据结构
-
-    功能:
-        - 定义提取请求所需的参数
-    """
-    pass
-
-class ExtractorResult:
-    """
-    文件提取结果的数据结构
-
-    功能:
-        - 定义提取结果的返回格式
-    """
-    pass
-# endregion
-
-# region 外部文件提取器接口
-class ExternalFileExtractor:
-    """
-    外部文件提取器的接口
-
-    功能:
-        - 提供提取文件的抽象方法
-    """
-    pass
-# endregion

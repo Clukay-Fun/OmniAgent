@@ -16,9 +16,9 @@ from src.utils.feishu_api import delete_message_reaction, set_message_reaction
 logger = logging.getLogger(__name__)
 
 _REACTION_BY_STATUS: dict[ProcessingStatus, str] = {
-    ProcessingStatus.THINKING: "OK",
-    ProcessingStatus.SEARCHING: "OK",
-    ProcessingStatus.DONE: "OK",
+    ProcessingStatus.THINKING: "HOURGLASS",
+    ProcessingStatus.SEARCHING: "MAG",
+    ProcessingStatus.DONE: "DONE",
 }
 
 class FeishuReactionStatusEmitter:

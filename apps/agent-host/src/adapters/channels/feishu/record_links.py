@@ -6,6 +6,10 @@
     - 提取记录ID
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 def build_record_url(table_id: str | None, record_id: str | None, raw_url: str | None = None) -> str:
     """
     根据给定的表ID、记录ID和原始URL构建记录的URL

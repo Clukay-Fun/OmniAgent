@@ -4,6 +4,10 @@
     - 根据表类型和字段信息推断缺失字段
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 class ActionSmartEngine:
     """
     逻辑层智能推理引擎，用于写操作

@@ -170,10 +170,10 @@ render_templates:
             header_title: 案件详情
             append_detail_button: false
             header_fields:
-              - template: "OK 案件项目总库详情"
+              - template: "✅ 案件项目总库详情"
             sections:
               - name: 基础信息
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: project_id, label: 项目 ID, show_empty: true}
                   - {name: case_no, label: 案号, format: case_no_multiline, show_empty: true}
@@ -184,7 +184,7 @@ render_templates:
                   - {key: case_status, label: 案件状态, source_keys: [案件状态], show_empty: true}
                   - {name: urgency, label: 重要紧急程度, format: urgency_badge, show_empty: true}
               - name: 当事人与承办
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {name: title_left, label: 委托人及联系方式, show_empty: true}
                   - {name: title_right, label: 对方当事人, show_empty: true}
@@ -193,7 +193,7 @@ render_templates:
                   - {name: owner, label: 主办律师, show_empty: true}
                   - {name: co_owner, label: 协办律师, show_empty: true}
               - name: 关键日期
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: hearing_date, label: 开庭日, format: date_countdown, show_empty: true}
                   - {key: jurisdiction_deadline, label: 管辖权异议截止日, format: date_countdown, show_empty: true}
@@ -202,7 +202,7 @@ render_templates:
                   - {key: counterclaim_deadline, label: 反诉截止日, format: date_countdown, show_empty: true}
                   - {key: appeal_deadline, label: 上诉截止日, format: date_countdown, show_empty: true}
               - name: 办理进展
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: progress, label: 进展, format: progress_timeline, show_empty: true}
                   - {key: todo, label: 待做事项, show_empty: true}
@@ -223,7 +223,7 @@ render_templates:
             append_detail_button: false
           T3A:
             list_fields:
-              - {key: _hearing_line, label: "", format: composite, template: "OK {project_id} | {hearing_date} 开庭", fallback: "OK {project_id}"}
+              - {key: _hearing_line, label: "", format: composite, template: "✅ {project_id} | {hearing_date} 开庭", fallback: "✅ {project_id}"}
               - {key: _party_line, label: "", format: composite, template: "{client} vs {opponent}", fallback: "{client}"}
               - {key: _info_line, label: "", format: composite, template: "法院 {court} | 主办 {owner}"}
           T3B:
@@ -378,10 +378,10 @@ render_templates:
         styles:
           RW-T1:
             header_fields:
-              - template: "OK 团队成员工作总览（只读）"
+              - template: "✅ 团队成员工作总览（只读）"
             sections:
               - name: 任务基础
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: record_id, label: 记录 ID, show_empty: true}
                   - {key: task_desc, label: 任务描述, show_empty: true}
@@ -389,19 +389,19 @@ render_templates:
                   - {key: task_status, label: 状态, show_empty: true}
                   - {key: urgency, label: 重要紧急程度, format: urgency_badge, show_empty: true}
               - name: 协作信息
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: creator, label: 发起人, show_empty: true}
                   - {key: helper, label: 请求协助人, show_empty: true}
                   - {key: linked_case, label: 关联案件项目, show_empty: true}
               - name: 时间节点
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: created_at, label: 创建时间, show_empty: true}
                   - {key: deadline, label: 截止时间, format: date_countdown, show_empty: true}
                   - {key: completed_at, label: 完成时间, show_empty: true}
               - name: 进度与附件
-                icon: OK
+                icon: ✅
                 list_fields:
                   - {key: task_progress, label: 进度, format: progress_timeline, show_empty: true}
                   - {key: attachment, label: 附件, show_empty: true}
@@ -581,12 +581,12 @@ render_templates:
       unconfigured: 未配置
       rejected: 已拒绝
     status_icons:
-      processing: OK
-      success: OK
-      failed: OK
-      disabled: OK
-      unconfigured: OK
-      rejected: OK
+      processing: ⏳
+      success: ✅
+      failed: ❌
+      disabled: ⚠️
+      unconfigured: ⚠️
+      rejected: ⚠️
     provider_labels:
       none: 未使用外部解析
       mineru: MinerU

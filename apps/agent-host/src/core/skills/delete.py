@@ -204,7 +204,7 @@ class DeleteSkill(BaseSkill):
                 },
                 message="等待用户确认删除",
                 reply_text=(
-                    f"OK 确认删除\n\n"
+                    f"⚠️ 请确认删除\n\n"
                     f"您即将删除案件：{planner_pending.get('case_no', '未知案号')}\n\n"
                     f"此操作不可撤销，请回复'确认删除'以继续。"
                 ),
@@ -254,7 +254,7 @@ class DeleteSkill(BaseSkill):
         case_no = fields.get("案号", "未知案号")
         
         reply_text = (
-            f"OK 确认删除\n\n"
+            f"⚠️ 请确认删除\n\n"
             f"您即将删除案件：{case_no}\n\n"
             f"此操作不可撤销，请回复'确认删除'以继续。"
         )

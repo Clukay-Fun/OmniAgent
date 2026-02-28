@@ -246,7 +246,7 @@ class ActionEngine:
                     tip = f"建议同步确认字段：{field_label}"
                     if reason:
                         tip = f"{tip}（{reason}）"
-                    lines.append(f"  - OK {tip}")
+                    lines.append(f"  - ⚠️ {tip}")
         return lines
 
     def _build_delete_lines(self, payload: Mapping[str, Any]) -> list[str]:

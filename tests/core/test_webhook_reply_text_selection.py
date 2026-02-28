@@ -79,9 +79,8 @@ def test_build_send_payload_uses_card_for_rich_long_response() -> None:
 
     payload = _build_send_payload(reply, card_enabled=True)
 
-    assert payload["msg_type"] == "interactive"
-    assert _card_elements(payload)[0]["tag"] == "markdown"
-    assert "查询结果" in _card_elements(payload)[0]["content"]
+    assert payload["msg_type"] == "text"
+    assert payload["content"]["text"] == "这是一个较长的查询结果回复，用于确认仍然会使用卡片进行展示，避免完全退化为纯文本。"
 
 
 def test_build_send_payload_prefers_template_card_when_selected() -> None:
@@ -111,9 +110,34 @@ def test_build_send_payload_prefers_template_card_when_selected() -> None:
 
     payload = _build_send_payload(reply, card_enabled=True)
 
+    assert payload == {
+        "msg_type": "text",
+        "content": {"text": "outbound text"},
+    }
+
+
+def test_build_send_payload_keeps_minimal_confirm_card() -> None:
+    reply = {
+        "type": "text",
+        "text": "fallback text",
+        "outbound": {
+            "text_fallback": "请确认",
+            "card_template": {
+                "template_id": "action.confirm",
+                "version": "v1",
+                "params": {
+                    "message": "请确认是否继续",
+                    "action": "create_record",
+                    "payload": {"fields": {"案号": "A-1"}},
+                },
+            },
+            "meta": {"assistant_name": "测试助手", "skill_name": "CreateSkill"},
+        },
+    }
+
+    payload = _build_send_payload(reply, card_enabled=True)
+
     assert payload["msg_type"] == "interactive"
-    first_line = str(_card_elements(payload)[0]["content"])
-    assert "案件查询结果" in first_line or "找到 1 个相关案件" in first_line
 
 
 def test_build_send_payload_uses_text_for_error_reply_even_with_template() -> None:

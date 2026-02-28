@@ -70,6 +70,12 @@ def build_file_unavailable_guidance(reason: str = "") -> str:
         return "已收到文件，但解析服务地址配置可能不正确，请稍后再试。"
     if reason_key.startswith("extractor_timeout"):
         return "已收到文件，但解析超时，请稍后重试或补充文字说明。"
+    if reason_key.startswith("extractor_connect_failed"):
+        return "已收到文件，但解析服务连接失败，请稍后重试。"
+    if reason_key.startswith("extractor_network_error"):
+        return "已收到文件，但解析服务网络异常，请稍后重试。"
+    if reason_key.startswith("extractor_provider_error"):
+        return "已收到文件，但解析服务异常，请稍后重试或补充文字说明。"
     if reason_key.startswith("extractor_rate_limited"):
         return "已收到文件，但解析服务当前较忙，请稍后重试。"
     if reason_key.startswith("cost_circuit_breaker_open"):

@@ -26,7 +26,7 @@ from src.adapters.channels.feishu.template_runtime import (
 
 
 _ACTION_ENGINE = ActionEngine()
-_OK_MARKER = "OK"
+_OK_MARKER = "✅"
 _CASE_T3_STYLES = {"T3", "T3A", "T3B", "T3C"}
 _CASE_T5_STYLES = {"T5", "T5A", "T5B", "T5C"}
 

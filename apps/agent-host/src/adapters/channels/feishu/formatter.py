@@ -50,6 +50,7 @@ class FeishuFormatter:
         self._card_enabled = card_enabled
         self._template_registry = CardTemplateRegistry()
         self._short_text_max_chars = 36
+        self._minimal_card_template_ids = {"action.confirm", "delete.confirm", "update.guide"}
 
     def format(self, rendered: RenderedResponse, *, prefer_card: bool = False) -> Dict[str, Any]:
         """
@@ -65,38 +66,38 @@ class FeishuFormatter:
         if not self._card_enabled:
             return self._text_payload(rendered)
 
-        if not prefer_card and self._should_force_text(rendered):
+        if not self._should_render_minimal_card(rendered):
             return self._text_payload(rendered)
 
-        if rendered.card_template is not None:
-            template_id = rendered.card_template.template_id
-            version = resolve_template_version(template_id, rendered.card_template.version)
-            params = rendered.card_template.params
-            try:
-                template_card = self._build_template_card(template_id, version, params)
-                if template_card is not None:
-                    record_card_template(f"{template_id}.{version}", "success")
-                    return template_card
-                record_card_template(f"{template_id}.{version}", "empty")
-                return self._text_payload(rendered)
-            except (TemplateLookupError, TemplateValidationError, CardBuildError, ValueError, TypeError) as exc:
-                logger.warning(
-                    "Feishu template render failed, fall back to text: %s",
-                    exc,
-                    extra={"event_code": "feishu.card_template.render_failed", "template_id": template_id, "version": version},
-                )
-                record_card_template(f"{template_id}.{version}", "failed")
-                return self._text_payload(rendered)
+        template = rendered.card_template
+        if template is None:
+            return self._text_payload(rendered)
 
+        template_id = template.template_id
+        version = resolve_template_version(template_id, template.version)
+        params = template.params
         try:
-            card_payload = self._build_card(rendered)
-        except CardBuildError as exc:
-            logger.warning("Feishu card build failed, fall back to text: %s", exc)
+            template_card = self._build_template_card(template_id, version, params)
+            if template_card is not None:
+                record_card_template(f"{template_id}.{version}", "success")
+                return template_card
+            record_card_template(f"{template_id}.{version}", "empty")
+            return self._text_payload(rendered)
+        except (TemplateLookupError, TemplateValidationError, CardBuildError, ValueError, TypeError) as exc:
+            logger.warning(
+                "Feishu template render failed, fall back to text: %s",
+                exc,
+                extra={"event_code": "feishu.card_template.render_failed", "template_id": template_id, "version": version},
+            )
+            record_card_template(f"{template_id}.{version}", "failed")
             return self._text_payload(rendered)
 
-        if card_payload is None:
-            return self._text_payload(rendered)
-        return card_payload
+    def _should_render_minimal_card(self, rendered: RenderedResponse) -> bool:
+        template = rendered.card_template
+        if template is None:
+            return False
+        template_id = str(template.template_id or "").strip()
+        return template_id in self._minimal_card_template_ids
 
     def _should_force_text(self, rendered: RenderedResponse) -> bool:
         """

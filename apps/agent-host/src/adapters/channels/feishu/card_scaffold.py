@@ -5,6 +5,10 @@
     - 构建纯文本消息
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 def build_card_payload(
     elements: list[dict[str, Any]],
     wrapper: dict[str, Any] | None = None,

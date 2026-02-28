@@ -1,7 +1,7 @@
 """
 描述: 飞书云文档搜索工具
 主要功能:
-    - 关键词搜索云文档 (Wiki, Doc, Sheet, Bitable)
+    - 关键词搜索云文档 (Wiki, Doc, Docx)
     - 支持指定文件夹范围
 """
 
@@ -26,6 +26,11 @@ class DocSearchTool(BaseTool):
     name = "feishu.v1.doc.search"
     description = "Search Feishu documents by keyword."
 
+    _ALLOWED_DOC_TYPES = {"doc", "docx", "wiki"}
+    _DOC_TYPE_ALIASES = {
+        "wiki_doc": "wiki",
+    }
+
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         """
         执行搜索
@@ -43,7 +48,7 @@ class DocSearchTool(BaseTool):
         payload: dict[str, Any] = {
             "search_key": keyword,
             "count": limit,
-            "doc_types": ["doc", "docx", "sheet", "bitable"],
+            "doc_types": ["doc", "docx", "wiki"],
         }
         if folder_token:
             payload["folder_tokens"] = [folder_token]
@@ -61,12 +66,14 @@ class DocSearchTool(BaseTool):
         type_path = {
             "doc": "docs",
             "docx": "docx",
-            "sheet": "sheets",
-            "bitable": "base",
+            "wiki": "wiki",
         }
         for item in items:
             doc_token = item.get("docs_token") or item.get("doc_token")
-            doc_type = item.get("docs_type") or item.get("doc_type")
+            raw_doc_type = str(item.get("docs_type") or item.get("doc_type") or "").strip().lower()
+            doc_type = self._DOC_TYPE_ALIASES.get(raw_doc_type, raw_doc_type)
+            if doc_type not in self._ALLOWED_DOC_TYPES:
+                continue
             title = item.get("title") or ""
             preview = item.get("preview") or ""
             if preview and len(preview) > settings.doc.search.preview_length:

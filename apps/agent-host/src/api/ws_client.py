@@ -33,7 +33,9 @@ from src.adapters.channels.feishu.skills.bitable_writer import BitableWriter
 from src.api.chunk_assembler import ChunkAssembler
 from src.api.conversation_scope import build_session_key
 from src.api.file_pipeline import (
+    build_ocr_completion_text,
     build_file_unavailable_guidance,
+    build_processing_status_text,
     is_file_pipeline_message,
     resolve_file_markdown,
 )
@@ -143,6 +145,27 @@ async def handle_message_async(
         file_reason = ""
         first_attachment = attachments[0] if attachments else None
         direct_reply_text = ""
+        ocr_completion_text = ""
+
+        if (
+            message_type in {"image", "audio"}
+            and attachments
+            and bool(getattr(attachments[0], "accepted", False))
+        ):
+            try:
+                await send_reply(
+                    chat_id,
+                    "text",
+                    {"text": build_processing_status_text(message_type)},
+                    message_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "发送长连接多模态处理中提示失败: %s",
+                    exc,
+                    extra={"event_code": "ws.reply.media_status_failed"},
+                )
+
         if attachments:
             resolved = await resolve_file_markdown(
                 attachments=attachments,
@@ -159,27 +182,12 @@ async def handle_message_async(
             if not file_reason and first_attachment is not None:
                 file_reason = str(getattr(first_attachment, "reject_reason", "") or "").strip()
             if guidance and not file_markdown and message_type in {"file", "audio", "image"}:
-                if bool(getattr(settings.reply, "card_enabled", True)):
-                    reply = _build_upload_result_reply(
-                        guidance_text=guidance,
-                        message_type=message_type,
-                        provider=file_provider,
-                        reason_code=file_reason,
-                        attachment=first_attachment,
-                    )
-                    payload = _build_send_payload(reply, card_enabled=True, prefer_card=True)
-                    msg_type = str(payload.get("msg_type") or "text")
-                    if msg_type == "interactive":
-                        card_payload = payload.get("card")
-                        content = dict(card_payload) if isinstance(card_payload, dict) else {}
-                    else:
-                        msg_type = "text"
-                        content_payload = payload.get("content")
-                        content = dict(content_payload) if isinstance(content_payload, dict) else {"text": guidance}
-                    await send_reply(chat_id, msg_type, content, message_id)
-                    record_inbound_message("ws", message_type, "processed")
-                    return
                 direct_reply_text = guidance
+            elif message_type == "audio" and file_markdown:
+                text = file_markdown
+                file_markdown = ""
+            elif message_type == "image" and file_markdown:
+                ocr_completion_text = build_ocr_completion_text(file_markdown)
         elif message_type in {"file", "audio", "image"}:
             reason = "extractor_disabled"
             if message_type == "audio":
@@ -187,31 +195,21 @@ async def handle_message_async(
             elif message_type == "image":
                 reason = "ocr_unconfigured"
             guidance = build_file_unavailable_guidance(reason)
-            if bool(getattr(settings.reply, "card_enabled", True)):
-                reply = _build_upload_result_reply(
-                    guidance_text=guidance,
-                    message_type=message_type,
-                    provider="none",
-                    reason_code=reason,
-                    attachment=None,
-                )
-                payload = _build_send_payload(reply, card_enabled=True, prefer_card=True)
-                msg_type = str(payload.get("msg_type") or "text")
-                if msg_type == "interactive":
-                    card_payload = payload.get("card")
-                    content = dict(card_payload) if isinstance(card_payload, dict) else {}
-                else:
-                    msg_type = "text"
-                    content_payload = payload.get("content")
-                    content = dict(content_payload) if isinstance(content_payload, dict) else {"text": guidance}
-                await send_reply(chat_id, msg_type, content, message_id)
-                record_inbound_message("ws", message_type, "processed")
-                return
+            file_reason = reason
             direct_reply_text = guidance
 
         # 调用 Agent 处理
         if direct_reply_text:
-            reply = {"type": "text", "text": direct_reply_text}
+            if message_type in {"file", "audio", "image"}:
+                reply = _build_upload_result_reply(
+                    guidance_text=direct_reply_text,
+                    message_type=message_type,
+                    provider=file_provider,
+                    reason_code=file_reason,
+                    attachment=first_attachment,
+                )
+            else:
+                reply = {"type": "text", "text": direct_reply_text}
         elif message_type in {"file", "audio", "image"} and text.startswith("已收到文件"):
             reply = {"type": "text", "text": text}
         else:
@@ -224,6 +222,8 @@ async def handle_message_async(
                 file_provider=file_provider,
                 status_emitter=create_reaction_status_emitter(settings, message_id),
             )
+            if ocr_completion_text:
+                reply = _prepend_reply_text(reply, ocr_completion_text)
         
         # 发送回复
         outbound = reply.get("outbound") if isinstance(reply, dict) else None
@@ -293,6 +293,120 @@ def _upload_status_from_reason(reason_code: str) -> str:
     return "failed"
 
 
+def _upload_status_text(status: str) -> tuple[str, str, str]:
+    normalized = str(status or "").strip().lower()
+    if normalized == "rejected":
+        return "⚠️", "不符合要求", "⚠️ 文件不符合要求"
+    if normalized == "disabled":
+        return "⚠️", "未开启", "⚠️ 文件解析未开启"
+    if normalized == "unconfigured":
+        return "⚠️", "未配置", "⚠️ 文件解析未配置"
+    if normalized == "success":
+        return "✅", "已完成", "✅ 文件解析成功"
+    return "❌", "失败", "❌ 文件解析失败"
+
+
+def _upload_provider_label(provider: str) -> str:
+    labels = {
+        "none": "未使用外部解析",
+        "mineru": "MinerU",
+        "llm": "LLM Extractor",
+        "ocr": "OCR Provider",
+        "asr": "ASR Provider",
+    }
+    key = str(provider or "none").strip().lower()
+    return labels.get(key, key or "none")
+
+
+def _upload_message_type_label(message_type: str) -> str:
+    labels = {
+        "file": "文件",
+        "image": "图片",
+        "audio": "语音",
+    }
+    key = str(message_type or "").strip().lower()
+    return labels.get(key, "文件")
+
+
+def _upload_reason_text(reason_code: str) -> str:
+    key = str(reason_code or "").strip().lower()
+    if key.endswith("_fail_open"):
+        key = key[: -len("_fail_open")]
+    reason_labels = {
+        "file_too_large": "文件体积超过当前限制",
+        "unsupported_file_type": "文件类型暂不支持",
+        "extractor_disabled": "解析能力已关闭",
+        "extractor_unconfigured": "解析服务尚未配置",
+        "ocr_unconfigured": "OCR 服务尚未配置",
+        "ocr_disabled": "OCR 服务已关闭",
+        "asr_unconfigured": "ASR 服务尚未配置",
+        "asr_disabled": "ASR 服务已关闭",
+        "extractor_timeout": "解析服务响应超时",
+        "extractor_rate_limited": "解析服务限流",
+        "extractor_auth_failed": "解析服务鉴权失败",
+        "extractor_malformed_response": "解析服务响应格式异常",
+        "extractor_empty_content": "未识别到有效内容",
+        "ocr_empty_text": "未识别到有效图片文字",
+        "asr_empty_transcript": "未识别到有效语音文本",
+        "extractor_provider_error": "解析服务异常",
+        "extractor_network_error": "解析服务网络异常",
+        "extractor_connect_failed": "解析服务连接失败",
+        "cost_circuit_breaker_open": "预算达到当日阈值",
+    }
+    return reason_labels.get(key, "")
+
+
+def _format_file_size(file_size: Any) -> str:
+    try:
+        size = int(file_size)
+    except (TypeError, ValueError):
+        return ""
+    if size <= 0:
+        return ""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _build_upload_result_text(
+    *,
+    guidance_text: str,
+    message_type: str,
+    provider: str,
+    reason_code: str,
+    file_name: str,
+    file_type: str,
+    file_size: Any,
+) -> str:
+    status = _upload_status_from_reason(reason_code)
+    icon, status_label, title = _upload_status_text(status)
+    message_label = _upload_message_type_label(message_type)
+    provider_label = _upload_provider_label(provider)
+    reason_text = _upload_reason_text(reason_code)
+    size_text = _format_file_size(file_size)
+
+    lines = [
+        title,
+        f"- 状态: {icon} {status_label}",
+        f"- 来源类型: {message_label}",
+        f"- 解析通道: {provider_label}",
+    ]
+    if file_name:
+        lines.append(f"- 文件: {file_name}")
+    if file_type:
+        lines.append(f"- 类型: {file_type}")
+    if size_text:
+        lines.append(f"- 大小: {size_text}")
+    if reason_text:
+        lines.append(f"- 原因: {reason_text}")
+    if guidance_text:
+        lines.append(f"- 说明: {guidance_text}")
+
+    return "\n".join(lines)
+
+
 def _build_upload_result_reply(
     *,
     guidance_text: str,
@@ -304,26 +418,20 @@ def _build_upload_result_reply(
     file_name = str(getattr(attachment, "file_name", "") or "").strip()
     file_type = str(getattr(attachment, "file_type", "") or "").strip()
     file_size = getattr(attachment, "file_size", None)
-    status = _upload_status_from_reason(reason_code)
+    result_text = _build_upload_result_text(
+        guidance_text=guidance_text,
+        message_type=message_type,
+        provider=provider,
+        reason_code=reason_code,
+        file_name=file_name,
+        file_type=file_type,
+        file_size=file_size,
+    )
     return {
         "type": "text",
-        "text": guidance_text,
+        "text": result_text,
         "outbound": {
-            "text_fallback": guidance_text,
-            "card_template": {
-                "template_id": "upload.result",
-                "version": "v1",
-                "params": {
-                    "status": status,
-                    "guidance": guidance_text,
-                    "reason_code": reason_code,
-                    "provider": provider,
-                    "message_type": message_type,
-                    "file_name": file_name,
-                    "file_type": file_type,
-                    "file_size": file_size,
-                },
-            },
+            "text_fallback": result_text,
             "meta": {
                 "skill_name": "UploadPipeline",
                 "source": "file_pipeline",
@@ -353,6 +461,23 @@ def _build_send_payload(reply: dict[str, Any], card_enabled: bool = True, *, pre
             "msg_type": "text",
             "content": {"text": text_fallback},
         }
+
+
+def _prepend_reply_text(reply: dict[str, Any], prefix: str) -> dict[str, Any]:
+    text_prefix = str(prefix or "").strip()
+    if not text_prefix:
+        return reply
+    merged = dict(reply)
+    old_text = str(merged.get("text") or "").strip()
+    merged["text"] = text_prefix if not old_text else f"{text_prefix}\n\n{old_text}"
+    outbound = merged.get("outbound")
+    if isinstance(outbound, dict):
+        text_fallback = str(outbound.get("text_fallback") or "").strip()
+        outbound["text_fallback"] = text_prefix if not text_fallback else f"{text_prefix}\n\n{text_fallback}"
+        blocks = outbound.get("blocks")
+        if isinstance(blocks, list):
+            blocks.insert(0, {"type": "paragraph", "content": {"text": text_prefix}})
+    return merged
 
 
 def _cancel_pending_chunk_flush(scope_key: str) -> None:

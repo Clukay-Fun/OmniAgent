@@ -308,6 +308,120 @@ def _upload_status_from_reason(reason_code: str) -> str:
     return "failed"
 
 
+def _upload_status_text(status: str) -> tuple[str, str, str]:
+    normalized = str(status or "").strip().lower()
+    if normalized == "rejected":
+        return "⚠️", "不符合要求", "⚠️ 文件不符合要求"
+    if normalized == "disabled":
+        return "⚠️", "未开启", "⚠️ 文件解析未开启"
+    if normalized == "unconfigured":
+        return "⚠️", "未配置", "⚠️ 文件解析未配置"
+    if normalized == "success":
+        return "✅", "已完成", "✅ 文件解析成功"
+    return "❌", "失败", "❌ 文件解析失败"
+
+
+def _upload_provider_label(provider: str) -> str:
+    labels = {
+        "none": "未使用外部解析",
+        "mineru": "MinerU",
+        "llm": "LLM Extractor",
+        "ocr": "OCR Provider",
+        "asr": "ASR Provider",
+    }
+    key = str(provider or "none").strip().lower()
+    return labels.get(key, key or "none")
+
+
+def _upload_message_type_label(message_type: str) -> str:
+    labels = {
+        "file": "文件",
+        "image": "图片",
+        "audio": "语音",
+    }
+    key = str(message_type or "").strip().lower()
+    return labels.get(key, "文件")
+
+
+def _upload_reason_text(reason_code: str) -> str:
+    key = str(reason_code or "").strip().lower()
+    if key.endswith("_fail_open"):
+        key = key[: -len("_fail_open")]
+    reason_labels = {
+        "file_too_large": "文件体积超过当前限制",
+        "unsupported_file_type": "文件类型暂不支持",
+        "extractor_disabled": "解析能力已关闭",
+        "extractor_unconfigured": "解析服务尚未配置",
+        "ocr_unconfigured": "OCR 服务尚未配置",
+        "ocr_disabled": "OCR 服务已关闭",
+        "asr_unconfigured": "ASR 服务尚未配置",
+        "asr_disabled": "ASR 服务已关闭",
+        "extractor_timeout": "解析服务响应超时",
+        "extractor_rate_limited": "解析服务限流",
+        "extractor_auth_failed": "解析服务鉴权失败",
+        "extractor_malformed_response": "解析服务响应格式异常",
+        "extractor_empty_content": "未识别到有效内容",
+        "ocr_empty_text": "未识别到有效图片文字",
+        "asr_empty_transcript": "未识别到有效语音文本",
+        "extractor_provider_error": "解析服务异常",
+        "extractor_network_error": "解析服务网络异常",
+        "extractor_connect_failed": "解析服务连接失败",
+        "cost_circuit_breaker_open": "预算达到当日阈值",
+    }
+    return reason_labels.get(key, "")
+
+
+def _format_file_size(file_size: Any) -> str:
+    try:
+        size = int(file_size)
+    except (TypeError, ValueError):
+        return ""
+    if size <= 0:
+        return ""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _build_upload_result_text(
+    *,
+    guidance_text: str,
+    message_type: str,
+    provider: str,
+    reason_code: str,
+    file_name: str,
+    file_type: str,
+    file_size: Any,
+) -> str:
+    status = _upload_status_from_reason(reason_code)
+    icon, status_label, title = _upload_status_text(status)
+    message_label = _upload_message_type_label(message_type)
+    provider_label = _upload_provider_label(provider)
+    reason_text = _upload_reason_text(reason_code)
+    size_text = _format_file_size(file_size)
+
+    lines = [
+        title,
+        f"- 状态: {icon} {status_label}",
+        f"- 来源类型: {message_label}",
+        f"- 解析通道: {provider_label}",
+    ]
+    if file_name:
+        lines.append(f"- 文件: {file_name}")
+    if file_type:
+        lines.append(f"- 类型: {file_type}")
+    if size_text:
+        lines.append(f"- 大小: {size_text}")
+    if reason_text:
+        lines.append(f"- 原因: {reason_text}")
+    if guidance_text:
+        lines.append(f"- 说明: {guidance_text}")
+
+    return "\n".join(lines)
+
+
 def _build_upload_result_reply(
     *,
     guidance_text: str,
@@ -319,26 +433,20 @@ def _build_upload_result_reply(
     file_name = str(getattr(attachment, "file_name", "") or "").strip()
     file_type = str(getattr(attachment, "file_type", "") or "").strip()
     file_size = getattr(attachment, "file_size", None)
-    status = _upload_status_from_reason(reason_code)
+    result_text = _build_upload_result_text(
+        guidance_text=guidance_text,
+        message_type=message_type,
+        provider=provider,
+        reason_code=reason_code,
+        file_name=file_name,
+        file_type=file_type,
+        file_size=file_size,
+    )
     return {
         "type": "text",
-        "text": guidance_text,
+        "text": result_text,
         "outbound": {
-            "text_fallback": guidance_text,
-            "card_template": {
-                "template_id": "upload.result",
-                "version": "v1",
-                "params": {
-                    "status": status,
-                    "guidance": guidance_text,
-                    "reason_code": reason_code,
-                    "provider": provider,
-                    "message_type": message_type,
-                    "file_name": file_name,
-                    "file_type": file_type,
-                    "file_size": file_size,
-                },
-            },
+            "text_fallback": result_text,
             "meta": {
                 "skill_name": "UploadPipeline",
                 "source": "file_pipeline",
@@ -1216,7 +1324,7 @@ async def _process_message(message: dict[str, Any], sender: dict[str, Any]) -> b
         
         # 处理消息
         if direct_reply_text:
-            if bool(getattr(settings.reply, "card_enabled", True)) and normalized.message_type in {"file", "audio", "image"}:
+            if normalized.message_type in {"file", "audio", "image"}:
                 reply = _build_upload_result_reply(
                     guidance_text=direct_reply_text,
                     message_type=normalized.message_type,

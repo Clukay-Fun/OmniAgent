@@ -373,8 +373,20 @@ class QuerySkill(BaseSkill):
 
     def _select_target(self, query: str) -> str:
         """判断查询类型（表格/文档）"""
-        doc_keywords = ["文档", "资料", "文件", "合同"]
-        if any(kw in query for kw in doc_keywords):
+        normalized = str(query or "").replace(" ", "").lower()
+        doc_keywords = [
+            "搜文档",
+            "查文档",
+            "找文档",
+            "搜索文档",
+            "文档搜索",
+            "搜文件",
+            "查文件",
+            "找文件",
+            "搜索文件",
+            "文件搜索",
+        ]
+        if any(kw in normalized for kw in doc_keywords):
             return "doc"
         return "bitable"
 
@@ -1796,7 +1808,7 @@ class QuerySkill(BaseSkill):
     def _format_doc_result(self, documents: list[dict[str, Any]]) -> SkillResult:
         """格式化文档查询结果"""
         count = len(documents)
-        title = f"OK 文档搜索结果（共 {count} 条）"
+        title = f"📄 文档搜索结果（共 {count} 条）"
         
         items = []
         for i, doc in enumerate(documents, start=1):

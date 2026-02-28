@@ -5,6 +5,8 @@
     - 如果目标对话ID为空或无效，则返回None
 """
 
+from __future__ import annotations
+
 def map_target_conversation_id(target_conversation_id: str) -> tuple[str, str] | None:
     """
     将目标对话ID映射为一个包含对话ID和固定字符串"chat_id"的元组

@@ -244,12 +244,12 @@ def _format_bool(value: Any) -> tuple[str, str]:
         - 如果值为空或无效，返回原始值和"malformed"状态
     """
     if isinstance(value, bool):
-        return ("OK 是" if value else "OK 否"), "success"
+        return ("✅ 是" if value else "❌ 否"), "success"
     normalized = _safe_text(value).strip().lower()
     if normalized in {"1", "true", "yes", "y", "on"}:
-        return "OK 是", "success"
+        return "✅ 是", "success"
     if normalized in {"0", "false", "no", "n", "off", ""}:
-        return "OK 否", "success"
+        return "❌ 否", "success"
     return _safe_text(value), "malformed"
 
 
@@ -273,7 +273,7 @@ def _format_attachment(value: Any) -> tuple[str, str]:
         names = [name for name in names if name]
         if not names:
             return "", "malformed"
-        return "、".join([f"OK {name}" for name in names]), "success"
+        return "、".join([f"📎 {name}" for name in names]), "success"
 
     if isinstance(value, dict):
         nested_files = value.get("files") or value.get("value")
@@ -283,7 +283,7 @@ def _format_attachment(value: Any) -> tuple[str, str]:
     name = _extract_name(value)
     if not name:
         return _safe_text(value), "malformed"
-    return f"OK {name}", "success"
+    return f"📎 {name}", "success"
 # endregion
 
 

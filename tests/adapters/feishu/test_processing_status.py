@@ -97,7 +97,8 @@ def test_feishu_reaction_status_emitter_uses_single_reaction_per_status(monkeypa
     asyncio.run(emitter(event))
     asyncio.run(emitter(event))
 
-    assert calls == ["OK", "OK"]
+    assert calls == ["HOURGLASS", "HOURGLASS"]
+    assert all(reaction != "OK" for reaction in calls)
 
 
 def test_feishu_reaction_status_emitter_keeps_retrying_non_invalid_errors(monkeypatch) -> None:

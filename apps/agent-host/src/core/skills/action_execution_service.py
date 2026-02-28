@@ -202,7 +202,7 @@ class ActionExecutionService:
 
         record_id = write_result.record_id or ""
         record_url = write_result.record_url or ""
-        lines = ["OK 创建成功！", "", *[f"• {k}：{v}" for k, v in effective_fields.items()], ""]
+        lines = ["✅ 创建成功", "", *[f"• {k}：{v}" for k, v in effective_fields.items()], ""]
         if record_url:
             lines.append(f"查看详情：{record_url}")
         reply_text = "\n".join(lines).strip()
@@ -330,7 +330,7 @@ class ActionExecutionService:
 
         close_profile = self._resolve_close_profile(table_name=table_name, semantic=close_semantic)
         close_title = str(close_profile.get("title") or "关闭").strip() or "关闭"
-        opener = f"OK {close_title}成功！" if action_name == "close_record" else "OK 更新成功！"
+        opener = f"✅ {close_title}成功" if action_name == "close_record" else "✅ 更新成功"
         record_url = write_result.record_url or ""
         field_list = "\n".join([f"  • {k}: {v}" for k, v in effective_fields.items()])
         reply_text = f"{opener}\n\n已更新字段：\n{field_list}\n\n查看详情：{record_url}"
@@ -464,7 +464,7 @@ class ActionExecutionService:
             parent_fields={"案号": case_no},
         )
         link_summary = self._linker.summarize(link_sync)
-        reply_text = f"OK 已删除\n案件：{case_no}"
+        reply_text = f"✅ 已删除\n案件：{case_no}"
         if link_summary:
             reply_text += f"\n\n{link_summary}"
         data = {

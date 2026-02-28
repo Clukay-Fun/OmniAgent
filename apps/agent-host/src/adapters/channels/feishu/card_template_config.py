@@ -181,12 +181,12 @@ BUILTIN_RENDER_TEMPLATES: dict[str, Any] = {
             "rejected": "已拒绝",
         },
         "status_icons": {
-            "processing": "OK",
-            "success": "OK",
-            "failed": "OK",
-            "disabled": "OK",
-            "unconfigured": "OK",
-            "rejected": "OK",
+            "processing": "⏳",
+            "success": "✅",
+            "failed": "❌",
+            "disabled": "⚠️",
+            "unconfigured": "⚠️",
+            "rejected": "⚠️",
         },
         "provider_labels": {
             "none": "未使用外部解析",

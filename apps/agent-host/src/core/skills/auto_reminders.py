@@ -5,6 +5,11 @@
     - 解析日期字符串为日期对象
 """
 
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Any, Mapping
+
 def build_auto_reminder_items(table_name: str, fields: Mapping[str, Any]) -> list[dict[str, str]]:
     """
     根据表名和字段生成自动提醒项。

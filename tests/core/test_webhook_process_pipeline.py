@@ -91,15 +91,10 @@ def test_process_message_sends_formatter_payload(monkeypatch) -> None:
     assert len(sent_calls) == 1
     send_payload = sent_calls[0]
     assert send_payload["chat_id"] == "oc_pipeline"
-    assert send_payload["msg_type"] == "interactive"
+    assert send_payload["msg_type"] == "text"
     content = send_payload["content"]
     assert isinstance(content, dict)
-    body_raw = content.get("body")
-    body = body_raw if isinstance(body_raw, dict) else {}
-    elements_raw = body.get("elements")
-    elements = elements_raw if isinstance(elements_raw, list) else []
-    assert elements[0]["tag"] == "markdown"
-    assert "来自 outbound 的正文" in elements[0]["content"]
+    assert str(content.get("text") or "") == "渲染后的回退文本"
 
 
 def test_process_message_uses_group_user_scoped_key(monkeypatch) -> None:
@@ -217,11 +212,10 @@ def test_process_file_message_falls_back_to_guidance_when_unavailable(monkeypatc
     assert ok is True
     assert agent_called["value"] is False
     assert len(sent_calls) == 1
-    assert sent_calls[0]["msg_type"] == "interactive"
+    assert sent_calls[0]["msg_type"] == "text"
     content = sent_calls[0]["content"]
     assert isinstance(content, dict)
-    payload = json.dumps(content, ensure_ascii=False)
-    assert "未开启解析能力" in payload
+    assert "未开启解析能力" in str(content.get("text") or "")
 
 
 def test_process_image_message_sends_status_and_ocr_summary(monkeypatch) -> None:

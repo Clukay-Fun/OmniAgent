@@ -10,5 +10,5 @@ from __future__ import annotations
 from src.core.skills.bitable_adapter import BitableAdapter as TableAdapter
 
 # region 初始化BitableAdapter
-table_adapter = TableAdapter()
+table_adapter: TableAdapter | None = None
 # endregion

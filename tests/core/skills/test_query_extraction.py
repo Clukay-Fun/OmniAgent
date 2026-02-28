@@ -35,6 +35,20 @@ def _build_params(skill: QuerySkill, query: str, extra: dict, table_result: dict
     return asyncio.run(skill._build_bitable_params(query, extra=extra, table_result=table_result))
 
 
+def test_select_target_contract_query_defaults_to_bitable() -> None:
+    skill = _build_skill()
+
+    assert skill._select_target("查合同") == "bitable"
+    assert skill._select_target("查询合同台账") == "bitable"
+
+
+def test_select_target_explicit_doc_commands_route_to_doc_search() -> None:
+    skill = _build_skill()
+
+    assert skill._select_target("查文档 合同模板") == "doc"
+    assert skill._select_target("找文件 保密协议") == "doc"
+
+
 def test_extract_entity_keyword_strips_action_noise() -> None:
     skill = _build_skill()
     assert skill._extract_entity_keyword("帮我查一下房怡康的案子") == "房怡康"
