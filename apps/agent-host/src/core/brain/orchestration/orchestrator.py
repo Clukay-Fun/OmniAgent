@@ -457,13 +457,13 @@ class AgentOrchestrator:
         embedding_cfg = config.get("embedding", {})
         chroma_cfg = config.get("chroma", {})
         if not embedding_cfg or not chroma_cfg:
-            logger.warning(
+            logger.info(
                 "向量配置不完整，已禁用向量记忆",
                 extra={"event_code": "orchestrator.vector.invalid_config"},
             )
             return None
         if not embedding_cfg.get("api_key") or not embedding_cfg.get("api_base"):
-            logger.warning(
+            logger.info(
                 "缺少 Embedding API 配置，已禁用向量记忆",
                 extra={"event_code": "orchestrator.vector.embedding_config_missing"},
             )
@@ -846,45 +846,73 @@ class AgentOrchestrator:
                             chat_type,
                         )
 
-                        planner_start = time.perf_counter()
-                        planner_output = await self._planner.plan(text, user_profile=user_profile)
-                        planner_duration = time.perf_counter() - planner_start
+                        # Agent 模式：跳过 Planner + IntentParser，由 SkillRouter 内部
+                        # 通过 Tool Calling 自主解析意图
+                        routing_cfg = self._skills_config.get("routing", {})
+                        routing_mode = str((routing_cfg if isinstance(routing_cfg, dict) else {}).get("mode", "rule")).strip().lower()
 
-                        if planner_output and planner_output.intent == "clarify_needed":
-                            reply = {
-                                "type": "text",
-                                "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
-                            }
-                            status = "success"
-                            should_execute = False
+                        if routing_mode == "agent":
+                            # Agent 模式下不需要 intent，SkillRouter._agent_route
+                            # 会通过 LLM Tool Calling 自主决策
+                            intent = IntentResult(
+                                skills=[
+                                    SkillMatch(
+                                        name="AgentRouted",
+                                        score=1.0,
+                                        reason="agent_mode:tool_calling",
+                                    )
+                                ],
+                                is_chain=False,
+                                requires_llm_confirm=False,
+                                method="agent",
+                            )
+                            logger.info(
+                                "Agent 模式：跳过 Planner/IntentParser，由 SkillRouter 通过 Tool Calling 解析",
+                                extra={
+                                    "event_code": "orchestrator.intent.agent_mode",
+                                    "query": text,
+                                },
+                            )
                         else:
-                            if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
-                                intent = self._build_intent_from_planner(planner_output)
-                                if intent:
-                                    planner_applied = True
-                                    record_intent_parse("planner", planner_duration)
+                            planner_start = time.perf_counter()
+                            planner_output = await self._planner.plan(text, user_profile=user_profile)
+                            planner_duration = time.perf_counter() - planner_start
+
+                            if planner_output and planner_output.intent == "clarify_needed":
+                                reply = {
+                                    "type": "text",
+                                    "text": planner_output.clarify_question or "请再具体描述一下您的需求。",
+                                }
+                                status = "success"
+                                should_execute = False
+                            else:
+                                if planner_output and planner_output.confidence >= self._planner_confidence_threshold:
+                                    intent = self._build_intent_from_planner(planner_output)
+                                    if intent:
+                                        planner_applied = True
+                                        record_intent_parse("planner", planner_duration)
+                                        logger.info(
+                                            "Planner 意图解析完成",
+                                            extra={
+                                                "event_code": "orchestrator.intent.parsed_planner",
+                                                "query": text,
+                                                "intent": intent.to_dict(),
+                                                "planner": planner_output.to_context(),
+                                            },
+                                        )
+
+                                if intent is None:
+                                    intent_start = time.perf_counter()
+                                    intent = await self._intent_parser.parse(text, llm_context=llm_context)
+                                    record_intent_parse(intent.method, time.perf_counter() - intent_start)
                                     logger.info(
-                                        "Planner 意图解析完成",
+                                        "意图解析完成",
                                         extra={
-                                            "event_code": "orchestrator.intent.parsed_planner",
+                                            "event_code": "orchestrator.intent.parsed",
                                             "query": text,
                                             "intent": intent.to_dict(),
-                                            "planner": planner_output.to_context(),
                                         },
                                     )
-
-                            if intent is None:
-                                intent_start = time.perf_counter()
-                                intent = await self._intent_parser.parse(text, llm_context=llm_context)
-                                record_intent_parse(intent.method, time.perf_counter() - intent_start)
-                                logger.info(
-                                    "意图解析完成",
-                                    extra={
-                                        "event_code": "orchestrator.intent.parsed",
-                                        "query": text,
-                                        "intent": intent.to_dict(),
-                                    },
-                                )
 
                     if should_execute:
                         # Step 2: 构建执行上下文

@@ -3,8 +3,9 @@
 defaults:
   timeout_seconds: 10
 
-routing:
-  mode: "rule"
+routing: 
+  mode: "agent" # agent / rule
+  agent_timeout: 8.0
   llm_selection_timeout: 5.0
   llm_confidence_threshold: 0.6
   shadow_max_pending: 10

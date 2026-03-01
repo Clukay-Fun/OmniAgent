@@ -128,6 +128,93 @@ class LLMClient:
         self._capture_usage(response, duration, route_metadata)
         return response.choices[0].message.content or ""
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        timeout: float | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+    ) -> dict[str, Any]:
+        """
+        支持 Tool Calling 的对话请求（OpenAI Function Calling 协议）。
+
+        参数:
+            messages: 对话消息列表
+            tools: 工具定义列表（OpenAI tools schema 格式）
+            timeout: 超时时间 (秒)
+            tool_choice: 工具选择策略（"auto" / "none" / "required" / 指定工具）
+
+        返回:
+            {"content": str | None, "tool_calls": list[dict] | None}
+        """
+        logger = self._logger
+        timeout_seconds = timeout if timeout is not None else self._settings.timeout
+        start = time.perf_counter()
+        status = "success"
+        route_metadata = self._route_metadata_var.get({})
+        model_name = str(route_metadata.get("model_selected") or self._primary_model)
+
+        create_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": cast(list[ChatCompletionMessageParam], messages),
+            "temperature": self._settings.temperature,
+            "max_tokens": self._settings.max_tokens,
+        }
+        if tools:
+            create_kwargs["tools"] = tools
+            create_kwargs["tool_choice"] = tool_choice
+
+        try:
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(**create_kwargs),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            status = "timeout"
+            logger.warning("LLM tool-calling request timeout after %ss", timeout_seconds)
+            raise LLMTimeoutError(timeout_seconds) from exc
+        except BadRequestError as exc:
+            status = "error"
+            if exc.response is not None:
+                logger.error("LLM 400 response: %s", exc.response.text)
+            logger.error("LLM tool-calling request failed: %s", exc)
+            raise
+        except Exception as exc:
+            status = "error"
+            response_obj = getattr(exc, "response", None)
+            if response_obj is not None:
+                logger.error("LLM error response: %s", response_obj.text)
+            logger.error("LLM tool-calling request failed: %s", exc)
+            raise
+        finally:
+            duration = time.perf_counter() - start
+            record_llm_call("chat_with_tools", status, duration)
+
+        self._capture_usage(response, duration, route_metadata)
+        choice = response.choices[0]
+        message = choice.message
+
+        tool_calls_raw = getattr(message, "tool_calls", None)
+        tool_calls_result: list[dict[str, Any]] | None = None
+        if tool_calls_raw:
+            tool_calls_result = []
+            for tc in tool_calls_raw:
+                args_str = tc.function.arguments or "{}"
+                try:
+                    args = json.loads(args_str)
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls_result.append({
+                    "id": tc.id,
+                    "name": tc.function.name,
+                    "arguments": args,
+                })
+
+        return {
+            "content": message.content,
+            "tool_calls": tool_calls_result,
+        }
+
     def consume_last_usage(self) -> dict[str, Any] | None:
         value = self._last_usage
         self._last_usage = None

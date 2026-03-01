@@ -115,12 +115,26 @@ class SkillRouter:
                 timeout_seconds=self._llm_selection_timeout,
                 confidence_threshold=self._llm_confidence_threshold,
             )
+
+        # Agent 模式路由器（基于 Tool Calling）
+        self._agent_router: AgentRouter | None = None
+        if self._routing_mode == "agent" and llm_client is not None:
+            from src.core.understanding.router.agent_router import AgentRouter
+
+            agent_timeout = float(routing_cfg.get("agent_timeout", 8.0))
+            self._agent_router = AgentRouter(
+                llm_client=llm_client,
+                timeout_seconds=agent_timeout,
+                metadata_loader=self._skill_metadata_loader,
+            )
+
         logger.info(
             "技能路由模式已初始化",
             extra={
                 "event_code": "router.mode.initialized",
                 "mode": self._routing_mode,
                 "llm_selector_enabled": bool(self._llm_selector),
+                "agent_router_enabled": bool(self._agent_router),
                 "shadow_max_pending": self._shadow_max_pending,
             },
         )
@@ -212,6 +226,8 @@ class SkillRouter:
         intent: IntentResult,
         context: SkillContext,
     ) -> SkillResult:
+        if self._routing_mode == "agent":
+            return await self._agent_route(context)
         if self._routing_mode == "rule":
             return await self._rule_based_route(intent, context)
         if self._routing_mode == "shadow":
@@ -225,6 +241,33 @@ class SkillRouter:
             extra={"event_code": "router.mode.unknown_fallback_rule"},
         )
         return await self._rule_based_route(intent, context)
+
+    async def _agent_route(self, context: SkillContext) -> SkillResult:
+        """
+        Agent 模式路由：通过 LLM Tool Calling 直接解析意图并执行技能。
+        完全绕过关键词匹配，让 LLM 自主决定调用哪个技能。
+        """
+        if self._agent_router is None:
+            logger.warning(
+                "Agent 路由器未初始化，回退到 Chitchat",
+                extra={"event_code": "router.agent.not_initialized"},
+            )
+            return await self._execute_skill("ChitchatSkill", context)
+
+        try:
+            agent_intent = await self._agent_router.resolve_intent(
+                query=context.query,
+            )
+            top = agent_intent.top_skill()
+            skill_name = top.name if top else "ChitchatSkill"
+            return await self._execute_skill(skill_name, context)
+        except Exception as exc:
+            logger.error(
+                "Agent 路由异常，回退到 Chitchat: %s",
+                exc,
+                extra={"event_code": "router.agent.error"},
+            )
+            return await self._execute_skill("ChitchatSkill", context)
 
     async def _rule_based_route(self, intent: IntentResult, context: SkillContext) -> SkillResult:
         top_skill = intent.top_skill()

@@ -130,7 +130,7 @@ class CreateSkill(BaseSkill):
                 "table_id": table_ctx.table_id,
                 "table_name": table_ctx.table_name,
                 "app_token": (table_ctx.app_token or "")[:10] + "..." if table_ctx.app_token else "(empty)",
-                "source": table_ctx.source,
+                "source": getattr(table_ctx, "source", "unknown"),
             },
         )
 
@@ -311,16 +311,6 @@ class CreateSkill(BaseSkill):
             fields,
             table_ctx.table_id,
         )
-        logger.info(
-            "CreateSkill adapt_fields result",
-            extra={
-                "event_code": "create_skill.debug.adapt_fields",
-                "fields_count": len(fields),
-                "adapted_count": len(adapted_fields),
-                "unresolved": unresolved[:5] if unresolved else [],
-                "fields_keys": list(fields.keys())[:10],
-            },
-        )
         if unresolved:
             return SkillResult(
                 success=False,
@@ -343,29 +333,12 @@ class CreateSkill(BaseSkill):
             fields = adapted_fields
         
         try:
-            logger.info(
-                "CreateSkill execute_create start",
-                extra={
-                    "event_code": "create_skill.debug.execute_create",
-                    "table_id": table_ctx.table_id,
-                    "app_token": (app_token or "")[:10] + "..." if app_token else "(empty)",
-                    "fields_keys": list(fields.keys())[:10],
-                },
-            )
             outcome = await self._action_service.execute_create(
                 table_id=table_ctx.table_id,
                 table_name=table_ctx.table_name,
                 fields=fields,
                 idempotency_key=idempotency_key,
                 app_token=app_token,
-            )
-            logger.info(
-                "CreateSkill execute_create result",
-                extra={
-                    "event_code": "create_skill.debug.execute_create_result",
-                    "success": outcome.success,
-                    "outcome_message": outcome.message,
-                },
             )
             if not outcome.success:
                 failure_data = dict(outcome.data) if isinstance(outcome.data, dict) else {}
