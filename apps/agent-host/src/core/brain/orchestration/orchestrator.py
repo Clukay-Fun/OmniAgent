@@ -964,6 +964,8 @@ class AgentOrchestrator:
                         extra["complexity"] = route_decision.complexity
                         extra["route_label"] = route_decision.route_label
                         extra["model_selected"] = route_decision.model_selected
+                        if intent is not None:
+                            extra["intent_method"] = intent.method
                         usage_source = str(extra.get("usage_source") or "text")
 
                         force_last_result = l0_decision.force_last_result if l0_decision.force_skill else None

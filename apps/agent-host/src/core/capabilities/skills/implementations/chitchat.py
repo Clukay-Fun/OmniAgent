@@ -134,6 +134,11 @@ class ChitchatSkill(BaseSkill):
             对话响应结果
         """
         query = context.query.strip()
+        extra = context.extra if isinstance(context.extra, dict) else {}
+
+        # Agent 模式下 LLM 已通过 Tool Calling 明确选择了 chitchat，
+        # 无需再用关键词二次拦截，直接走 LLM 自由对话
+        is_agent_routed = str(extra.get("intent_method", "")).strip() == "agent"
         
         # 1. 检查帮助请求
         if self._is_help_request(query):
@@ -155,6 +160,11 @@ class ChitchatSkill(BaseSkill):
             greeting_type = self._get_time_greeting_type()
             record_chitchat_guard("pool")
             return self._create_result(greeting_type, "问候响应")
+
+        # Agent 模式快速通道：跳过离题拦截和门控
+        if is_agent_routed and self._allow_llm and self._llm_client:
+            record_chitchat_guard("llm")
+            return await self._llm_chat(query, context)
 
         # 4.1 明显离题时柔性收敛到业务域
         if not self._is_domain_related(query) and not self._allow_open_domain_chat(context):
